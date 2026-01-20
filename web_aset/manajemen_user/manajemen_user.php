@@ -236,7 +236,6 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                       <th>Nama</th>
                       <th>Email</th>
                       <th>Action</th>
-                      <th>Hak Akses</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -274,7 +273,7 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
         <!--end::To the end-->
         <!--begin::Copyright-->
         <strong>
-          Copyright &copy; Proyek Aset Tetap Regional&nbsp;
+          Copyright &copy; Proyek Aset Tetap Regional 3&nbsp;
         </strong>
         <!--end::Copyright-->
       </footer>
