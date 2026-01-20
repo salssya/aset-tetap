@@ -214,7 +214,7 @@ if (isset($_POST["login"])) {
         }
 
         .login-header .logo-img {
-            height: 80px;
+            height: 60px;
             width: auto;
             object-fit: contain;
             margin-bottom: 15px;
@@ -226,7 +226,7 @@ if (isset($_POST["login"])) {
     <div class="login-container">
         <div class="login-card">
             <div class="login-header">
-                <img src="../dist/assets/logo1.png" alt="Logo ASET TETAP" class="logo-img">
+                <img src="../../dist/assets/img/logo1.png" alt="Logo ASET TETAP" class="logo-img">
                 <h1>ASET TETAP</h1>
                 <p>Sistem Manajemen Aset Regional 3</p>
             </div>
