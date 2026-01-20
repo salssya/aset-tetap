@@ -371,20 +371,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
       function logout() {
         sessionStorage.removeItem('nipp');
         sessionStorage.removeItem('name');
-<<<<<<< HEAD
         sessionStorage.removeItem('email');
-=======
->>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
         window.location.href = '../login/logout.php';
       }
     </script>
     <script>
       sessionStorage.setItem("nipp", "<?php echo $_SESSION['nipp']; ?>");
       sessionStorage.setItem("name", "<?php echo $_SESSION['name']; ?>");
-<<<<<<< HEAD
       sessionStorage.setItem("email", "<?php echo $_SESSION['email']; ?>");
-=======
->>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
     </script>
     <!--end::Script-->
   </body>
