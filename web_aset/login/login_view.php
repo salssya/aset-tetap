@@ -24,12 +24,9 @@ if (isset($_POST["login"])) {
         $_SESSION["email"] = $row['Email'];
         echo "
         <script>
-<<<<<<< HEAD
             sessionStorage.setItem('nipp', '" . $row['NIPP'] . "');
             sessionStorage.setItem('name', '" . $row['Nama'] . "');
             sessionStorage.setItem('email', '" . $row['Email'] . "');
-=======
->>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
             window.location = '../../web_aset/dasbor/dasbor.php'
         </script>";
 
@@ -218,11 +215,7 @@ if (isset($_POST["login"])) {
 
         .login-header .logo-img {
             height: 80px;
-<<<<<<< HEAD
             width: auto;
-=======
-            width: 80px;
->>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
             object-fit: contain;
             margin-bottom: 15px;
         }
@@ -233,11 +226,7 @@ if (isset($_POST["login"])) {
     <div class="login-container">
         <div class="login-card">
             <div class="login-header">
-<<<<<<< HEAD
                 <img src="../dist/assets/logo1.png" alt="Logo ASET TETAP" class="logo-img">
-=======
-                <img src="../../dist/assets/logo.png" alt="Logo ASET TETAP" class="logo-img">
->>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
                 <h1>ASET TETAP</h1>
                 <p>Sistem Manajemen Aset Regional 3</p>
             </div>
