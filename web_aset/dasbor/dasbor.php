@@ -114,12 +114,6 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                   alt="User Image"
                 />
                 <span class="d-none d-md-inline"><?php echo isset($_SESSION['name']) ? htmlspecialchars($_SESSION['name']) : ''; ?></span>
-=======
-                  src="../../dist/assets/img/user2-160x160.jpg"
-                  class="user-image rounded-circle shadow"
-                  alt="User Image"
-                />
-                <span class="d-none d-md-inline"><?php echo isset($_SESSION['Nama']) ? htmlspecialchars($_SESSION['Nama']) : ''; ?></span>
               </a>
               <ul class="dropdown-menu dropdown-menu-lg dropdown-menu-end">
                 <!--begin::User Image-->
