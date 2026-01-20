@@ -1,13 +1,4 @@
 <?php
-<<<<<<< HEAD
-session_start();
-if(!isset($_SESSION["nipp"])) {
-    header("Location: ../login/login_view.php");
-    exit();
-}
-
-=======
->>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
 $servername = "localhost";
 $username = "root";
 $password = "";
@@ -112,48 +103,26 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
             <li class="nav-item dropdown user-menu">
               <a href="#" class="nav-link dropdown-toggle" data-bs-toggle="dropdown">
                 <img
-<<<<<<< HEAD
-                  src="../../dist/assets/img/profil.jpg"
-                  class="user-image rounded-circle shadow"
-                  alt="User Image"
-                />
-                <span class="d-none d-md-inline"><?php echo isset($_SESSION['name']) ? htmlspecialchars($_SESSION['name']) : ''; ?></span>
-=======
                   src="../../dist/assets/img/user2-160x160.jpg"
                   class="user-image rounded-circle shadow"
                   alt="User Image"
                 />
                 <span class="d-none d-md-inline"><?php echo isset($_SESSION['Nama']) ? htmlspecialchars($_SESSION['Nama']) : ''; ?></span>
->>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
               </a>
               <ul class="dropdown-menu dropdown-menu-lg dropdown-menu-end">
                 <!--begin::User Image-->
                 <li class="user-header text-bg-primary">
                   <img
-<<<<<<< HEAD
-                    src="../../dist/assets/img/profil.jpg"
-=======
                     src="../../dist/assets/img/user2-160x160.jpg"
->>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
                     class="rounded-circle shadow"
                     alt="User Image"
                   />
                   <p>
-<<<<<<< HEAD
-                    <?php echo isset($_SESSION['name']) ? htmlspecialchars($_SESSION['name']) : ''; ?>
-=======
                     <?php echo isset($_SESSION['Nama']) ? htmlspecialchars($_SESSION['Nama']) : ''; ?>
->>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
                     <small>Member</small>
                   </p>
                 </li>
                 <!--end::User Image-->
-<<<<<<< HEAD
-                <!--begin::Menu Footer-->
-                <li class="user-footer">
-                  <a href="#" class="btn btn-default btn-flat">NIPP: <?php echo isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : ''; ?></a>
-                  <a href="#" class="btn btn-default btn-flat float-end" onclick="logout()">Logout</a>
-=======
                 <!--begin::Menu Body-->
                 <li class="user-body">
                   <!--begin::Row-->
@@ -169,7 +138,6 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                 <li class="user-footer">
                   <a href="#" class="btn btn-default btn-flat">Profile</a>
                   <a href="#" class="btn btn-default btn-flat float-end">Sign out</a>
->>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
                 </li>
                 <!--end::Menu Footer-->
               </ul>
@@ -212,11 +180,7 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
               id="navigation"
             >
             <?php  
-<<<<<<< HEAD
-            $query = "SELECT * From user_access INNER JOIN menus on user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '" . $_SESSION['nipp'] . "' order by urutan_menu ASC";
-=======
-            $query = "SELECT * From user_access INNER JOIN menus on user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '1234567890' order by urutan_menu ASC";
->>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
+            $query = "SELECT * From user_access INNER JOIN menus on user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '1234567890' order by menus.urutan_menu ASC";
             $result = mysqli_query($con, $query) or die(mysqli_error($con));
             while ($row = mysqli_fetch_array($result, MYSQLI_BOTH))
             {
@@ -244,7 +208,7 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
           <div class="container-fluid">
             <!--begin::Row-->
             <div class="row">
-              <div class="col-sm-6"><h3 class="mb-0">Dashboard</h3></div>
+              <div class="col-sm-6"><h3 class="mb-0">Edit Menu</h3></div>
             </div>
             <!--end::Row-->
           </div>
@@ -253,133 +217,55 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
         <div class="app-content">
           <!--begin::Container-->
           <div class="container-fluid">
-            <!-- Info boxes -->
-            <div class="row">
-              <div class="col-12 col-sm-6 col-md-3">
-                <div class="info-box">
-                  <span class="info-box-icon text-bg-primary shadow-sm">
-                    <i class="bi bi-speedometer2"></i>
-                  </span>
-                  <div class="info-box-content">
-                    <span class="info-box-text">Usulan</span>
-                  </div>
-                  <!-- /.info-box-content -->
-                </div>
-                <!-- /.info-box -->
-              </div>
-              <!-- /.col -->
-              <div class="col-12 col-sm-6 col-md-3">
-                <div class="info-box">
-                  <span class="info-box-icon text-bg-danger shadow-sm">
-                    <i class="bi bi-hand-thumbs-up-fill"></i>
-                  </span>
-                  <div class="info-box-content">
-                    <span class="info-box-text">Approval</span>
-                  </div>
-                  <!-- /.info-box-content -->
-                </div>
-                <!-- /.info-box -->
-              </div>
-              <!-- /.col -->
-              <!-- fix for small devices only -->
-              <!-- <div class="clearfix hidden-md-up"></div> -->
-              <div class="col-12 col-sm-6 col-md-3">
-                <div class="info-box">
-                  <span class="info-box-icon text-bg-success shadow-sm">
-                    <i class="bi bi-cart-fill"></i>
-                  </span>
-                  <div class="info-box-content">
-                    <span class="info-box-text">Daftar Persetujuan</span>
-                  </div>
-                  <!-- /.info-box-content -->
-                </div>
-                <!-- /.info-box -->
-              </div>
-              <!-- /.col -->
-              <div class="col-12 col-sm-6 col-md-3">
-                <div class="info-box">
-                  <span class="info-box-icon text-bg-warning shadow-sm">
-                    <i class="bi bi-people-fill"></i>
-                  </span>
-                  <div class="info-box-content">
-                    <span class="info-box-text">Pelaksanaan</span>
-                  </div>
-                  <!-- /.info-box-content -->
-                </div>
-                <!-- /.info-box -->
-              </div>
-              <!-- /.col -->
-            </div>
-            
             <!--begin::Row-->
-            <div class="row">
-                
-              <!-- /.col -->
-              <div class="col-md-4">
-                <!-- Info Boxes Style 2 -->
-                <!-- /.info-box -->
-                <div class="card mb-4">
-                  <div class="card-header">
-                    <h3 class="card-title">Browser Usage</h3>
-                    <div class="card-tools">
-                      <button type="button" class="btn btn-tool" data-lte-toggle="card-collapse">
-                        <i data-lte-icon="expand" class="bi bi-plus-lg"></i>
-                        <i data-lte-icon="collapse" class="bi bi-dash-lg"></i>
-                      </button>
-                      <button type="button" class="btn btn-tool" data-lte-toggle="card-remove">
-                        <i class="bi bi-x-lg"></i>
-                      </button>
+            <div class="card card-primary card-outline mb-4">
+                  <!--begin::Header-->
+                  
+                  <!--end::Header-->
+                  <!--begin::Form-->
+                  <form action="" method="POST">
+                    <!--begin::Body-->
+                    <div class="card-body">
+                        <?php  
+            $query = "SELECT * From menus where id_menu = $_GET[id] order by id_menu ASC";
+            $result = mysqli_query($con, $query) or die(mysqli_error($con));
+            while ($row = mysqli_fetch_array($result, MYSQLI_BOTH))
+            {
+              echo 
+              '<div class="mb-3">
+                        <label for="exampleInputEmail1" class="form-label">ID Menu</label>
+                        <input type="number" name="id_menu" class="form-control" id="exampleInputEmail1" aria-describedby="emailHelp" value="'.$row['id_menu'].'" readonly disabled>
+                        <div id="emailHelp" class="form-text">
+                        </div>
+                      </div>
+                      <div class="mb-3">
+                        <label for="exampleInputEmail1" class="form-label">Nama Menu</label>
+                        <input type="text" name="nama_menu" class="form-control" id="exampleInputEmail1" aria-describedby="emailHelp" value="'.$row['nama_menu'].'" editable>
+                        <div id="emailHelp" class="form-text">
+                        </div>
+                      </div>
+                      <div class="mb-3">
+                        <label for="exampleInputPassword1" class="form-label">Text Link Menu</label>
+                        <input type="text" name="text_link_menu" class="form-control" id="exampleInputPassword1" value="'.$row['menu'].'" editable>
+                      </div>
+                      <div class="mb-3">
+                        <label for="exampleInputPassword1" class="form-label">No Urut</label>
+                        <input type="number" name="no_urut" class="form-control" id="exampleInputPassword1" value="'.$row['urutan_menu'].'" editable>
+                      </div>
+                    </div>';
+            }
+            ?>
+                    <!--end::Body-->
+                    <!--begin::Footer-->
+                    <div class="card-footer">
+                      <button type="submit" class="btn btn-primary">Simpan</button>
                     </div>
-                  </div>
-                  <!-- /.card-header -->
-                  <div class="card-body">
-                    <!--begin::Row-->
-                    <div class="row">
-                      <div class="col-12"><div id="pie-chart"></div></div>
-                      <!-- /.col -->
-                    </div>
-                    <!--end::Row-->
-                  </div>
-                  <!-- /.card-body -->
-                  <div class="card-footer p-0">
-                    <ul class="nav nav-pills flex-column">
-                      <li class="nav-item">
-                        <a href="#" class="nav-link">
-                          United States of America
-                          <span class="float-end text-danger">
-                            <i class="bi bi-arrow-down fs-7"></i>
-                            12%
-                          </span>
-                        </a>
-                      </li>
-                      <li class="nav-item">
-                        <a href="#" class="nav-link">
-                          India
-                          <span class="float-end text-success">
-                            <i class="bi bi-arrow-up fs-7"></i> 4%
-                          </span>
-                        </a>
-                      </li>
-                      <li class="nav-item">
-                        <a href="#" class="nav-link">
-                          China
-                          <span class="float-end text-info">
-                            <i class="bi bi-arrow-left fs-7"></i> 0%
-                          </span>
-                        </a>
-                      </li>
-                    </ul>
-                  </div>
-                  <!-- /.footer -->
+                    <!--end::Footer-->
+                  </form>
+                  <!--end::Form-->
                 </div>
-                <!-- /.card -->
-              </div>
-              <!-- /.col -->
-            </div>
             <!--end::Row-->
-            <!-- /.footer -->
-                </div>
-          <!--end::Container-->
+          </div>
         </div>
         <!--end::App Content-->
       </main>
@@ -594,22 +480,6 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
       // - END PIE CHART -
       //-----------------
     </script>
-<<<<<<< HEAD
-    <script>
-      function logout() {
-        sessionStorage.removeItem('nipp');
-        sessionStorage.removeItem('name');
-        sessionStorage.removeItem('email');
-        window.location.href = '../login/logout.php';
-      }
-    </script>
-    <script>
-      sessionStorage.setItem("nipp", "<?php echo $_SESSION['nipp']; ?>");
-      sessionStorage.setItem("name", "<?php echo $_SESSION['name']; ?>");
-      sessionStorage.setItem("email", "<?php echo $_SESSION['email']; ?>");
-    </script>
-=======
->>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
     <!--end::Script-->
   </body>
   <!--end::Body-->

@@ -109,7 +109,11 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
             <li class="nav-item dropdown user-menu">
               <a href="#" class="nav-link dropdown-toggle" data-bs-toggle="dropdown">
                 <img
+<<<<<<< HEAD
                   src="../../dist/assets/img/profil.jpg"
+=======
+                  src="../../dist/assets/img/user2-160x160.jpg"
+>>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
                   class="user-image rounded-circle shadow"
                   alt="User Image"
                 />
@@ -119,7 +123,11 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                 <!--begin::User Image-->
                 <li class="user-header text-bg-primary">
                   <img
+<<<<<<< HEAD
                     src="../../dist/assets/img/profil.jpg"
+=======
+                    src="../../dist/assets/img/user2-160x160.jpg"
+>>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
                     class="rounded-circle shadow"
                     alt="User Image"
                   />
@@ -131,7 +139,11 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                 <!--end::User Image-->
                 <!--begin::Menu Footer-->
                 <li class="user-footer">
+<<<<<<< HEAD
                   <a href="#" class="btn btn-default btn-flat">NIPP: <?php echo isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : ''; ?></a>
+=======
+                  <a href="#" class="btn btn-default btn-flat">NIPP: <?php echo isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : ''; ?><br>Nama: <?php echo isset($_SESSION['name']) ? htmlspecialchars($_SESSION['name']) : ''; ?></a>
+>>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
                   <a href="#" class="btn btn-default btn-flat float-end" onclick="logout()">Logout</a>
                 </li>
                 <!--end::Menu Footer-->
@@ -236,7 +248,10 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                       <th>Nama</th>
                       <th>Email</th>
                       <th>Action</th>
+<<<<<<< HEAD
                       <th>Hak Akses</th>
+=======
+>>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
                     </tr>
                   </thead>
                   <tbody>
@@ -325,14 +340,20 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
       function logout() {
         sessionStorage.removeItem('nipp');
         sessionStorage.removeItem('name');
+<<<<<<< HEAD
         sessionStorage.removeItem('email');
+=======
+>>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
         window.location.href = '../login/logout.php';
       }
     </script>
     <script>
       sessionStorage.setItem("nipp", "<?php echo $_SESSION['nipp']; ?>");
       sessionStorage.setItem("name", "<?php echo $_SESSION['name']; ?>");
+<<<<<<< HEAD
       sessionStorage.setItem("email", "<?php echo $_SESSION['email']; ?>");
+=======
+>>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
     </script>
     <!--end::Script-->
   </body>

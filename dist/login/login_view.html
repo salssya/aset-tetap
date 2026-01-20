@@ -19,24 +19,20 @@ if (isset($_POST["login"])) {
 
     if(mysqli_num_rows($check_user) > 0) {
         $row = mysqli_fetch_assoc($check_user);
-        $_SESSION["nipp"] = $row['NIPP'];
-        $_SESSION["name"] = $row['Nama'];
+        $_SESSION["user_id"] = $row['NIPP'];
+        $_SESSION["nama"] = $row['Nama'];
         $_SESSION["email"] = $row['Email'];
         echo "
-        <script>
-<<<<<<< HEAD
-            sessionStorage.setItem('nipp', '" . $row['NIPP'] . "');
-            sessionStorage.setItem('name', '" . $row['Nama'] . "');
-            sessionStorage.setItem('email', '" . $row['Email'] . "');
-=======
->>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
-            window.location = '../../web_aset/dasbor/dasbor.php'
+        <script> 
+            alert('Login Berhasil!'); 
+            window.location = '..//index.php'
         </script>";
 
     } else {
-      
+        echo "<script>alert('Login Gagal, NIPP atau Password Salah');</script>";
     }
 }
+
 
 ?>
 
@@ -217,12 +213,8 @@ if (isset($_POST["login"])) {
         }
 
         .login-header .logo-img {
-            height: 80px;
-<<<<<<< HEAD
-            width: auto;
-=======
-            width: 80px;
->>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
+            height: 40px; 
+	    width: 30px;	
             object-fit: contain;
             margin-bottom: 15px;
         }
@@ -233,11 +225,7 @@ if (isset($_POST["login"])) {
     <div class="login-container">
         <div class="login-card">
             <div class="login-header">
-<<<<<<< HEAD
-                <img src="../dist/assets/logo1.png" alt="Logo ASET TETAP" class="logo-img">
-=======
-                <img src="../../dist/assets/logo.png" alt="Logo ASET TETAP" class="logo-img">
->>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
+                <img src="../img/logo.png" alt="Logo ASET TETAP" class="logo-img">
                 <h1>ASET TETAP</h1>
                 <p>Sistem Manajemen Aset Regional 3</p>
             </div>
