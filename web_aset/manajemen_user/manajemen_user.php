@@ -12,6 +12,16 @@ $dbname = "asetreg3_db";
 
 // Create connection
 $con = mysqli_connect($servername, $username, $password, $dbname);
+
+//kode akses menu
+$nipp = $_SESSION['nipp'];
+$akses = [];
+$result = mysqli_query($con, "SELECT id_menu FROM user_access WHERE NIPP='$nipp'");
+while($row = mysqli_fetch_assoc($result)) {
+    $akses[] = $row['id_menu'];
+}
+$_SESSION['akses'] = $akses;
+
 ?>
 <!doctype html>
 <html lang="en">
@@ -175,20 +185,19 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
               id="navigation"
             >
             <?php  
-            $query = "SELECT * From user_access INNER JOIN menus on user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '" . $_SESSION['nipp'] . "' order by urutan_menu ASC";
-            $result = mysqli_query($con, $query) or die(mysqli_error($con));
-            while ($row = mysqli_fetch_array($result, MYSQLI_BOTH))
-            {
-              echo 
-              '<li class="nav-item">
-                <a href="../'.$row['menu'].'/'.$row['menu'].'.php" class="nav-link">
-                  <i class="nav-icon bi bi-speedometer"></i>
-                  <p>'.$row['nama_menu'].'</p>
-                </a>
-              </li>';
-            }
-            ?>
-            </ul>
+            $result = mysqli_query($con, "SELECT * FROM menus ORDER BY urutan_menu ASC");
+            while($row = mysqli_fetch_assoc($result)) {
+                if(in_array($row['id_menu'], $_SESSION['akses'])) {
+                    echo '<li class="nav-item">
+                          <a href="../'.$row['menu'].'/'.$row['menu'].'.php" class="nav-link">
+                          <i class="nav-icon bi bi-speedometer"></i>
+                          <p>'.$row['nama_menu'].'</p>
+                        </a>
+                     </li>';
+    }
+}
+?>
+</ul>
             <!--end::Sidebar Menu-->
           </nav>
         </div>
