@@ -292,8 +292,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 <div class="row">
                 <div class="col-md-12">
                   <div class="form-group">
-                    <label>Hak Akses</label><br>
-                    <div class="row" style="padding-left: 10px;"> <!-- Tambah padding kiri agar tidak mepet -->
+                    <label class="ms-3">Hak Akses</label><br>
+                    <div class="row" style="padding-left: 15px;">
                       <?php
                       $result_menus = mysqli_query($con, "SELECT * FROM menus ORDER BY urutan_menu ASC");
                       while($menu = mysqli_fetch_assoc($result_menus)) {
