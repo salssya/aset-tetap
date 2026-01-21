@@ -163,7 +163,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 <!--end::User Image-->
                 <!--begin::Menu Footer-->
                 <li class="user-footer">
-                  <a href="#" class="btn btn-default btn-flat">NIPP: <?php echo isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : ''; ?><br>Nama: <?php echo isset($_SESSION['name']) ? htmlspecialchars($_SESSION['name']) : ''; ?></a>
+                  <a href="#" class="btn btn-default btn-flat">NIPP: <?php echo isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : ''; ?></a>
                   <a href="#" class="btn btn-default btn-flat float-end" onclick="logout()">Logout</a>
                 </li>
                 <!--end::Menu Footer-->
