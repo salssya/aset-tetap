@@ -31,6 +31,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $update_query = "UPDATE users SET Nama='$nama', Email='$email' WHERE NIPP='$nipp'";
     }
     if (mysqli_query($con, $update_query)) {
+        // Hapus akses lama
+        mysqli_query($con, "DELETE FROM user_access WHERE NIPP='$nipp'");
+        // Insert akses baru
+        if(isset($_POST['akses'])) {
+            foreach($_POST['akses'] as $id_menu) {
+                mysqli_query($con, "INSERT INTO user_access (NIPP, id_menu) VALUES ('$nipp', '$id_menu')");
+            }
+        }
         echo "<script>alert('User berhasil diupdate'); window.location='manajemen_user.php';</script>";
     } else {
         echo "<script>alert('Error: " . mysqli_error($con) . "');</script>";
@@ -133,7 +141,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             <li class="nav-item dropdown user-menu">
               <a href="#" class="nav-link dropdown-toggle" data-bs-toggle="dropdown">
                 <img
-                  src="../../dist/assets/img/user2-160x160.jpg"
+                  src="../../dist/assets/img/profil.jpg"
                   class="user-image rounded-circle shadow"
                   alt="User Image"
                 />
@@ -143,7 +151,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 <!--begin::User Image-->
                 <li class="user-header text-bg-primary">
                   <img
-                    src="../../dist/assets/img/user2-160x160.jpg"
+                    src="../../dist/assets/img/profil.jpg"
                     class="rounded-circle shadow"
                     alt="User Image"
                   />
@@ -281,6 +289,28 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     </div>
                   </div>
                 </div>
+                <div class="row">
+                <div class="col-md-12">
+                  <div class="form-group">
+                    <label>Hak Akses</label><br>
+                    <div class="row" style="padding-left: 10px;"> <!-- Tambah padding kiri agar tidak mepet -->
+                      <?php
+                      $result_menus = mysqli_query($con, "SELECT * FROM menus ORDER BY urutan_menu ASC");
+                      while($menu = mysqli_fetch_assoc($result_menus)) {
+                          echo '<div class="col-md-6"> <!-- 2 kolom; ganti ke col-md-4 untuk 3 kolom -->
+                                  <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" name="akses[]" value="'.$menu['id_menu'].'" id="akses'.$menu['id_menu'].'">
+                                    <label class="form-check-label" for="akses'.$menu['id_menu'].'">
+                                      '.$menu['nama_menu'].'
+                                    </label>
+                                  </div>
+                                </div>';
+                      }
+                      ?>
+                    </div>
+                  </div>
+                </div>
+              </div>
                 <div class="card-footer">
                   <button type="submit" class="btn btn-primary">Update</button>
                   <a href="manajemen_user.php" class="btn btn-secondary">Batal</a>
