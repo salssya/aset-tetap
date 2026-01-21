@@ -109,11 +109,7 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
             <li class="nav-item dropdown user-menu">
               <a href="#" class="nav-link dropdown-toggle" data-bs-toggle="dropdown">
                 <img
-<<<<<<< HEAD
                   src="../../dist/assets/img/profil.jpg"
-=======
-                  src="../../dist/assets/img/user2-160x160.jpg"
->>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
                   class="user-image rounded-circle shadow"
                   alt="User Image"
                 />
@@ -123,46 +119,20 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                 <!--begin::User Image-->
                 <li class="user-header text-bg-primary">
                   <img
-<<<<<<< HEAD
                     src="../../dist/assets/img/profil.jpg"
-=======
-                    src="../../dist/assets/img/user2-160x160.jpg"
->>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
                     class="rounded-circle shadow"
                     alt="User Image"
                   />
                   <p>
-<<<<<<< HEAD
                     <?php echo isset($_SESSION['name']) ? htmlspecialchars($_SESSION['name']) : ''; ?>
-=======
-                    <?php echo isset($_SESSION['Nama']) ? htmlspecialchars($_SESSION['Nama']) : ''; ?>
->>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
                     <small>Member</small>
                   </p>
                 </li>
                 <!--end::User Image-->
-<<<<<<< HEAD
                 <!--begin::Menu Footer-->
                <li class="user-footer">
                   <a href="#" class="btn btn-default btn-flat">NIPP: <?php echo isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : ''; ?></a>
                   <a href="#" class="btn btn-default btn-flat float-end" onclick="logout()">Logout</a>
-=======
-                <!--begin::Menu Body-->
-                <li class="user-body">
-                  <!--begin::Row-->
-                  <div class="row">
-                    <div class="col-4 text-center"><a href="#">Followers</a></div>
-                    <div class="col-4 text-center"><a href="#">Sales</a></div>
-                    <div class="col-4 text-center"><a href="#">Friends</a></div>
-                  </div>
-                  <!--end::Row-->
-                </li>
-                <!--end::Menu Body-->
-                <!--begin::Menu Footer-->
-                <li class="user-footer">
-                  <a href="#" class="btn btn-default btn-flat">Profile</a>
-                  <a href="#" class="btn btn-default btn-flat float-end">Sign out</a>
->>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
                 </li>
                 <!--end::Menu Footer-->
               </ul>
