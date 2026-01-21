@@ -297,7 +297,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                       <?php
                       $result_menus = mysqli_query($con, "SELECT * FROM menus ORDER BY urutan_menu ASC");
                       while($menu = mysqli_fetch_assoc($result_menus)) {
-                          echo '<div class="col-md-6"> <!-- 2 kolom; ganti ke col-md-4 untuk 3 kolom -->
+                          echo '<div class="col-md-6">
                                   <div class="form-check">
                                     <input class="form-check-input" type="checkbox" name="akses[]" value="'.$menu['id_menu'].'" id="akses'.$menu['id_menu'].'">
                                     <label class="form-check-label" for="akses'.$menu['id_menu'].'">
