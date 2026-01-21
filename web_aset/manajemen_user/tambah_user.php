@@ -23,7 +23,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
     $query = "INSERT INTO users (NIPP, Nama, Email, Password) VALUES ('$nipp', '$nama', '$email', '$hashed_password')";
     if (mysqli_query($con, $query)) {
-        echo "<script>alert('User berhasil ditambahkan'); window.location='manajemen_user.php';</script>";
+      if(isset($_POST['akses'])) {
+            foreach($_POST['akses'] as $id_menu) {
+                mysqli_query($con, "INSERT INTO user_access (NIPP, id_menu) VALUES ('$nipp', '$id_menu')");
+            }
+      }
+      echo "<script>alert('User berhasil ditambahkan'); window.location='manajemen_user.php';</script>";
     } else {
         echo "<script>alert('Error: " . mysqli_error($con) . "');</script>";
     }
@@ -275,6 +280,28 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     </div>
                   </div>
                 </div>
+                <div class="row">
+                <div class="col-md-12">
+                  <div class="form-group">
+                    <label>Hak Akses</label><br>
+                    <div class="row" style="padding-left: 10px;"> <!-- Tambah padding kiri agar tidak mepet -->
+                      <?php
+                      $result_menus = mysqli_query($con, "SELECT * FROM menus ORDER BY urutan_menu ASC");
+                      while($menu = mysqli_fetch_assoc($result_menus)) {
+                          echo '<div class="col-md-6"> <!-- 2 kolom; ganti ke col-md-4 untuk 3 kolom -->
+                                  <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" name="akses[]" value="'.$menu['id_menu'].'" id="akses'.$menu['id_menu'].'">
+                                    <label class="form-check-label" for="akses'.$menu['id_menu'].'">
+                                      '.$menu['nama_menu'].'
+                                    </label>
+                                  </div>
+                                </div>';
+                      }
+                      ?>
+                    </div>
+                  </div>
+                </div>
+              </div>
                 <div class="card-footer">
                   <button type="submit" class="btn btn-primary">Simpan</button>
                   <a href="manajemen_user.php" class="btn btn-secondary">Batal</a>
