@@ -1,14 +1,14 @@
 <?php
-session_start();
-if(!isset($_SESSION["nipp"])) {
-    header("Location: ../login/login_view.php");
-    exit();
-}
-
 $servername = "localhost";
 $username = "root";
 $password = "";
 $dbname = "asetreg3_db";
+
+session_start();
+if(!isset($_SESSION["nipp"]) || !isset($_SESSION["name"])) {
+    header("Location: ../login/login_view.php");
+    exit();
+}
 
 // Create connection
 $con = mysqli_connect($servername, $username, $password, $dbname);
@@ -109,32 +109,32 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
             <li class="nav-item dropdown user-menu">
               <a href="#" class="nav-link dropdown-toggle" data-bs-toggle="dropdown">
                 <img
-                  src="../../dist/assets/img/profil.jpg"
+                  src="../../dist/assets/img/profile.png"
                   class="user-image rounded-circle shadow"
                   alt="User Image"
                 />
-                <span class="d-none d-md-inline"><?php echo isset($_SESSION['Nama']) ? htmlspecialchars($_SESSION['Nama']) : ''; ?></span>
+                <span class="d-none d-md-inline"><?php echo isset($_SESSION['name']) ? htmlspecialchars($_SESSION['name']) : ''; ?></span>
               </a>
               <ul class="dropdown-menu dropdown-menu-lg dropdown-menu-end">
                 <!--begin::User Image-->
                 <li class="user-header text-bg-primary">
                   <img
-                    src="../../dist/assets/img/profil.jpg"
+                    src="../../dist/assets/img/profile.png"
                     class="rounded-circle shadow"
                     alt="User Image"
                   />
                   <p>
                     <?php echo isset($_SESSION['name']) ? htmlspecialchars($_SESSION['name']) : ''; ?>
-                    <small>Member</small>
                   </p>
                 </li>
                 <!--end::User Image-->
+                <!--begin::Menu Body-->
+                <!--end::Menu Body-->
                 <!--begin::Menu Footer-->
-               <li class="user-footer">
+                <li class="user-footer">
                   <a href="#" class="btn btn-default btn-flat">NIPP: <?php echo isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : ''; ?></a>
-                  <a href="#" class="btn btn-default btn-flat float-end" onclick="logout()">Logout</a>
+                  <a href="../login/login_view.php" class="btn btn-danger ms-auto" >Logout</a>
                 </li>
-                <!--end::Menu Footer-->
                 <!--end::Menu Footer-->
               </ul>
             </li>
@@ -176,17 +176,33 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
               id="navigation"
             >
             <?php  
-            $query = "SELECT * From user_access INNER JOIN menus on user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '1234567890' order by menus.urutan_menu ASC";
+            $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '1234567890' ORDER BY menus.urutan_menu ASC";
             $result = mysqli_query($con, $query) or die(mysqli_error($con));
-            while ($row = mysqli_fetch_array($result, MYSQLI_BOTH))
-            {
-              echo 
-              '<li class="nav-item">
-                <a href="../'.$row['menu'].'/'.$row['menu'].'.php" class="nav-link active">
-                  <i class="nav-icon bi bi-speedometer"></i>
-                  <p>'.$row['nama_menu'].'</p>
-                </a>
-              </li>';
+            $iconMap = [
+                'Dasboard'                 => 'bi bi-grid',
+                'Usulan Penghapusan'       => 'bi bi-clipboard-plus',
+                'Approval SubReg'          => 'bi bi-check-circle',
+                'Approval Regional'        => 'bi bi-check2-square',
+                'Persetujuan Penghapusan'  => 'bi bi-clipboard-check',
+                'Pelaksanaan Penghapusan'  => 'bi bi-tools',
+                'Manajemen Menu'           => 'bi bi-list-ul',
+                'Manajemen User'         => 'bi bi-people-fill',
+                'Import DAT'               => 'bi bi-file-earmark-arrow-up'
+            ];
+  
+            while ($row = mysqli_fetch_assoc($result)) {
+                $namaMenu = trim($row['nama_menu']); 
+                $icon = $iconMap[$namaMenu] ?? 'bi bi-circle'; 
+              if ($namaMenu === 'Manajemen Menu') {
+               echo '<li class="nav-header"></li>';
+              }
+                echo '
+                <li class="nav-item">
+                    <a href="../'.$row['menu'].'/'.$row['menu'].'.php" class="nav-link">
+                        <i class="nav-icon '.$icon.'"></i>
+                        <p>'.$row['nama_menu'].'</p>
+                    </a>
+                </li>';
             }
             ?>
             </ul>
@@ -216,7 +232,10 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
             <!--begin::Row-->
             <div class="row">
                 <div class="card mb-4">
-                  <div class="card-header"><h3 class="card-title">Bordered Table</h3></div>
+                  <div class="card-header d-flex justify-content-between align-items-center">
+                    <h3 class="card-title">Daftar Menu</h3>
+                  <button onclick="location.href='tambah_menu.php'" type="button" class="btn btn-primary ms-auto"><i class="bi bi-plus-circle"></i> Tambah Menu</button>
+                </div>
                   <!-- /.card-header -->
                   <div class="card-body">
                     <table class="table table-bordered" role="table">
@@ -225,8 +244,8 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                           <th scope="col">Id Menu</th>
                           <th scope="col">Nama Menu</th>
                           <th scope="col">Text Link Menu</th>
+                          <th scope="col">No. Urut</th>
                           <th scope="col">Aksi</th>
-                          <th scope="col">No.Urut</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -241,27 +260,21 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                           <td>'.$row['nama_menu'].'</td>
                           <td>'.$row['menu'].'</td>
                           <td>'.$row['urutan_menu'].'</td>
-                          <td><div class="btn-group mb-2" role="group" aria-label="Basic mixed styles example">
-                            <button onclick="location.href=\'edit_menu.php?id='.$row['id_menu'].'\'" type="button" class="btn btn-warning">Edit</button> 
-                             <button onclick="return confirm(\'Apakah Anda yakin ingin menghapus menu ini?\') && (location.href=\'delete_menu.php?id='.$row['id_menu'].'\');" type="button" class="btn btn-danger">Delete</button> 
-                            </div></td> 
+                          <td>
+                            <div class="btn-group mb-2" role="group" aria-label="Basic mixed styles example">
+                            <button onclick="location.href=\'edit_menu.php?id='.$row['id_menu'].'\'" type="button" class="btn btn-warning">Edit</button>
+                            </div>
+                            <div class="btn-group mb-2" role="group" aria-label="Basic mixed styles example">
+                            <button type="button" class="btn btn-danger" data-bs-toggle="modal" data-bs-target="#deleteModal" data-id="'.$row['id_menu'].'" data-nama="'.htmlspecialchars($row['nama_menu']).'">Delete</button>
+                            </div>
+                          </td> 
                         </tr>';
                         }
                         ?>
-               
                       </tbody>
                     </table>
                   </div>
-                  <!-- /.card-body -->
-                  <div class="card-footer clearfix">
-                    <ul class="pagination pagination-sm m-0 float-end">
-                      <li class="page-item"><a class="page-link" href="#">«</a></li>
-                      <li class="page-item"><a class="page-link" href="#">1</a></li>
-                      <li class="page-item"><a class="page-link" href="#">2</a></li>
-                      <li class="page-item"><a class="page-link" href="#">3</a></li>
-                      <li class="page-item"><a class="page-link" href="#">»</a></li>
-                    </ul>
-                  </div>
+                  <!-- /.card-body -->  
                 </div>
             </div>
             <!--end::Row-->
@@ -479,6 +492,60 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
       //-----------------
       // - END PIE CHART -
       //-----------------
+    </script>
+
+    <!-- Modal Delete Confirmation -->
+    <div class="modal fade" id="deleteModal" tabindex="-1" aria-labelledby="deleteModalLabel" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header bg-danger text-white">
+            <h1 class="modal-title fs-5" id="deleteModalLabel">
+              <i class="bi bi-exclamation-triangle me-2"></i>Konfirmasi Penghapusan
+            </h1>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <div class="alert alert-warning d-flex align-items-start" role="alert">
+              <i class="bi bi-info-circle-fill me-3 flex-shrink-0"></i>
+              <div>
+                <strong>Perhatian!</strong><br>
+                Anda akan menghapus menu dengan nama: <strong id="namaMenuDelete"></strong>
+                <br><br>
+                Tindakan ini tidak dapat dibatalkan. Pastikan Anda yakin sebelum melanjutkan.
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+              <i class="bi bi-x-circle me-2"></i>Batal
+            </button>
+            <button type="button" class="btn btn-danger" id="confirmDeleteBtn">
+              <i class="bi bi-trash me-2"></i>Hapus Menu
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!--end::Modal Delete Confirmation-->
+
+    <script>
+      // Handle Delete Modal
+      const deleteModal = document.getElementById('deleteModal');
+      let deleteId = null;
+
+      deleteModal.addEventListener('show.bs.modal', function(event) {
+        const button = event.relatedTarget;
+        deleteId = button.getAttribute('data-id');
+        const namaMenu = button.getAttribute('data-nama');
+        
+        document.getElementById('namaMenuDelete').textContent = namaMenu;
+      });
+
+      document.getElementById('confirmDeleteBtn').addEventListener('click', function() {
+        if (deleteId) {
+          location.href = 'delete_menu.php?id=' + deleteId;
+        }
+      });
     </script>
     <!--end::Script-->
   </body>

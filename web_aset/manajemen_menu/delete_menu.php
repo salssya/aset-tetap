@@ -1,10 +1,4 @@
 <?php
-session_start();
-if(!isset($_SESSION["nipp"])) {
-    header("Location: ../login/login_view.php");
-    exit();
-}
-
 $servername = "localhost";
 $username = "root";
 $password = "";
