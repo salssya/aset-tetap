@@ -19,5 +19,5 @@ if (mysqli_query($con, $query)) {
     echo "<script>alert('User berhasil dihapus'); window.location='manajemen_user.php';</script>";
 } else {
     echo "<script>alert('Error: " . mysqli_error($con) . "'); window.location='manajemen_user.php';</script>";
-}
+} 
 ?>
