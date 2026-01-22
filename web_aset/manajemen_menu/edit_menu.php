@@ -1,17 +1,44 @@
 <?php
-session_start();
-if(!isset($_SESSION["nipp"])) {
-    header("Location: ../login/login_view.php");
-    exit();
-}
-
 $servername = "localhost";
 $username = "root";
 $password = "";
 $dbname = "asetreg3_db";
-
+ 
 // Create connection
 $con = mysqli_connect($servername, $username, $password, $dbname);
+session_start();
+if(!isset($_SESSION["nipp"]) || !isset($_SESSION["name"])) {
+    header("Location: ../login/login_view.php");
+    exit();
+}
+// Handle update form
+if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+    // Validasi input tidak boleh kosong
+    if (empty($_POST['nama_menu']) || empty($_POST['menu']) || empty($_POST['urutan_menu'])) {
+        $pesan = "Semua field harus diisi!";
+        $tipe_pesan = "danger";
+    } else {
+        // Gunakan prepared statement untuk menghindari SQL injection
+        $id_menu = $_GET['id'];
+        $nama_menu = $_POST['nama_menu'];
+        $menu = $_POST['menu'];
+        $urutan_menu = $_POST['urutan_menu']; 
+        
+        $stmt = $con->prepare("UPDATE menus SET nama_menu = ?, menu = ?, urutan_menu = ? WHERE id_menu = ?");
+        $stmt->bind_param("ssii", $nama_menu, $menu, $urutan_menu, $id_menu);
+        
+        if ($stmt->execute()) {
+            $pesan = "Menu berhasil diupdate!";
+            $tipe_pesan = "success";
+            header("Location: manajemen_menu.php");
+            exit();
+        } else {
+            $pesan = "Gagal mengupdate menu: " . $stmt->error;
+            $tipe_pesan = "danger";
+        }
+        $stmt->close();
+    }
+}
 ?>
 <!doctype html>
 <html lang="en">
@@ -109,30 +136,31 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
             <li class="nav-item dropdown user-menu">
               <a href="#" class="nav-link dropdown-toggle" data-bs-toggle="dropdown">
                 <img
-                  src="../../dist/assets/img/profil.jpg"
+                  src="../../dist/assets/img/profile.png"
                   class="user-image rounded-circle shadow"
                   alt="User Image"
                 />
-                <span class="d-none d-md-inline"><?php echo isset($_SESSION['Nama']) ? htmlspecialchars($_SESSION['Nama']) : ''; ?></span>
+                <span class="d-none d-md-inline"><?php echo isset($_SESSION['name']) ? htmlspecialchars($_SESSION['name']) : ''; ?></span>
               </a>
               <ul class="dropdown-menu dropdown-menu-lg dropdown-menu-end">
                 <!--begin::User Image-->
                 <li class="user-header text-bg-primary">
                   <img
-                    src="../../dist/assets/img/profil.jpg"
+                    src="../../dist/assets/img/profile.png"
                     class="rounded-circle shadow"
                     alt="User Image"
                   />
                   <p>
                     <?php echo isset($_SESSION['name']) ? htmlspecialchars($_SESSION['name']) : ''; ?>
-                    <small>Member</small>
                   </p>
                 </li>
                 <!--end::User Image-->
+                <!--begin::Menu Body-->
+                <!--end::Menu Body-->
                 <!--begin::Menu Footer-->
-               <li class="user-footer">
+                <li class="user-footer">
                   <a href="#" class="btn btn-default btn-flat">NIPP: <?php echo isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : ''; ?></a>
-                  <a href="#" class="btn btn-default btn-flat float-end" onclick="logout()">Logout</a>
+                  <a href="../login/login_view.php" class="btn btn-danger ms-auto" >Logout</a>
                 </li>
                 <!--end::Menu Footer-->
               </ul>
@@ -175,17 +203,34 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
               id="navigation"
             >
             <?php  
-            $query = "SELECT * From user_access INNER JOIN menus on user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '1234567890' order by menus.urutan_menu ASC";
+            $query = "
+                SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '1234567890' ORDER BY menus.urutan_menu ASC";
             $result = mysqli_query($con, $query) or die(mysqli_error($con));
-            while ($row = mysqli_fetch_array($result, MYSQLI_BOTH))
-            {
-              echo 
-              '<li class="nav-item">
-                <a href="../'.$row['menu'].'/'.$row['menu'].'.php" class="nav-link active">
-                  <i class="nav-icon bi bi-speedometer"></i>
-                  <p>'.$row['nama_menu'].'</p>
-                </a>
-              </li>';
+            $iconMap = [
+                'Dasboard'                => 'bi bi-grid',
+                'Usulan Penghapusan'      => 'bi bi-clipboard-plus',
+                'Approval SubReg'         => 'bi bi-check-circle',
+                'Approval Regional'       => 'bi bi-check2-square',
+                'Persetujuan Penghapusan' => 'bi bi-clipboard-check',
+                'Pelaksanaan Penghapusan' => 'bi bi-tools',
+                'Manajemen Menu'          => 'bi bi-list-ul',
+                'Manajemen User'         => 'bi bi-people-fill',
+                'Import DAT'              => 'bi bi-file-earmark-arrow-up'
+            ];
+  
+            while ($row = mysqli_fetch_assoc($result)) {
+                $namaMenu = trim($row['nama_menu']); 
+                $icon = $iconMap[$namaMenu] ?? 'bi bi-circle'; 
+              if ($namaMenu === 'Manajemen Menu') {
+               echo '<li class="nav-header"></li>';
+              }
+                echo '
+                <li class="nav-item">
+                    <a href="../'.$row['menu'].'/'.$row['menu'].'.php" class="nav-link">
+                        <i class="nav-icon '.$icon.'"></i>
+                        <p>'.$row['nama_menu'].'</p>
+                    </a>
+                </li>';
             }
             ?>
             </ul>
@@ -218,42 +263,62 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                   
                   <!--end::Header-->
                   <!--begin::Form-->
-                  <form action="" method="POST">
+                  <form action="" method="POST" class="needs-validation" novalidate="">
                     <!--begin::Body-->
                     <div class="card-body">
                         <?php  
-            $query = "SELECT * From menus where id_menu = $_GET[id] order by id_menu ASC";
-            $result = mysqli_query($con, $query) or die(mysqli_error($con));
-            while ($row = mysqli_fetch_array($result, MYSQLI_BOTH))
-            {
-              echo 
-              '<div class="mb-3">
-                        <label for="exampleInputEmail1" class="form-label">ID Menu</label>
-                        <input type="number" name="id_menu" class="form-control" id="exampleInputEmail1" aria-describedby="emailHelp" value="'.$row['id_menu'].'" readonly disabled>
-                        <div id="emailHelp" class="form-text">
-                        </div>
-                      </div>
-                      <div class="mb-3">
-                        <label for="exampleInputEmail1" class="form-label">Nama Menu</label>
-                        <input type="text" name="nama_menu" class="form-control" id="exampleInputEmail1" aria-describedby="emailHelp" value="'.$row['nama_menu'].'" editable>
-                        <div id="emailHelp" class="form-text">
-                        </div>
-                      </div>
-                      <div class="mb-3">
-                        <label for="exampleInputPassword1" class="form-label">Text Link Menu</label>
-                        <input type="text" name="text_link_menu" class="form-control" id="exampleInputPassword1" value="'.$row['menu'].'" editable>
-                      </div>
-                      <div class="mb-3">
-                        <label for="exampleInputPassword1" class="form-label">No Urut</label>
-                        <input type="number" name="no_urut" class="form-control" id="exampleInputPassword1" value="'.$row['urutan_menu'].'" editable>
-                      </div>
-                    </div>';
-            }
-            ?>
+                    // Validasi parameter GET
+                    if (!isset($_GET['id']) || empty($_GET['id'])) {
+                        echo '<div class="alert alert-danger">ID Menu tidak ditemukan!</div>';
+                    } else {
+                        // Gunakan prepared statement untuk menghindari SQL injection
+                        $id_menu = intval($_GET['id']);
+                        $stmt = $con->prepare("SELECT * FROM menus WHERE id_menu = ? ORDER BY id_menu ASC");
+                        $stmt->bind_param("i", $id_menu);
+                        $stmt->execute();
+                        $result = $stmt->get_result();
+                        
+                        if ($result->num_rows > 0) {
+                            // Tampilkan pesan jika ada
+                            if (isset($pesan)) {
+                                echo '<div class="alert alert-' . $tipe_pesan . ' alert-dismissible fade show" role="alert">' . $pesan . 
+                                '<button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button></div>';
+                            }
+                            
+                            $row = $result->fetch_array(MYSQLI_BOTH);
+                            echo 
+                            '<div class="mb-3">
+                                <label for="id_menu" class="form-label">ID Menu</label>
+                                <input type="number" name="id_menu" class="form-control" id="id_menu" value="'.$row['id_menu'].'" readonly disabled>
+                                <div id="id_menu_help" class="form-text">
+                                </div>
+                              </div>
+                              <div class="mb-3">
+                                <label for="nama_menu" class="form-label">Nama Menu</label>
+                                <input type="text" name="nama_menu" class="form-control" id="nama_menu" value="'.htmlspecialchars($row['nama_menu']).'" required>
+                                <div id="nama_menu_help" class="form-text">
+                                </div>
+                              </div>
+                              <div class="mb-3">
+                                <label for="text_link_menu" class="form-label">Text Link Menu</label>
+                                <input type="text" name="menu" class="form-control" id="text_link_menu" value="'.htmlspecialchars($row['menu']).'" required>
+                              </div>
+                              <div class="mb-3">
+                                <label for="no_urut" class="form-label">No Urut</label>
+                                <input type="number" name="urutan_menu" class="form-control" id="no_urut" value="'.$row['urutan_menu'].'" required>
+                              </div>
+                            </div>';
+                        } else {
+                            echo '<div class="alert alert-warning">Menu dengan ID ' . $id_menu . ' tidak ditemukan!</div>';
+                        }
+                        $stmt->close();
+                    }
+                    ?>
                     <!--end::Body-->
                     <!--begin::Footer-->
                     <div class="card-footer">
                       <button type="submit" class="btn btn-primary">Simpan</button>
+                      <a href="manajemen_menu.php" class="btn btn-secondary">Batal</a>
                     </div>
                     <!--end::Footer-->
                   </form>

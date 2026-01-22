@@ -1,11 +1,6 @@
 /*!
-<<<<<<< HEAD
- * AdminLTE v4.0.0-rc4 (https://adminlte.io)
- * Copyright 2014-2026 Colorlib <https://colorlib.com>
-=======
  * AdminLTE v4.0.0-rc3 (https://adminlte.io)
  * Copyright 2014-2025 Colorlib <https://colorlib.com>
->>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
  * Licensed under MIT (https://github.com/ColorlibHQ/AdminLTE/blob/master/LICENSE)
  */
 (function (global, factory) {

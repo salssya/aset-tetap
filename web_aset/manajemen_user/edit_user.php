@@ -59,6 +59,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
   <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
     <title>Edit User - Web Aset Tetap</title>
+
+    <link rel="icon" type="image/png" href="../../dist/assets/img/emblem.png" /> 
+    <link rel="shortcut icon" type="image/png" href="../../dist/assets/img/emblem.png" />  
     <!--begin::Accessibility Meta Tags-->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
     <meta name="color-scheme" content="light dark" />
@@ -149,7 +152,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             <li class="nav-item dropdown user-menu">
               <a href="#" class="nav-link dropdown-toggle" data-bs-toggle="dropdown">
                 <img
-                  src="../../dist/assets/img/profil.jpg"
+                  src="../../dist/assets/img/profile.png"
                   class="user-image rounded-circle shadow"
                   alt="User Image"
                 />
@@ -159,20 +162,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 <!--begin::User Image-->
                 <li class="user-header text-bg-primary">
                   <img
-                    src="../../dist/assets/img/profil.jpg"
+                    src="../../dist/assets/img/profile.png"
                     class="rounded-circle shadow"
                     alt="User Image"
                   />
                   <p>
                     <?php echo isset($_SESSION['name']) ? htmlspecialchars($_SESSION['name']) : ''; ?>
-                    <small>Member</small>
                   </p>
                 </li>
                 <!--end::User Image-->
                 <!--begin::Menu Footer-->
                 <li class="user-footer">
                   <a href="#" class="btn btn-default btn-flat">NIPP: <?php echo isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : ''; ?></a>
-                  <a href="#" class="btn btn-default btn-flat float-end" onclick="logout()">Logout</a>
+                  <a href="../login/login_view.php" class="btn btn-danger ms-auto" >Logout</a>
                 </li>
                 <!--end::Menu Footer-->
               </ul>
@@ -215,17 +217,33 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
               id="navigation"
             >
             <?php  
-            $query_menu = "SELECT * From user_access INNER JOIN menus on user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '" . $_SESSION['nipp'] . "' order by urutan_menu ASC";
-            $result_menu = mysqli_query($con, $query_menu) or die(mysqli_error($con));
-            while ($row = mysqli_fetch_array($result_menu, MYSQLI_BOTH))
-            {
-              echo 
-              '<li class="nav-item">
-                <a href="../'.$row['menu'].'/'.$row['menu'].'.php" class="nav-link">
-                  <i class="nav-icon bi bi-speedometer"></i>
-                  <p>'.$row['nama_menu'].'</p>
-                </a>
-              </li>';
+            $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '1234567890' ORDER BY menus.urutan_menu ASC";
+            $result = mysqli_query($con, $query) or die(mysqli_error($con));
+            $iconMap = [
+                'Dasboard'               => 'bi bi-grid',
+                'Usulan Penghapusan'     => 'bi bi-clipboard-plus',
+                'Approval SubReg'        => 'bi bi-check-circle',
+                'Approval Regional'      => 'bi bi-check2-square',
+                'Persetujuan Penghapusan'=> 'bi bi-clipboard-check',
+                'Pelaksanaan Penghapusan'=> 'bi bi-tools',
+                'Manajemen Menu'         => 'bi bi-list-ul',
+                'Manajemen User'         => 'bi bi-people-fill',
+                'Import DAT'            => 'bi bi-file-earmark-arrow-up'
+            ];
+  
+            while ($row = mysqli_fetch_assoc($result)) {
+                $namaMenu = trim($row['nama_menu']); 
+                $icon = $iconMap[$namaMenu] ?? 'bi bi-circle'; 
+              if ($namaMenu === 'Manajemen Menu') {
+               echo '<li class="nav-header"></li>';
+              }
+                echo '
+                <li class="nav-item">
+                    <a href="../'.$row['menu'].'/'.$row['menu'].'.php" class="nav-link">
+                        <i class="nav-icon '.$icon.'"></i>
+                        <p>'.$row['nama_menu'].'</p>
+                    </a>
+                </li>';
             }
             ?>
             </ul>
