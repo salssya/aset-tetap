@@ -122,7 +122,7 @@ $_SESSION['akses'] = $akses;
             <li class="nav-item dropdown user-menu">
               <a href="#" class="nav-link dropdown-toggle" data-bs-toggle="dropdown">
                 <img
-                  src="../../dist/assets/img/profile.png"
+                  src="../../dist/assets/img/profil.jpg"
                   class="user-image rounded-circle shadow"
                   alt="User Image"
                 />
@@ -132,7 +132,7 @@ $_SESSION['akses'] = $akses;
                 <!--begin::User Image-->
                 <li class="user-header text-bg-primary">
                   <img
-                    src="../../dist/assets/img/profile.png"
+                    src="../../dist/assets/img/profil.jpg"
                     class="rounded-circle shadow"
                     alt="User Image"
                   />
