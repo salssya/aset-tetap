@@ -20,16 +20,24 @@ $result = mysqli_query($con, $query);
 $user = mysqli_fetch_assoc($result);
 
 // Handle form submission
+$akses_user = [];
+ $result_access = mysqli_query($con, "SELECT id_menu FROM user_access WHERE NIPP='$nipp'"); 
+ while($row_access = mysqli_fetch_assoc($result_access)) { 
+  $akses_user[] = $row_access['id_menu']; 
+}
+
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $nama = mysqli_real_escape_string($con, $_POST['nama']);
     $email = mysqli_real_escape_string($con, $_POST['email']);
     $password = mysqli_real_escape_string($con, $_POST['password']);
+
     if (!empty($password)) {
         $hashed_password = password_hash($password, PASSWORD_DEFAULT);
         $update_query = "UPDATE users SET Nama='$nama', Email='$email', Password='$hashed_password' WHERE NIPP='$nipp'";
     } else {
         $update_query = "UPDATE users SET Nama='$nama', Email='$email' WHERE NIPP='$nipp'";
     }
+    
     if (mysqli_query($con, $update_query)) {
         // Hapus akses lama
         mysqli_query($con, "DELETE FROM user_access WHERE NIPP='$nipp'");
@@ -293,18 +301,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 <div class="col-md-12">
                   <div class="form-group">
                     <label class="ms-3">Hak Akses</label><br>
-                    <div class="row" style="padding-left: 15px;">
+                    <div class="row" style="padding-left: 30px;">
                       <?php
-                      $result_menus = mysqli_query($con, "SELECT * FROM menus ORDER BY urutan_menu ASC");
-                      while($menu = mysqli_fetch_assoc($result_menus)) {
-                          echo '<div class="col-md-6">
-                                  <div class="form-check">
-                                    <input class="form-check-input" type="checkbox" name="akses[]" value="'.$menu['id_menu'].'" id="akses'.$menu['id_menu'].'">
-                                    <label class="form-check-label" for="akses'.$menu['id_menu'].'">
-                                      '.$menu['nama_menu'].'
-                                    </label>
-                                  </div>
-                                </div>'; 
+                      $result_menus = mysqli_query($con, "SELECT * FROM menus ORDER BY urutan_menu ASC"); 
+                      while($menu = mysqli_fetch_assoc($result_menus)) { 
+                        $checked = in_array($menu['id_menu'], $akses_user) ? 'checked' : ''; 
+                        echo '<div class="col-md-6 form-check"> 
+                              <input class="form-check-input" type="checkbox" name="akses[]" value="'.$menu['id_menu'].'" '.$checked.'> 
+                              <label class="form-check-label">'.$menu['nama_menu'].'
+                              </label> 
+                        </div>'; 
                       }
                       ?>
                     </div>
