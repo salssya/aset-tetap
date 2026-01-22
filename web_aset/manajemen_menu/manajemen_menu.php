@@ -19,6 +19,9 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
   <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
     <title>Web Aset Tetap</title>
+
+    <link rel="icon" type="image/png" href="../../dist/assets/img/emblem.png" /> 
+    <link rel="shortcut icon" type="image/png" href="../../dist/assets/img/emblem.png" /> 
     <!--begin::Accessibility Meta Tags-->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
     <meta name="color-scheme" content="light dark" />
@@ -186,7 +189,7 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                 'Persetujuan Penghapusan'  => 'bi bi-clipboard-check',
                 'Pelaksanaan Penghapusan'  => 'bi bi-tools',
                 'Manajemen Menu'           => 'bi bi-list-ul',
-                'Manajemen User'         => 'bi bi-people-fill',
+                'Manajemen User'           => 'bi bi-people-fill',
                 'Import DAT'               => 'bi bi-file-earmark-arrow-up'
             ];
   
@@ -286,11 +289,11 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
       <!--begin::Footer-->
       <footer class="app-footer">
         <!--begin::To the end-->
-        <div class="float-end d-none d-sm-inline">PT Pelabuhan Indoensia (Persero)</div>
+        <div class="float-end d-none d-sm-inline">PT Pelabuhan Indonesia (Persero)</div>
         <!--end::To the end-->
         <!--begin::Copyright-->
         <strong>
-          Copyright &copy; Proyek Aset Tetap Regional&nbsp;
+          Copyright &copy; Proyek Aset Tetap Regional 3&nbsp;
         </strong>
         <!--end::Copyright-->
       </footer>

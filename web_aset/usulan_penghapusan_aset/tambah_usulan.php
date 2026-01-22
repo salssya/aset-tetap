@@ -113,7 +113,7 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
             <li class="nav-item dropdown user-menu">
               <a href="#" class="nav-link dropdown-toggle" data-bs-toggle="dropdown">
                 <img
-                  src="../../dist/assets/img/profil.jpg"
+                  src="../../dist/assets/img/profile.png"
                   class="user-image rounded-circle shadow"
                   alt="User Image"
                 />
@@ -123,7 +123,7 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                 <!--begin::User Image-->
                 <li class="user-header text-bg-primary">
                   <img
-                    src="../../dist/assets/img/profil.jpg"
+                    src="../../dist/assets/img/profile.png"
                     class="rounded-circle shadow"
                     alt="User Image"
                   />
@@ -340,13 +340,7 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                   </script>
                   <!--end::JavaScript-->
                 </div>
-                <!-- /.card -->
-              </div>
-              <!-- /.col -->
-            </div>
-            <!--end::Row-->
-            <!-- /.footer -->
-                </div>
+                <div>
           <!--end::Container-->
         </div>
         <!--end::App Content-->
@@ -355,7 +349,7 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
       <!--begin::Footer-->
       <footer class="app-footer">
         <!--begin::To the end-->
-        <div class="float-end d-none d-sm-inline">PT Pelabuhan Indoensia (Persero)</div>
+        <div class="float-end d-none d-sm-inline">PT Pelabuhan Indonesia (Persero)</div>
         <!--end::To the end-->
         <!--begin::Copyright-->
         <strong>
