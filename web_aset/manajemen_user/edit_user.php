@@ -304,7 +304,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                                       '.$menu['nama_menu'].'
                                     </label>
                                   </div>
-                                </div>';
+                                </div>'; 
                       }
                       ?>
                     </div>
