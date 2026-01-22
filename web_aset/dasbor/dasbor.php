@@ -19,6 +19,9 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
   <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
     <title>Web Aset Tetap</title>
+
+    <link rel="icon" type="image/png" href="../../dist/assets/img/emblem.png" /> 
+    <link rel="shortcut icon" type="image/png" href="../../dist/assets/img/emblem.png" /> 
     <!--begin::Accessibility Meta Tags-->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
     <meta name="color-scheme" content="light dark" />
