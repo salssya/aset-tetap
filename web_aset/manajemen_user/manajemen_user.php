@@ -28,7 +28,7 @@ $_SESSION['akses'] = $akses;
   <!--begin::Head-->
   <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-    <title>Manajemen User - Web Aset Tetap</title>
+    <title>Web Aset Tetap</title>
 
     <link rel="icon" type="image/png" href="../../dist/assets/img/emblem.png" /> 
     <link rel="shortcut icon" type="image/png" href="../../dist/assets/img/emblem.png" />  
@@ -122,7 +122,7 @@ $_SESSION['akses'] = $akses;
             <li class="nav-item dropdown user-menu">
               <a href="#" class="nav-link dropdown-toggle" data-bs-toggle="dropdown">
                 <img
-                  src="../../dist/assets/img/profil.jpg"
+                  src="../../dist/assets/img/profile.png"
                   class="user-image rounded-circle shadow"
                   alt="User Image"
                 />
@@ -132,7 +132,7 @@ $_SESSION['akses'] = $akses;
                 <!--begin::User Image-->
                 <li class="user-header text-bg-primary">
                   <img
-                    src="../../dist/assets/img/profil.jpg"
+                    src="../../dist/assets/img/profile.png"
                     class="rounded-circle shadow"
                     alt="User Image"
                   />
@@ -297,7 +297,7 @@ $_SESSION['akses'] = $akses;
       <!--begin::Footer-->
       <footer class="app-footer">
         <!--begin::To the end-->
-        <div class="float-end d-none d-sm-inline">PT Pelabuhan Indoensia (Persero)</div>
+        <div class="float-end d-none d-sm-inline">PT Pelabuhan Indonesia (Persero)</div>
         <!--end::To the end-->
         <!--begin::Copyright-->
         <strong>
