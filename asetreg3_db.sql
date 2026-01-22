@@ -3,15 +3,9 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
-<<<<<<< HEAD
--- Generation Time: Jan 14, 2026 at 04:06 AM
+-- Generation Time: Jan 20, 2026 at 04:45 PM
 -- Server version: 10.4.32-MariaDB
 -- PHP Version: 8.2.12
-=======
--- Generation Time: Jan 19, 2026 at 03:44 AM
--- Server version: 10.4.32-MariaDB
--- PHP Version: 8.0.30
->>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
 START TRANSACTION;
@@ -36,11 +30,6 @@ SET time_zone = "+00:00";
 CREATE TABLE `menus` (
   `id_menu` int(11) NOT NULL,
   `nama_menu` varchar(100) NOT NULL,
-<<<<<<< HEAD
-  `menu` varchar(100) NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
-=======
   `menu` varchar(100) NOT NULL,
   `urutan_menu` int(11) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -56,9 +45,9 @@ INSERT INTO `menus` (`id_menu`, `nama_menu`, `menu`, `urutan_menu`) VALUES
 (6, 'Persetujuan Penghapusan', 'persetujuan_penghapusan', 5),
 (7, 'Pelaksanaan Penghapusan', 'pelaksanaan_penghapusan', 6),
 (8, 'Manajemen Menu', 'manajemen_menu', 25),
-(9, 'Dasboard', 'dasbor', 1);
+(9, 'Dasboard', 'dasbor', 1),
+(12, 'Import DAT', 'import_dat', 26);
 
->>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
 -- --------------------------------------------------------
 
 --
@@ -79,10 +68,7 @@ CREATE TABLE `users` (
 --
 
 INSERT INTO `users` (`NIPP`, `Nama`, `Email`, `Jabatan`, `Password`, `Status`) VALUES
-<<<<<<< HEAD
-=======
 ('123456', 'pandu', 'pandu@gmail.com', 'staff', '123456', 1),
->>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
 ('1234567890', 'administrator', 'admin@admin.com', 'admin', 'passadmin', 1);
 
 -- --------------------------------------------------------
@@ -92,17 +78,12 @@ INSERT INTO `users` (`NIPP`, `Nama`, `Email`, `Jabatan`, `Password`, `Status`) V
 --
 
 CREATE TABLE `user_access` (
-<<<<<<< HEAD
-=======
   `id_access` int(11) NOT NULL,
->>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
   `NIPP` varchar(50) DEFAULT NULL,
   `id_menu` int(11) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
-<<<<<<< HEAD
-=======
 -- Dumping data for table `user_access`
 --
 
@@ -114,11 +95,75 @@ INSERT INTO `user_access` (`id_access`, `NIPP`, `id_menu`) VALUES
 (5, '1234567890', 7),
 (6, '123456', 4),
 (7, '123456', 5),
-(9, '1234567890', 8),
-(10, '1234567890', 9);
+(10, '1234567890', 9),
+(11, '1234567890', 8),
+(12, '1234567890', 12);
+
+-- --------------------------------------------------------
 
 --
->>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
+-- Table structure for table `import_dat`
+--
+
+CREATE TABLE `import_dat` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `nomor_asset_utama` VARCHAR(50),
+    `profit_center` VARCHAR(20),
+    `profit_center_text` VARCHAR(100),
+    `cost_center_baru` VARCHAR(20),
+    `deskripsi_cost_center` VARCHAR(200),
+    `nama_cabang_kawasan` VARCHAR(100),
+    `kode_plant` VARCHAR(20),
+    `periode_bulan` VARCHAR(20),
+    `tahun_buku` VARCHAR(4),
+    `nomor_asset_asal` VARCHAR(50),
+    `nomor_asset` VARCHAR(50),
+    `sub_number` VARCHAR(20),
+    `gl_account` VARCHAR(20),
+    `asset_class` VARCHAR(20),
+    `asset_class_name` VARCHAR(100),
+    `kelompok_aset` VARCHAR(200),
+    `status_aset` VARCHAR(100),
+    `asset_main_no_text` VARCHAR(100),
+    `akuisisi` VARCHAR(20),
+    `keterangan_asset` TEXT,
+    `tgl_akuisisi` VARCHAR(20),
+    `tgl_perolehan` VARCHAR(20),
+    `tgl_penyusutan` VARCHAR(20),
+    `masa_manfaat` VARCHAR(20),
+    `sisa_manfaat` VARCHAR(20),
+    `nilai_perolehan_awal` VARCHAR(50),
+    `nilai_residu_persen` VARCHAR(20),
+    `nilai_residu_rp` VARCHAR(50),
+    `nilai_perolehan_sd` VARCHAR(50),
+    `adjusment_nilai_perolehan` VARCHAR(50),
+    `nilai_buku_awal` VARCHAR(50),
+    `nilai_buku_sd` VARCHAR(50),
+    `penyusutan_bulan` VARCHAR(50),
+    `penyusutan_sd` VARCHAR(50),
+    `penyusutan_tahun_lalu` VARCHAR(50),
+    `penyusutan_tahun` VARCHAR(50),
+    `akm_penyusutan_tahun_lalu` VARCHAR(50),
+    `adjusment_akm_penyusutan` VARCHAR(50),
+    `penghapusan` VARCHAR(20),
+    `asset_shutdown` VARCHAR(20),
+    `akumulasi_penyusutan` VARCHAR(200),
+    `additional_description` VARCHAR(200),
+    `serial_number` VARCHAR(25),
+    `alamat` VARCHAR(500),
+    `gl_account_exp` VARCHAR(25),
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `imported_by` VARCHAR(20),
+    UNIQUE KEY `uk_nomor_asset` (`nomor_asset`),
+    KEY `idx_profit_center` (`profit_center`),
+    KEY `idx_tahun_buku` (`tahun_buku`),
+    KEY `idx_created_at` (`created_at`),
+    KEY `idx_cost_center` (`cost_center_baru`),
+    KEY `idx_imported_by` (`imported_by`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
 -- Indexes for dumped tables
 --
 
@@ -138,10 +183,7 @@ ALTER TABLE `users`
 -- Indexes for table `user_access`
 --
 ALTER TABLE `user_access`
-<<<<<<< HEAD
-=======
   ADD PRIMARY KEY (`id_access`),
->>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
   ADD KEY `NIPP` (`NIPP`),
   ADD KEY `menu_id` (`id_menu`);
 
@@ -153,17 +195,13 @@ ALTER TABLE `user_access`
 -- AUTO_INCREMENT for table `menus`
 --
 ALTER TABLE `menus`
-<<<<<<< HEAD
-  MODIFY `id_menu` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
-=======
-  MODIFY `id_menu` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=10;
+  MODIFY `id_menu` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=13;
 
 --
 -- AUTO_INCREMENT for table `user_access`
 --
 ALTER TABLE `user_access`
-  MODIFY `id_access` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=11;
->>>>>>> 0f396749324c7c918818da6f9f43a0258fa107a5
+  MODIFY `id_access` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=13;
 
 --
 -- Constraints for dumped tables
