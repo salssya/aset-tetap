@@ -207,8 +207,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
               id="navigation"
             >
             <?php  
-            $query = "
-                SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '1234567890' ORDER BY menus.urutan_menu ASC";
+            $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '1234567890' ORDER BY menus.urutan_menu ASC";
             $result = mysqli_query($con, $query) or die(mysqli_error($con));
             $iconMap = [
                 'Dasboard'                 => 'bi bi-grid',
@@ -218,7 +217,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 'Persetujuan Penghapusan'  => 'bi bi-clipboard-check',
                 'Pelaksanaan Penghapusan'  => 'bi bi-tools',
                 'Manajemen Menu'           => 'bi bi-list-ul',
-                'Manajemen User'         => 'bi bi-people-fill',
+                'Manajemen User'           => 'bi bi-people-fill',
                 'Import DAT'               => 'bi bi-file-earmark-arrow-up'
             ];
   
@@ -331,28 +330,22 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                       });
                     })();
                   </script>
-                  <!--end::JavaScript-->
-                </div>
-                <!-- /.card -->
+              <!--end::JavaScript-->
               </div>
-              <!-- /.col -->
-            </div>
-            <!--end::Row-->
-            <!-- /.footer -->
-                </div>
+                <div>
           <!--end::Container-->
         </div>
         <!--end::App Content-->
       </main>
       <!--end::App Main-->
       <!--begin::Footer-->
-      <footer class="app-footer">
+      <footer class="app-footer ">
         <!--begin::To the end-->
-        <div class="float-end d-none d-sm-inline">PT Pelabuhan Indoensia (Persero)</div>
+        <div class="float-end d-none d-sm-inline">PT Pelabuhan Indonesia (Persero)</div>
         <!--end::To the end-->
         <!--begin::Copyright-->
         <strong>
-          Copyright &copy; Proyek Aset Tetap Regional&nbsp;
+          Copyright &copy; Proyek Aset Tetap Regional 3&nbsp;
         </strong>
         <!--end::Copyright-->
       </footer>
