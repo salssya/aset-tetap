@@ -132,7 +132,7 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                 <!--begin::Menu Footer-->
                <li class="user-footer">
                   <a href="#" class="btn btn-default btn-flat">NIPP: <?php echo isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : ''; ?></a>
-                  <a href="#" class="btn btn-default btn-flat float-end" onclick="logout()">Logout</a>
+                  <a href="../login/login_view.php" class="btn btn-danger ms-auto" >Logout</a>
                 </li>
                 <!--end::Menu Footer-->
               </ul>
@@ -175,17 +175,33 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
               id="navigation"
             >
             <?php  
-            $query = "SELECT * From user_access INNER JOIN menus on user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '" . $_SESSION['nipp'] . "' order by menus.id_menu Desc";
+            $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '1234567890' ORDER BY menus.urutan_menu ASC";
             $result = mysqli_query($con, $query) or die(mysqli_error($con));
-            while ($row = mysqli_fetch_array($result, MYSQLI_BOTH))
-            {
-              echo 
-              '<li class="nav-item">
-                <a href="../'.$row['menu'].'/'.$row['menu'].'.php" class="nav-link active">
-                  <i class="nav-icon bi bi-speedometer"></i>
-                  <p>'.$row['nama_menu'].'</p>
-                </a>
-              </li>';
+            $iconMap = [
+                'Dasboard'               => 'bi bi-grid',
+                'Usulan Penghapusan'     => 'bi bi-clipboard-plus',
+                'Approval SubReg'        => 'bi bi-check-circle',
+                'Approval Regional'      => 'bi bi-check2-square',
+                'Persetujuan Penghapusan'=> 'bi bi-clipboard-check',
+                'Pelaksanaan Penghapusan'=> 'bi bi-tools',
+                'Manajemen Menu'         => 'bi bi-list-ul',
+                'Manajemen User'         => 'bi bi-people-fill',
+                'Import DAT'            => 'bi bi-file-earmark-arrow-up'
+            ];
+  
+            while ($row = mysqli_fetch_assoc($result)) {
+                $namaMenu = trim($row['nama_menu']); 
+                $icon = $iconMap[$namaMenu] ?? 'bi bi-circle'; 
+              if ($namaMenu === 'Manajemen Menu') {
+               echo '<li class="nav-header"></li>';
+              }
+                echo '
+                <li class="nav-item">
+                    <a href="../'.$row['menu'].'/'.$row['menu'].'.php" class="nav-link">
+                        <i class="nav-icon '.$icon.'"></i>
+                        <p>'.$row['nama_menu'].'</p>
+                    </a>
+                </li>';
             }
             ?>
             </ul>
