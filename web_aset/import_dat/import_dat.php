@@ -926,7 +926,7 @@ function saveDataToDatabase($con, $importedData) {
         <!--end::To the end-->
         <!--begin::Copyright-->
         <strong>
-          Copyright &copy; Proyek Aset Tetap Regional&nbsp;
+          Copyright &copy; Proyek Aset Tetap Regional 3&nbsp;
         </strong>
         <!--end::Copyright-->
       </footer>
