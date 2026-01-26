@@ -356,11 +356,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
       <!--begin::Footer-->
       <footer class="app-footer">
         <!--begin::To the end-->
-        <div class="float-end d-none d-sm-inline">PT Pelabuhan Indoensia (Persero)</div>
+        <div class="float-end d-none d-sm-inline">PT Pelabuhan Indonesia (Persero)</div>
         <!--end::To the end-->
         <!--begin::Copyright-->
         <strong>
-          Copyright &copy; Proyek Aset Tetap Regional&nbsp;
+          Copyright &copy; Proyek Aset Tetap Regional 3&nbsp;
         </strong>
         <!--end::Copyright-->
       </footer>
