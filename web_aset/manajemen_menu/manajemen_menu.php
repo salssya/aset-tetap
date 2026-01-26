@@ -139,7 +139,7 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                 <!--end::Menu Body-->
                 <!--begin::Menu Footer-->
                 <li class="user-footer">
-                  <a href="../manajemen_user/manajemen_user.php" class="btn btn-sm btn-default btn-flat">
+                  <a href="../profile/profile.php" class="btn btn-sm btn-default btn-flat">
                     <i class="bi bi-person"></i> Profile
                   </a>
                   <a href="../login/login_view.php" class="btn btn-sm btn-danger ms-auto" >
