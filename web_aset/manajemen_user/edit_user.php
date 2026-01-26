@@ -47,9 +47,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 mysqli_query($con, "INSERT INTO user_access (NIPP, id_menu) VALUES ('$nipp', '$id_menu')");
             }
         }
-        echo "<script>alert('User berhasil diupdate'); window.location='manajemen_user.php';</script>";
+        $pesan = "User berhasil diupdate!";
+        $tipe_pesan = "success";
     } else {
-        echo "<script>alert('Error: " . mysqli_error($con) . "');</script>";
+        $pesan = "Error: " . mysqli_error($con);
+        $tipe_pesan = "danger";
     }
 }
 ?>
@@ -182,7 +184,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 <!--end::Menu Body-->
                 <!--begin::Menu Footer-->
                 <li class="user-footer">
-                  <a href="../manajemen_user/manajemen_user.php" class="btn btn-sm btn-default btn-flat">
+                  <a href="../profile/profile.php" class="btn btn-sm btn-default btn-flat">
                     <i class="bi bi-person"></i> Profile
                   </a>
                   <a href="../login/login_view.php" class="btn btn-sm btn-danger ms-auto" >
@@ -303,6 +305,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
               <!--begin::Form-->
               <form class="needs-validation" method="post" novalidate="">
                 <div class="card-body">
+                  <?php  
+                      if (isset($pesan)) {
+                          echo '<div class="alert alert-' . $tipe_pesan . ' alert-dismissible fade show" role="alert">' . $pesan . 
+                          '<button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button></div>';
+                      }
+                      
+                      // Hanya tampilkan form jika belum submit atau ada error
+                      if (!isset($pesan) || $tipe_pesan == "danger") {
+                      ?>
                   <div class="row">
                     <div class="col-md-6">
                       <div class="form-group">
@@ -358,6 +369,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                   <button type="submit" class="btn btn-primary">Update</button>
                   <a href="manajemen_user.php" class="btn btn-secondary">Batal</a>
                 </div>
+                <?php } else if (isset($pesan) && $tipe_pesan == "success") { ?>
+                <div class="card-body text-center">
+                  <p><a href="manajemen_user.php" class="btn btn-primary">Kembali ke Daftar User</a></p>
+                </div>
+                <?php } ?>
               </form>
               <!--end::Form-->
               <!--begin::JavaScript-->
