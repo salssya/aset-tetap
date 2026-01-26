@@ -204,12 +204,17 @@ $_SESSION['akses'] = $akses;
             while ($row = mysqli_fetch_assoc($result)) {
                 $namaMenu = trim($row['nama_menu']); 
                 $icon = $iconMap[$namaMenu] ?? 'bi bi-circle'; 
+
+                $currentPage = basename($_SERVER['PHP_SELF']);
+                $menuFile = $row['menu'].'.php'; 
+                $isActive = ($currentPage === $menuFile) ? 'active' : '';
+
               if ($namaMenu === 'Manajemen Menu') {
                echo '<li class="nav-header"></li>';
               }
                 echo '
                 <li class="nav-item">
-                    <a href="../'.$row['menu'].'/'.$row['menu'].'.php" class="nav-link">
+                    <a href="../'.$row['menu'].'/'.$row['menu'].'.php" class="nav-link '.$isActive.'">
                         <i class="nav-icon '.$icon.'"></i>
                         <p>'.$row['nama_menu'].'</p>
                     </a>
@@ -263,18 +268,23 @@ $_SESSION['akses'] = $akses;
                       <th>NIPP</th>
                       <th>Nama</th>
                       <th>Email</th>
+                      <th>Akses Menu</th>
                       <th>Action</th>
                     </tr>
                   </thead>
                   <tbody>
                     <?php
-                    $query_users = "SELECT * FROM users";
+                    $query_users = "SELECT users.*, GROUP_CONCAT(user_access.id_menu ORDER BY user_access.id_menu) AS akses_menu 
+                                    FROM users 
+                                    LEFT JOIN user_access ON users.NIPP = user_access.NIPP 
+                                    GROUP BY users.NIPP";
                     $result_users = mysqli_query($con, $query_users);
                     while ($user = mysqli_fetch_assoc($result_users)) {
                       echo "<tr>
                               <td>{$user['NIPP']}</td>
                               <td>{$user['Nama']}</td>
                               <td>{$user['Email']}</td>
+                              <td>{$user['akses_menu']}</td>
                               <td>
                                 <a href='edit_user.php?nipp={$user['NIPP']}' class='btn btn-warning btn-sm'>Edit</a>
                                 <a href='delete_user.php?nipp={$user['NIPP']}' class='btn btn-danger btn-sm' onclick='return confirm(\"Yakin hapus user?\")'>Delete</a>
