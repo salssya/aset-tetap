@@ -194,13 +194,18 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
   
             while ($row = mysqli_fetch_assoc($result)) {
                 $namaMenu = trim($row['nama_menu']); 
-                $icon = $iconMap[$namaMenu] ?? 'bi bi-circle'; 
+                $icon = $iconMap[$namaMenu] ?? 'bi bi-circle';
+                
+                $currentPage = basename($_SERVER['PHP_SELF']);
+                $menuFile = $row['menu'].'.php'; 
+                $isActive = ($currentPage === $menuFile) ? 'active' : '';
+
               if ($namaMenu === 'Manajemen Menu') {
                echo '<li class="nav-header"></li>';
               }
                 echo '
                 <li class="nav-item">
-                    <a href="../'.$row['menu'].'/'.$row['menu'].'.php" class="nav-link">
+                    <a href="../'.$row['menu'].'/'.$row['menu'].'.php" class="nav-link '.$isActive.'">
                         <i class="nav-icon '.$icon.'"></i>
                         <p>'.$row['nama_menu'].'</p>
                     </a>
