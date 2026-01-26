@@ -1,14 +1,14 @@
 <?php
-session_start();
-if(!isset($_SESSION["nipp"])) {
-    header("Location: ../login/login_view.php");
-    exit();
-}
-~
 $servername = "localhost";
 $username = "root";
 $password = "";
 $dbname = "asetreg3_db";
+
+session_start();
+if(!isset($_SESSION["nipp"]) || !isset($_SESSION["name"])) {
+    header("Location: ../login/login_view.php");
+    exit();
+}
 
 // Create connection
 $con = mysqli_connect($servername, $username, $password, $dbname);
@@ -19,9 +19,11 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
   <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
     <title>Web Aset Tetap</title>
-
+    <!-- Favicon -->
+    
+    <!-- emblem pelindo -->
     <link rel="icon" type="image/png" href="../../dist/assets/img/emblem.png" /> 
-    <link rel="shortcut icon" type="image/png" href="../../dist/assets/img/emblem.png" /> 
+    <link rel="shortcut icon" type="image/png" href="../../dist/assets/img/emblem.png" />  
     <!--begin::Accessibility Meta Tags-->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
     <meta name="color-scheme" content="light dark" />
@@ -92,21 +94,10 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
           <!--begin::End Navbar Links-->
           <ul class="navbar-nav ms-auto">
             <!--begin::Navbar Search-->
-            <li class="nav-item">
-              <a class="nav-link" data-widget="navbar-search" href="#" role="button">
-                <i class="bi bi-search"></i>
-              </a>
-            </li>
             <!--end::Navbar Search-->
             <!--begin::Messages Dropdown Menu-->
             <!--end::Notifications Dropdown Menu-->
             <!--begin::Fullscreen Toggle-->
-            <li class="nav-item">
-              <a class="nav-link" href="#" data-lte-toggle="fullscreen">
-                <i data-lte-icon="maximize" class="bi bi-arrows-fullscreen"></i>
-                <i data-lte-icon="minimize" class="bi bi-fullscreen-exit" style="display: none"></i>
-              </a>
-            </li>
             <!--end::Fullscreen Toggle-->
             <!--begin::User Menu Dropdown-->
             <li class="nav-item dropdown user-menu">
@@ -190,19 +181,20 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
               id="navigation"
             >
             <?php  
-            $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '1234567890' ORDER BY menus.urutan_menu ASC";
+            $userNipp = isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : '';
+            $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '" . mysqli_real_escape_string($con, $userNipp) . "' ORDER BY menus.urutan_menu ASC";
             $result = mysqli_query($con, $query) or die(mysqli_error($con));
             $iconMap = [
-                'Dasboard'               => 'bi bi-grid',
-                'Usulan Penghapusan'     => 'bi bi-clipboard-plus',
+                'Dasboard'               => 'bi bi-grid-fill',
+                'Usulan Penghapusan'     => 'bi bi-clipboard-plus-fill',
                 'Approval SubReg'        => 'bi bi-check-circle',
                 'Approval Regional'      => 'bi bi-check2-square',
-                'Persetujuan Penghapusan'=> 'bi bi-clipboard-check',
+                'Persetujuan Penghapusan'=> 'bi bi-clipboard-check-fill',
                 'Pelaksanaan Penghapusan'=> 'bi bi-tools',
                 'Manajemen Menu'         => 'bi bi-list-ul',
                 'Manajemen User'         => 'bi bi-people-fill',
-                'Import DAT'             => 'bi bi-file-earmark-arrow-up'
-            ];
+                'Import DAT'             => 'bi bi-file-earmark-arrow-up-fill'
+            ]; 
   
             while ($row = mysqli_fetch_assoc($result)) {
                 $namaMenu = trim($row['nama_menu']); 
@@ -224,6 +216,7 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                 </li>';
             }
             ?>
+
             </ul>
             <!--end::Sidebar Menu-->
           </nav>
@@ -250,13 +243,41 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
           <div class="container-fluid">
             <!-- Info boxes -->
             <div class="row">
+              <?php
+              // Get statistics from database
+              $totalQuery = "SELECT COUNT(*) as total FROM import_dat";
+              $totalResult = mysqli_query($con, $totalQuery);
+              $totalRow = mysqli_fetch_assoc($totalResult);
+              $totalAssets = $totalRow['total'] ?? 0;
+              
+              $shutdownQuery = "SELECT COUNT(*) as shutdown FROM import_dat WHERE asset_shutdown = '1' OR asset_shutdown = 'true'";
+              $shutdownResult = mysqli_query($con, $shutdownQuery);
+              $shutdownRow = mysqli_fetch_assoc($shutdownResult);
+              $shutdownCount = $shutdownRow['shutdown'] ?? 0;
+              
+              $penghapusanQuery = "SELECT COUNT(*) as penghapusan FROM import_dat WHERE penghapusan IS NOT NULL AND penghapusan != ''";
+              $penghapusanResult = mysqli_query($con, $penghapusanQuery);
+              $penghapusanRow = mysqli_fetch_assoc($penghapusanResult);
+              $penghapusanCount = $penghapusanRow['penghapusan'] ?? 0; 
+              
+              $aktifQuery = "SELECT COUNT(*) as aktif FROM import_dat WHERE status_aset = 'Aktif' OR status_aset = 'AKTIF'";
+              $aktifResult = mysqli_query($con, $aktifQuery);
+              $aktifRow = mysqli_fetch_assoc($aktifResult);
+              $aktifCount = $aktifRow['aktif'] ?? 0;
+              
+              $pemilikanQuery = "SELECT COUNT(*) as pemilikan FROM import_dat WHERE kelompok_aset LIKE '%pemilikan%' OR kelompok_aset LIKE '%Pemilikan%'";
+              $pemilikanResult = mysqli_query($con, $pemilikanQuery);
+              $pemilikanRow = mysqli_fetch_assoc($pemilikanResult);
+              $pemilikanCount = $pemilikanRow['pemilikan'] ?? 0;
+              ?>
               <div class="col-12 col-sm-6 col-md-3">
                 <div class="info-box">
                   <span class="info-box-icon text-bg-primary shadow-sm">
-                    <i class="bi bi-speedometer2"></i>
+                    <i class="bi bi-clipboard-fill"></i>
                   </span>
                   <div class="info-box-content">
-                    <span class="info-box-text">Usulan</span>
+                    <span class="info-box-text">Total Aset</span>
+                    <span class="info-box-number"><?php echo $totalAssets; ?></span>
                   </div>
                   <!-- /.info-box-content -->
                 </div>
@@ -266,10 +287,11 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
               <div class="col-12 col-sm-6 col-md-3">
                 <div class="info-box">
                   <span class="info-box-icon text-bg-danger shadow-sm">
-                    <i class="bi bi-hand-thumbs-up-fill"></i>
+                    <i class="bi bi-x-circle-fill"></i>
                   </span>
                   <div class="info-box-content">
-                    <span class="info-box-text">Approval</span>
+                    <span class="info-box-text">Aset Shutdown</span>
+                    <!--<span class="info-box-number"><?php echo $shutdownCount; ?></span>  --><!--menampilkan total dari aset yang di-shutdown -->
                   </div>
                   <!-- /.info-box-content -->
                 </div>
@@ -281,23 +303,26 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
               <div class="col-12 col-sm-6 col-md-3">
                 <div class="info-box">
                   <span class="info-box-icon text-bg-success shadow-sm">
-                    <i class="bi bi-cart-fill"></i>
+                    <i class="bi bi-trash-fill"></i>
                   </span>
                   <div class="info-box-content">
-                    <span class="info-box-text">Daftar Persetujuan</span>
+                    <span class="info-box-text">Penghapusan</span>
+                    <!-- <span class="info-box-number"><?php echo $penghapusanCount; ?></span> --> <!--menampilkan total dari aset yang dihapuskan -->
                   </div>
                   <!-- /.info-box-content -->
                 </div>
                 <!-- /.info-box -->
               </div>
               <!-- /.col -->
+              <!-- /.col -->
               <div class="col-12 col-sm-6 col-md-3">
                 <div class="info-box">
                   <span class="info-box-icon text-bg-warning shadow-sm">
-                    <i class="bi bi-people-fill"></i>
+                    <i class="bi bi-check-circle-fill"></i>
                   </span>
                   <div class="info-box-content">
-                    <span class="info-box-text">Pelaksanaan</span>
+                    <span class="info-box-text">Aset Aktif</span>
+                    <!-- <span class="info-box-number"><?php echo $aktifCount; ?></span> --> <!--menampilkan total dari aset yang aktif -->
                   </div>
                   <!-- /.info-box-content -->
                 </div>
@@ -310,12 +335,12 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
             <div class="row">
                 
               <!-- /.col -->
-              <div class="col-md-4">
+              <div class="col-md-5">
                 <!-- Info Boxes Style 2 -->
                 <!-- /.info-box -->
                 <div class="card mb-4">
                   <div class="card-header">
-                    <h3 class="card-title">Browser Usage</h3>
+                    <h3 class="card-title">Distribusi Aset</h3>
                     <div class="card-tools">
                       <button type="button" class="btn btn-tool" data-lte-toggle="card-collapse">
                         <i data-lte-icon="expand" class="bi bi-plus-lg"></i>
@@ -338,31 +363,43 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                   <!-- /.card-body -->
                   <div class="card-footer p-0">
                     <ul class="nav nav-pills flex-column">
-                      <li class="nav-item">
-                        <a href="#" class="nav-link">
-                          United States of America
-                          <span class="float-end text-danger">
-                            <i class="bi bi-arrow-down fs-7"></i>
-                            12%
-                          </span>
-                        </a>
-                      </li>
-                      <li class="nav-item">
-                        <a href="#" class="nav-link">
-                          India
-                          <span class="float-end text-success">
-                            <i class="bi bi-arrow-up fs-7"></i> 4%
-                          </span>
-                        </a>
-                      </li>
-                      <li class="nav-item">
-                        <a href="#" class="nav-link">
-                          China
-                          <span class="float-end text-info">
-                            <i class="bi bi-arrow-left fs-7"></i> 0%
-                          </span>
-                        </a>
-                      </li>
+                      <?php
+                      // Get detailed data for pie chart footer
+                      $detailQuery = "SELECT asset_class_name, COUNT(*) as total_count FROM import_dat WHERE asset_class_name IS NOT NULL AND asset_class_name != '' GROUP BY asset_class_name ORDER BY total_count DESC";
+                      $detailResult = mysqli_query($con, $detailQuery);
+                      
+                      $totalCount = 0;
+                      $details = [];
+                      
+                      // Hitung total dan simpan detail
+                      if ($detailResult && mysqli_num_rows($detailResult) > 0) {
+                          while ($row = mysqli_fetch_assoc($detailResult)) {
+                              $details[] = $row;
+                              $totalCount += $row['total_count'];
+                          }
+                      }
+                      
+                      // Tampilkan setiap item dengan persentase
+                      $colorClasses = ['text-secondary'];
+                      $colorStatus = ['text-primary'];
+
+                      foreach ($details as $index => $detail) {
+                          $colorClass = $colorClasses[$index % 1];
+                          $statusName = htmlspecialchars($detail['asset_class_name']);
+                          $count = $detail['total_count'];
+                          ?>
+                          <li class="nav-item">
+                            <a href="#" class="nav-link">
+                              <?php echo $statusName; ?>
+                              <span class="float-end <?php echo $colorClass; ?>">
+                                <i class="bi <?php echo [$index % 1]; ?> fs-7"></i>
+                                <?php echo $count; ?>
+                              </span>
+                            </a>
+                          </li>
+                          <?php
+                      }
+                      ?>
                     </ul>
                   </div>
                   <!-- /.footer -->
@@ -382,11 +419,11 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
       <!--begin::Footer-->
       <footer class="app-footer">
         <!--begin::To the end-->
-        <div class="float-end d-none d-sm-inline">PT Pelabuhan Indonesia (Persero)</div>
+        <div class="float-end d-none d-sm-inline">PT Pelabuhan Indoensia (Persero)</div>
         <!--end::To the end-->
         <!--begin::Copyright-->
         <strong>
-          Copyright &copy; Proyek Aset Tetap Regional 3&nbsp;
+          Copyright &copy; Proyek Aset Tetap Regional&nbsp;
         </strong>
         <!--end::Copyright-->
       </footer>
@@ -570,16 +607,49 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
       // - PIE CHART -
       //-------------
 
+      <?php
+      // Get data from database for pie chart - grouped by asset_class_name
+      $statusQuery = "SELECT asset_class_name, COUNT(*) as count FROM import_dat WHERE asset_class_name IS NOT NULL AND asset_class_name != '' GROUP BY asset_class_name ORDER BY count DESC";
+      $statusResult = mysqli_query($con, $statusQuery);
+      
+      $labels = [];
+      $data = [];
+      
+      if ($statusResult && mysqli_num_rows($statusResult) > 0) {
+          while ($row = mysqli_fetch_assoc($statusResult)) {
+              $labels[] = htmlspecialchars($row['asset_class_name']);
+              $data[] = (int)$row['count'];
+          }
+      }
+      
+      // Tambahkan data "Aset Tetap Pemilikan Langsung" ke pie chart jika belum ada
+      $hasPemilikan = in_array('Aset Tetap Pemilikan Langsung', $labels);
+      if (!$hasPemilikan && $pemilikanCount > 0) {
+          $labels[] = 'Aset Tetap Pemilikan Langsung';
+          $data[] = (int)$pemilikanCount;
+      }
+      
+      // Jika tidak ada data, gunakan fallback
+      if (empty($labels)) {
+          $labels = ['Chrome', 'Edge', 'FireFox', 'Safari', 'Opera', 'IE'];
+          $data = [700, 500, 400, 600, 300, 100];
+      }
+      
+      // Convert PHP arrays to JavaScript
+      $labelsJson = json_encode($labels);
+      $dataJson = json_encode($data);
+      ?>
+
       const pie_chart_options = {
-        series: [700, 500, 400, 600, 300, 100],
+        series: <?php echo $dataJson; ?>,
         chart: {
-          type: 'donut',
+          type: 'pie',
         },
-        labels: ['Chrome', 'Edge', 'FireFox', 'Safari', 'Opera', 'IE'],
+        labels: <?php echo $labelsJson; ?>,
         dataLabels: {
           enabled: false,
         },
-        colors: ['#0d6efd', '#20c997', '#ffc107', '#d63384', '#6f42c1', '#adb5bd'],
+        colors: ['#0d6efd', '#20c997', '#ffc107', '#dc3545', '#17a2b8', '#6c757d'],
       };
 
       const pie_chart = new ApexCharts(document.querySelector('#pie-chart'), pie_chart_options);
@@ -588,19 +658,6 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
       //-----------------
       // - END PIE CHART -
       //-----------------
-    </script>
-    <script>
-      function logout() {
-        sessionStorage.removeItem('nipp');
-        sessionStorage.removeItem('name');
-        sessionStorage.removeItem('email');
-        window.location.href = '../login/logout.php';
-      }
-    </script>
-    <script>
-      sessionStorage.setItem("nipp", "<?php echo $_SESSION['nipp']; ?>");
-      sessionStorage.setItem("name", "<?php echo $_SESSION['name']; ?>");
-      sessionStorage.setItem("email", "<?php echo $_SESSION['email']; ?>");
     </script>
     <!--end::Script-->
   </body>
