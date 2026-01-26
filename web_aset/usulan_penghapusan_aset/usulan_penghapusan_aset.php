@@ -1,10 +1,4 @@
 <?php
-session_start();
-if(!isset($_SESSION["nipp"])) {
-    header("Location: ../login/login_view.php");
-    exit();
-}
-
 $servername = "localhost";
 $username = "root";
 $password = "";
@@ -12,17 +6,50 @@ $dbname = "asetreg3_db";
 
 // Create connection
 $con = mysqli_connect($servername, $username, $password, $dbname);
+session_start();
+if(!isset($_SESSION["nipp"]) || !isset($_SESSION["name"])) {
+    header("Location: ../login/login_view.php");
+    exit();
+}
+
+// Jika form disubmit
+if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+    // Validasi input tidak boleh kosong
+    if (empty($_POST['nama_menu']) || empty($_POST['menu']) || empty($_POST['urutan_menu'])) {
+        $pesan = "Semua field harus diisi!";
+        $tipe_pesan = "danger";
+    } else {
+        // Gunakan prepared statement untuk menghindari SQL injection
+        $nama_menu = trim($_POST['nama_menu']);
+        $menu = trim($_POST['menu']);
+        $urutan_menu = intval($_POST['urutan_menu']);
+        
+        $stmt = $con->prepare("INSERT INTO menus (nama_menu, menu, urutan_menu) VALUES (?, ?, ?)");
+        $stmt->bind_param("ssi", $nama_menu, $menu, $urutan_menu);
+        
+        if ($stmt->execute()) {
+            $pesan = "Menu berhasil ditambahkan!";
+            $tipe_pesan = "success";
+            // Reset form
+            $_POST = array();
+        } else {
+            $pesan = "Gagal menambahkan menu: " . $stmt->error;
+            $tipe_pesan = "danger";
+        }
+        $stmt->close();
+    }
+}
+
 ?>
 <!doctype html>
 <html lang="en">
   <!--begin::Head-->
   <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-    <title>Web Aset Tetap</title>
-
+    <title>Usulan Penghapusan - Web Aset Tetap</title>
+    <!-- Favicon -->
     <link rel="icon" type="image/png" href="../../dist/assets/img/emblem.png" /> 
-    <link rel="shortcut icon" type="image/png" href="../../dist/assets/img/emblem.png" />  
-    
+    <link rel="shortcut icon" type="image/png" href="../../dist/assets/img/emblem.png" />
     <!--begin::Accessibility Meta Tags-->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
     <meta name="color-scheme" content="light dark" />
@@ -127,16 +154,28 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                     class="rounded-circle shadow"
                     alt="User Image"
                   />
-                  <p>
-                    <?php echo isset($_SESSION['name']) ? htmlspecialchars($_SESSION['name']) : ''; ?>
-                    <small>Member</small>
-                  </p>
+                  <div>
+                    <p class="mb-0"><?php echo isset($_SESSION['name']) ? htmlspecialchars($_SESSION['name']) : ''; ?></p>
+                    <small>NIPP: <?php echo isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : ''; ?></small>
+                  </div>
                 </li>
                 <!--end::User Image-->
+                <!--begin::Menu Body-->
+                <li class="user-menu-body">
+                  <div class="ps-3 pe-3 pt-2 pb-2">
+                    <span class="badge text-bg-success"><i class="bi bi-circle-fill"></i> Online</span>
+                  </div>
+                  <hr class="m-0" />
+                </li>
+                <!--end::Menu Body-->
                 <!--begin::Menu Footer-->
-               <li class="user-footer">
-                  <a href="#" class="btn btn-default btn-flat">NIPP: <?php echo isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : ''; ?></a>
-                  <a href="../login/login_view.php" class="btn btn-danger ms-auto" >Logout</a>
+                <li class="user-footer">
+                  <a href="../manajemen_user/manajemen_user.php" class="btn btn-sm btn-default btn-flat">
+                    <i class="bi bi-person"></i> Profile
+                  </a>
+                  <a href="../login/login_view.php" class="btn btn-sm btn-danger ms-auto" >
+                    <i class="bi bi-box-arrow-right"></i> Logout
+                  </a>
                 </li>
                 <!--end::Menu Footer-->
               </ul>
@@ -179,24 +218,25 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
               id="navigation"
             >
             <?php  
-            $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '1234567890' ORDER BY menus.urutan_menu ASC";
+            $userNipp = isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : '';
+            $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '" . mysqli_real_escape_string($con, $userNipp) . "' ORDER BY menus.urutan_menu ASC";
             $result = mysqli_query($con, $query) or die(mysqli_error($con));
             $iconMap = [
-                'Dasboard'               => 'bi bi-grid',
-                'Usulan Penghapusan'     => 'bi bi-clipboard-plus',
+                'Dasboard'               => 'bi bi-grid-fill',
+                'Usulan Penghapusan'     => 'bi bi-clipboard-plus-fill',
                 'Approval SubReg'        => 'bi bi-check-circle',
                 'Approval Regional'      => 'bi bi-check2-square',
-                'Persetujuan Penghapusan'=> 'bi bi-clipboard-check',
+                'Persetujuan Penghapusan'=> 'bi bi-clipboard-check-fill',
                 'Pelaksanaan Penghapusan'=> 'bi bi-tools',
                 'Manajemen Menu'         => 'bi bi-list-ul',
                 'Manajemen User'         => 'bi bi-people-fill',
-                'Import DAT'            => 'bi bi-file-earmark-arrow-up'
+                'Import DAT'             => 'bi bi-file-earmark-arrow-up-fill'
             ];
   
             while ($row = mysqli_fetch_assoc($result)) {
                 $namaMenu = trim($row['nama_menu']); 
-                $icon = $iconMap[$namaMenu] ?? 'bi bi-circle'; 
-
+                $icon = $iconMap[$namaMenu] ?? 'bi bi-circle';
+                
                 $currentPage = basename($_SERVER['PHP_SELF']);
                 $menuFile = $row['menu'].'.php'; 
                 $isActive = ($currentPage === $menuFile) ? 'active' : '';
@@ -229,6 +269,12 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
             <!--begin::Row-->
             <div class="row">
               <div class="col-sm-6"><h3 class="mb-0">Usulan Penghapusan Aset</h3></div>
+              <div class="col-sm-6">
+                <ol class="breadcrumb float-sm-end">
+                  <li class="breadcrumb-item"><a href="../dasbor/dasbor.php">Home</a></li>
+                  <li class="breadcrumb-item"><a href="manajemen_menu.php">Usulan Penghapusan</a></li>
+                </ol>
+              </div>
             </div>
             <!--end::Row-->
           </div>
@@ -236,57 +282,83 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
         </div>
         <div class="app-content">
           <!--begin::Container-->
-          <div class="container-fluid">
-            <div class="card mb-4">
-                  <div class="card-header d-flex justify-content-between align-items-center">
-                    <h3 class="card-title">Daftar Aset</h3>
-                    <button onclick="location.href='tambah_usulan.php'" type="button" class="btn btn-primary ms-auto"><i class="bi bi-plus-circle"></i> Tambah Usulan</button>
-                  </div>
-                  <!-- /.card-header -->
-                  <div class="card-body">
-                    <table class="table table-bordered" role="table">
-                      <thead>
-                        <tr>
-                          <th scope="col">Id Menu</th>
-                          <th scope="col">Nama Menu</th>
-                          <th scope="col">Text Link Menu</th>
-                          <th scope="col">Aksi</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <?php  
-                        $query = "SELECT * From menus order by id_menu ASC";
-                         $result = mysqli_query($con, $query) or die(mysqli_error($con));
-                         while ($row = mysqli_fetch_array($result, MYSQLI_BOTH))
-                         { 
-                          echo  
-                          '<tr class="align-middle">
-                          <td>'.$row['id_menu'].'</td>
-                          <td>'.$row['nama_menu'].'</td>
-                          <td>'.$row['menu'].'</td>
-                          <td><div class="btn-group mb-2" role="group" aria-label="Basic mixed styles example">
-                            <button onclick="location.href=\'edit_menu.php?id='.$row['id_menu'].'\'" type="button" class="btn btn-warning">Edit</button> 
-                             <button onclick="return confirm(\'Apakah Anda yakin ingin menghapus menu ini?\') && (location.href=\'delete_menu.php?id='.$row['id_menu'].'\');" type="button" class="btn btn-danger">Delete</button> 
-                            </div></td> 
-                        </tr>';
-                        }
-                        ?>
-               
-                      </tbody>
-                    </table>
-                  </div>
-                  <!-- /.card-body -->
-                  <div class="card-footer clearfix">
-                    <ul class="pagination pagination-sm m-0 float-end">
-                      <li class="page-item"><a class="page-link" href="#">«</a></li>
-                      <li class="page-item"><a class="page-link" href="#">1</a></li>
-                      <li class="page-item"><a class="page-link" href="#">2</a></li>
-                      <li class="page-item"><a class="page-link" href="#">3</a></li>
-                      <li class="page-item"><a class="page-link" href="#">»</a></li>
-                    </ul>
-                  </div>
-                </div>
+
             <!-- Info boxes -->
+          <div class="card card-info card-outline mb-4" id="form-usulan">
+                  <!--begin::Header-->
+                  <div class="card-header"><div class="card-title">Form Usulan</div></div>
+                  <!--end::Header-->
+                  <!--begin::Form-->
+                  <form class="needs-validation" method="POST" action="" novalidate="">
+                    <!--begin::Body-->
+                    <div class="card-body">
+                   <?php  
+                        if (isset($pesan)) {
+                            echo '<div class="alert alert-' . $tipe_pesan . ' alert-dismissible fade show" role="alert">' . $pesan . 
+                            '<button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button></div>';
+                        }
+                        
+                        // Hanya tampilkan form jika belum submit atau ada error
+                        if (!isset($pesan) || $tipe_pesan == "danger") {
+                        echo 
+                        '<div class="mb-3">
+                                  <label for="nama_menu" class="form-label">Nama Menu</label>
+                                  <input type="text" name="nama_menu" class="form-control" id="nama_menu" aria-describedby="namaMenuHelp" value="' . (isset($_POST['nama_menu']) ? htmlspecialchars($_POST['nama_menu']) : '') . '" required>
+                                  <div id="namaMenuHelp" class="form-text">
+                                  </div>
+                                </div>
+                                <div class="mb-3">
+                                  <label for="menu" class="form-label">Text Link Menu</label>
+                                  <input type="text" name="menu" class="form-control" id="menu" value="' . (isset($_POST['menu']) ? htmlspecialchars($_POST['menu']) : '') . '" required>
+                                </div>
+                                <div class="mb-3">
+                                  <label for="urutan_menu" class="form-label">No Urut</label>
+                                  <input type="number" name="urutan_menu" class="form-control" id="urutan_menu" value="' . (isset($_POST['urutan_menu']) ? htmlspecialchars($_POST['urutan_menu']) : '') . '" required>
+                                </div>
+                                <button type="submit" class="btn btn-primary">Ajukan Usulan</button> 
+                                <a href="manajemen_menu.php" class="btn btn-secondary">Batal</a>
+                              </div>';
+                      } else if (isset($pesan) && $tipe_pesan == "success") {
+                          echo '<div class="text-center"><p><a href="manajemen_menu.php" class="btn btn-primary">Kembali ke Daftar Menu</a></p></div>';
+                      }
+                      ?>
+
+                    </div>
+                    <!--end::Footer-->
+                  </form>
+                  <!--end::Form-->
+                  <!--begin::JavaScript-->
+                  <script>
+                    // Example starter JavaScript for disabling form submissions if there are invalid fields
+                    (() => {
+                      'use strict';
+
+                      // Fetch all the forms we want to apply custom Bootstrap validation styles to
+                      const forms = document.querySelectorAll('.needs-validation');
+
+                      // Loop over them and prevent submission
+                      Array.from(forms).forEach((form) => {
+                        form.addEventListener(
+                          'submit',
+                          (event) => {
+                            if (!form.checkValidity()) {
+                              event.preventDefault();
+                              event.stopPropagation();
+                            }
+
+                            form.classList.add('was-validated');
+                          },
+                          false,
+                        );
+                      });
+                    })();
+                  </script>
+                  <!--end::JavaScript-->
+                </div>
+                <!-- /.card -->
+              </div>
+              <!-- /.col -->
+            </div>
             <!--end::Row-->
             <!-- /.footer -->
                 </div>
@@ -298,7 +370,7 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
       <!--begin::Footer-->
       <footer class="app-footer">
         <!--begin::To the end-->
-        <div class="float-end d-none d-sm-inline">PT Pelabuhan Indonesia (Persero)</div>
+        <div class="float-end d-none d-sm-inline">PT Pelabuhan Indoensia (Persero)</div>
         <!--end::To the end-->
         <!--begin::Copyright-->
         <strong>
@@ -504,17 +576,6 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
       //-----------------
       // - END PIE CHART -
       //-----------------
-    </script>
-    <script>
-      function logout() {
-        sessionStorage.removeItem('nipp');
-        sessionStorage.removeItem('name');
-        window.location.href = '../login/logout.php';
-      }
-    </script>
-    <script>
-      sessionStorage.setItem("nipp", "<?php echo $_SESSION['nipp']; ?>");
-      sessionStorage.setItem("name", "<?php echo $_SESSION['name']; ?>");
     </script>
     <!--end::Script-->
   </body>

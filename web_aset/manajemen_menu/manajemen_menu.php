@@ -18,10 +18,7 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
   <!--begin::Head-->
   <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-    <title>Web Aset Tetap</title>
-
-    <link rel="icon" type="image/png" href="../../dist/assets/img/emblem.png" /> 
-    <link rel="shortcut icon" type="image/png" href="../../dist/assets/img/emblem.png" /> 
+    <title>Manajemen Menu - Web Aset Tetap</title>
     <!--begin::Accessibility Meta Tags-->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
     <meta name="color-scheme" content="light dark" />
@@ -126,17 +123,28 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                     class="rounded-circle shadow"
                     alt="User Image"
                   />
-                  <p>
-                    <?php echo isset($_SESSION['name']) ? htmlspecialchars($_SESSION['name']) : ''; ?>
-                  </p>
+                  <div>
+                    <p class="mb-0"><?php echo isset($_SESSION['name']) ? htmlspecialchars($_SESSION['name']) : ''; ?></p>
+                    <small>NIPP: <?php echo isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : ''; ?></small>
+                  </div>
                 </li>
                 <!--end::User Image-->
                 <!--begin::Menu Body-->
+                <li class="user-menu-body">
+                  <div class="ps-3 pe-3 pt-2 pb-2">
+                    <span class="badge text-bg-success"><i class="bi bi-circle-fill"></i> Online</span>
+                  </div>
+                  <hr class="m-0" />
+                </li>
                 <!--end::Menu Body-->
                 <!--begin::Menu Footer-->
                 <li class="user-footer">
-                  <a href="#" class="btn btn-default btn-flat">NIPP: <?php echo isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : ''; ?></a>
-                  <a href="../login/login_view.php" class="btn btn-danger ms-auto" >Logout</a>
+                  <a href="../manajemen_user/manajemen_user.php" class="btn btn-sm btn-default btn-flat">
+                    <i class="bi bi-person"></i> Profile
+                  </a>
+                  <a href="../login/login_view.php" class="btn btn-sm btn-danger ms-auto" >
+                    <i class="bi bi-box-arrow-right"></i> Logout
+                  </a>
                 </li>
                 <!--end::Menu Footer-->
               </ul>
@@ -179,24 +187,25 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
               id="navigation"
             >
             <?php  
-            $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '1234567890' ORDER BY menus.urutan_menu ASC";
+            $userNipp = isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : '';
+            $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '" . mysqli_real_escape_string($con, $userNipp) . "' ORDER BY menus.urutan_menu ASC";
             $result = mysqli_query($con, $query) or die(mysqli_error($con));
             $iconMap = [
-                'Dasboard'                 => 'bi bi-grid',
-                'Usulan Penghapusan'       => 'bi bi-clipboard-plus',
-                'Approval SubReg'          => 'bi bi-check-circle',
-                'Approval Regional'        => 'bi bi-check2-square',
-                'Persetujuan Penghapusan'  => 'bi bi-clipboard-check',
-                'Pelaksanaan Penghapusan'  => 'bi bi-tools',
-                'Manajemen Menu'           => 'bi bi-list-ul',
-                'Manajemen User'           => 'bi bi-people-fill',
-                'Import DAT'               => 'bi bi-file-earmark-arrow-up'
+                'Dasboard'               => 'bi bi-grid-fill',
+                'Usulan Penghapusan'     => 'bi bi-clipboard-plus-fill',
+                'Approval SubReg'        => 'bi bi-check-circle',
+                'Approval Regional'      => 'bi bi-check2-square',
+                'Persetujuan Penghapusan'=> 'bi bi-clipboard-check-fill',
+                'Pelaksanaan Penghapusan'=> 'bi bi-tools',
+                'Manajemen Menu'         => 'bi bi-list-ul',
+                'Manajemen User'         => 'bi bi-people-fill',
+                'Import DAT'             => 'bi bi-file-earmark-arrow-up-fill'
             ];
   
             while ($row = mysqli_fetch_assoc($result)) {
                 $namaMenu = trim($row['nama_menu']); 
-                $icon = $iconMap[$namaMenu] ?? 'bi bi-circle'; 
-
+                $icon = $iconMap[$namaMenu] ?? 'bi bi-circle';
+                
                 $currentPage = basename($_SERVER['PHP_SELF']);
                 $menuFile = $row['menu'].'.php'; 
                 $isActive = ($currentPage === $menuFile) ? 'active' : '';
@@ -229,6 +238,12 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
             <!--begin::Row-->
             <div class="row">
               <div class="col-sm-6"><h3 class="mb-0">Manajemen Menu</h3></div>
+              <div class="col-sm-6">
+                <ol class="breadcrumb float-sm-end">
+                  <li class="breadcrumb-item"><a href="../dasbor/dasbor.php">Home</a></li>
+                  <li class="breadcrumb-item active">Manajemen Menu</li>
+                </ol>
+              </div>
             </div>
             <!--end::Row-->
           </div>
@@ -246,7 +261,7 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                 </div>
                   <!-- /.card-header -->
                   <div class="card-body">
-                    <table class="table table-bordered" role="table">
+                    <table class="table table-bordered table-striped" role="table">
                       <thead>
                         <tr>
                           <th scope="col">Id Menu</th>
@@ -294,11 +309,11 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
       <!--begin::Footer-->
       <footer class="app-footer">
         <!--begin::To the end-->
-        <div class="float-end d-none d-sm-inline">PT Pelabuhan Indonesia (Persero)</div>
+        <div class="float-end d-none d-sm-inline">PT Pelabuhan Indoensia (Persero)</div>
         <!--end::To the end-->
         <!--begin::Copyright-->
         <strong>
-          Copyright &copy; Proyek Aset Tetap Regional 3&nbsp;
+          Copyright &copy; Proyek Aset Tetap Regional&nbsp;
         </strong>
         <!--end::Copyright-->
       </footer>

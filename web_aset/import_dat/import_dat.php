@@ -444,7 +444,7 @@ function saveDataToDatabase($con, $importedData) {
   <!--begin::Head-->
   <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-    <title>Web Aset Tetap</title>
+    <title>Import DAT - Web Aset Tetap</title>
     <link rel="icon" type="image/png" href="../../dist/assets/img/emblem.png" /> 
     <link rel="shortcut icon" type="image/png" href="../../dist/assets/img/emblem.png" />  
     <!--begin::Accessibility Meta Tags-->
@@ -594,17 +594,28 @@ function saveDataToDatabase($con, $importedData) {
                     class="rounded-circle shadow"
                     alt="User Image"
                   />
-                  <p>
-                    <?php echo isset($_SESSION['name']) ? htmlspecialchars($_SESSION['name']) : ''; ?>
-                  </p>
+                  <div>
+                    <p class="mb-0"><?php echo isset($_SESSION['name']) ? htmlspecialchars($_SESSION['name']) : ''; ?></p>
+                    <small>NIPP: <?php echo isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : ''; ?></small>
+                  </div>
                 </li>
                 <!--end::User Image-->
                 <!--begin::Menu Body-->
+                <li class="user-menu-body">
+                  <div class="ps-3 pe-3 pt-2 pb-2">
+                    <span class="badge text-bg-success"><i class="bi bi-circle-fill"></i> Online</span>
+                  </div>
+                  <hr class="m-0" />
+                </li>
                 <!--end::Menu Body-->
                 <!--begin::Menu Footer-->
                 <li class="user-footer">
-                  <a href="#" class="btn btn-default btn-flat">NIPP: <?php echo isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : ''; ?></a>
-                  <a href="../login/login_view.php" class="btn btn-danger ms-auto" >Logout</a>
+                  <a href="../manajemen_user/manajemen_user.php" class="btn btn-sm btn-default btn-flat">
+                    <i class="bi bi-person"></i> Profile
+                  </a>
+                  <a href="../login/login_view.php" class="btn btn-sm btn-danger ms-auto" >
+                    <i class="bi bi-box-arrow-right"></i> Logout
+                  </a>
                 </li>
                 <!--end::Menu Footer-->
               </ul>
@@ -647,25 +658,25 @@ function saveDataToDatabase($con, $importedData) {
               id="navigation"
             >
             <?php  
-            $query = "
-                SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '1234567890' ORDER BY menus.urutan_menu ASC";
+            $userNipp = isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : '';
+            $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '" . mysqli_real_escape_string($con, $userNipp) . "' ORDER BY menus.urutan_menu ASC";
             $result = mysqli_query($con, $query) or die(mysqli_error($con));
             $iconMap = [
-                'Dasboard'                => 'bi bi-grid',
-                'Usulan Penghapusan'      => 'bi bi-clipboard-plus',
-                'Approval SubReg'         => 'bi bi-check-circle',
-                'Approval Regional'       => 'bi bi-check2-square',
-                'Persetujuan Penghapusan' => 'bi bi-clipboard-check',
-                'Pelaksanaan Penghapusan' => 'bi bi-tools',
-                'Manajemen Menu'          => 'bi bi-list-ul',
+                'Dasboard'               => 'bi bi-grid-fill',
+                'Usulan Penghapusan'     => 'bi bi-clipboard-plus-fill',
+                'Approval SubReg'        => 'bi bi-check-circle',
+                'Approval Regional'      => 'bi bi-check2-square',
+                'Persetujuan Penghapusan'=> 'bi bi-clipboard-check-fill',
+                'Pelaksanaan Penghapusan'=> 'bi bi-tools',
+                'Manajemen Menu'         => 'bi bi-list-ul',
                 'Manajemen User'         => 'bi bi-people-fill',
-                'Import DAT'              => 'bi bi-file-earmark-arrow-up'
+                'Import DAT'             => 'bi bi-file-earmark-arrow-up-fill'
             ];
   
             while ($row = mysqli_fetch_assoc($result)) {
                 $namaMenu = trim($row['nama_menu']); 
-                $icon = $iconMap[$namaMenu] ?? 'bi bi-circle'; 
-
+                $icon = $iconMap[$namaMenu] ?? 'bi bi-circle';
+                
                 $currentPage = basename($_SERVER['PHP_SELF']);
                 $menuFile = $row['menu'].'.php'; 
                 $isActive = ($currentPage === $menuFile) ? 'active' : '';
@@ -698,6 +709,12 @@ function saveDataToDatabase($con, $importedData) {
             <!--begin::Row-->
             <div class="row">
               <div class="col-sm-6"><h3 class="mb-0">Import DAT</h3></div>
+              <div class="col-sm-6">
+                <ol class="breadcrumb float-sm-end">
+                  <li class="breadcrumb-item"><a href="../dasbor/dasbor.php">Home</a></li>
+                  <li class="breadcrumb-item active">Import DAT</li>
+                </ol>
+              </div>
             </div>
             <!--end::Row-->
           </div>
@@ -746,13 +763,13 @@ function saveDataToDatabase($con, $importedData) {
                   <div class="row">
                 <div class="card card-outline mb-4">
                   <div class="card-header">
-                    <h3 class="card-title">Hasil Import Data</h3>
+                    <h3 class="card-title">Hasil Import Data (Loading Data Est 1 Menit)</h3>
                   </div>
                   <div class="card-body">
                         <!-- Table Wrapper with Horizontal Scroll -->
                         <div class="table-responsive">
                         <!-- Table -->
-                        <table id="myTable" class="display nowrap" style="width:100%; min-width: 5400px;">
+                        <table id="myTable" class="display nowrap table table-striped" style="width:100%; min-width: 5400px;">
                             <thead>
                                 <tr>
                                   <th >No Asset Utama</th>
@@ -802,14 +819,14 @@ function saveDataToDatabase($con, $importedData) {
                             </thead>
                             <tbody>
                             <?php  
-            $query = "SELECT * FROM import_dat WHERE serial_number IS NOT NULL OR alamat IS NOT NULL OR gl_account_exp IS NOT NULL ORDER BY id DESC LIMIT 500";
+            $query = "SELECT * FROM import_dat WHERE serial_number IS NOT NULL OR alamat IS NOT NULL OR gl_account_exp IS NOT NULL";
             $result = mysqli_query($con, $query);
             
             if (!$result) {
                 echo '<tr><td colspan="45">Error: ' . mysqli_error($con) . '</td></tr>';
             } elseif (mysqli_num_rows($result) == 0) {
                 // Jika tidak ada data dengan kolom tersebut, tampilkan semua data
-                $query = "SELECT * FROM import_dat ORDER BY id DESC LIMIT 500";
+                $query = "SELECT * FROM import_dat";
                 $result = mysqli_query($con, $query);
             }
             
@@ -864,53 +881,6 @@ function saveDataToDatabase($con, $importedData) {
             }
             ?>
                             </tbody>
-                            <tfoot>
-                                <tr>
-                                  <th>No Asset Utama</th>
-                                  <th>Profit Center</th>
-                                  <th>PC Text</th>
-                                  <th>Cost Center Baru</th>
-                                  <th>Deskripsi CC</th>
-                                  <th>Cabang/Kawasan</th>
-                                  <th>Kode Plant</th>
-                                  <th>Periode</th>
-                                  <th>Tahun</th>
-                                  <th>Asset Asal</th>
-                                  <th>GL Account</th>
-                                  <th>Asset Class</th>
-                                  <th>Nama Class</th>
-                                  <th>Kel. Aset</th>
-                                  <th>Status</th>
-                                  <th>Asset No Text</th>
-                                  <th>Akuisisi</th>
-                                  <th>Keterangan</th>
-                                  <th>Tgl Akusisi</th>
-                                  <th>Tgl Perolehan</th>
-                                  <th>Tgl Penyusutan</th>
-                                  <th>Masa Manfaat</th>
-                                  <th>Sisa Manfaat</th>
-                                  <th>Nilai Perolehan AT</th>
-                                  <th>Residu %</th>
-                                  <th>Residu Rp</th>
-                                  <th>Nilai Perolehan s.d</th>
-                                  <th>Adjusment Nilai</th>
-                                  <th>Nilai Buku AT</th>
-                                  <th>Nilai Buku s.d</th>
-                                  <th>Penyusutan/Bulan</th>
-                                  <th>Penyusutan s.d</th>
-                                  <th>Penyusutan TL</th>
-                                  <th>Penyusutan/Tahun</th>
-                                  <th>Akm Penyusutan TL</th>
-                                  <th>Adjusment Akm</th>
-                                  <th>Penghapusan</th>
-                                  <th>Asset Shutdown</th>
-                                  <th>Akumulasi Penyusutan</th>
-                                  <th>Additional Description</th>
-                                  <th>Serial Number</th>
-                                  <th>Alamat</th>
-                                  <th>GL Account EXP. Depre.</th>
-                                </tr>
-                            </tfoot>
                         </table>
                         </div>
                         <!-- End Table Wrapper -->
@@ -931,7 +901,7 @@ function saveDataToDatabase($con, $importedData) {
         <!--end::To the end-->
         <!--begin::Copyright-->
         <strong>
-          Copyright &copy; Proyek Aset Tetap Regional 3&nbsp;
+          Copyright &copy; Proyek Aset Tetap Regional&nbsp;
         </strong>
         <!--end::Copyright-->
       </footer>
