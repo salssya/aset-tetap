@@ -152,7 +152,7 @@ $_SESSION['akses'] = $akses;
                 <!--end::Menu Body-->
                 <!--begin::Menu Footer-->
                 <li class="user-footer">
-                  <a href="../manajemen_user/manajemen_user.php" class="btn btn-sm btn-default btn-flat">
+                  <a href="../profile/profile.php" class="btn btn-sm btn-default btn-flat">
                     <i class="bi bi-person"></i> Profile
                   </a>
                   <a href="../login/login_view.php" class="btn btn-sm btn-danger ms-auto" >
@@ -294,16 +294,16 @@ $_SESSION['akses'] = $akses;
                                     GROUP BY users.NIPP";
                     $result_users = mysqli_query($con, $query_users);
                     while ($user = mysqli_fetch_assoc($result_users)) {
-                      echo "<tr>
-                              <td>{$user['NIPP']}</td>
-                              <td>{$user['Nama']}</td>
-                              <td>{$user['Email']}</td>
-                              <td>{$user['akses_menu']}</td>
+                      echo '<tr>
+                              <td>' . $user['NIPP'] . '</td>
+                              <td>' . $user['Nama'] . '</td>
+                              <td>' . $user['Email'] . '</td>
+                              <td>' . $user['akses_menu'] . '</td>
                               <td>
-                                <a href='edit_user.php?nipp={$user['NIPP']}' class='btn btn-warning btn-sm'>Edit</a>
-                                <a href='delete_user.php?nipp={$user['NIPP']}' class='btn btn-danger btn-sm' onclick='return confirm(\"Yakin hapus user?\")'>Delete</a>
+                                <a href="edit_user.php?nipp=' . $user['NIPP'] . '" class="btn btn-warning btn-sm">Edit</a>
+                                <button type="button" class="btn btn-danger btn-sm" data-bs-toggle="modal" data-bs-target="#deleteModal" data-nipp="' . $user['NIPP'] . '" data-nama="' . $user['Nama'] . '">Delete</button>
                               </td>
-                            </tr>";
+                            </tr>';
                     }
                     ?>
                   </tbody>
@@ -332,6 +332,39 @@ $_SESSION['akses'] = $akses;
       <!--end::Footer-->
     </div>
     <!--end::App Wrapper-->
+    <!-- Modal Delete Confirmation -->
+    <div class="modal fade" id="deleteModal" tabindex="-1" aria-labelledby="deleteModalLabel" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header bg-danger text-white">
+            <h1 class="modal-title fs-5" id="deleteModalLabel">
+              <i class="bi bi-exclamation-triangle me-2"></i>Konfirmasi Penghapusan
+            </h1>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <div class="alert alert-warning d-flex align-items-start" role="alert">
+              <i class="bi bi-info-circle-fill me-3 flex-shrink-0"></i>
+              <div>
+                <strong>Perhatian!</strong><br>
+                Anda akan menghapus user dengan nama: <strong id="namaUserDelete"></strong>
+                <br><br>
+                Tindakan ini tidak dapat dibatalkan. Pastikan Anda yakin sebelum melanjutkan.
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+              <i class="bi bi-x-circle me-2"></i>Batal
+            </button>
+            <button type="button" class="btn btn-danger" id="confirmDeleteBtn">
+              <i class="bi bi-trash me-2"></i>Hapus User
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!--end::Modal Delete Confirmation-->
     <!--begin::Script-->
     <!--begin::Third Party Plugin(OverlayScrollbars)-->
     <script
@@ -384,6 +417,25 @@ $_SESSION['akses'] = $akses;
       sessionStorage.setItem("nipp", "<?php echo $_SESSION['nipp']; ?>");
       sessionStorage.setItem("name", "<?php echo $_SESSION['name']; ?>");
       sessionStorage.setItem("email", "<?php echo $_SESSION['email']; ?>");
+    </script>
+    <script>
+      // Handle Delete Modal
+      const deleteModal = document.getElementById('deleteModal');
+      let deleteNipp = null;
+
+      deleteModal.addEventListener('show.bs.modal', function(event) {
+        const button = event.relatedTarget;
+        deleteNipp = button.getAttribute('data-nipp');
+        const namaUser = button.getAttribute('data-nama');
+        
+        document.getElementById('namaUserDelete').textContent = namaUser;
+      });
+
+      document.getElementById('confirmDeleteBtn').addEventListener('click', function() {
+        if (deleteNipp) {
+          location.href = 'delete_user.php?nipp=' + deleteNipp;
+        }
+      });
     </script>
     <!--end::Script-->
   </body>
