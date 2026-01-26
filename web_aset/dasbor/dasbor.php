@@ -126,16 +126,28 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                     class="rounded-circle shadow"
                     alt="User Image"
                   />
-                  <p>
-                    <?php echo isset($_SESSION['name']) ? htmlspecialchars($_SESSION['name']) : ''; ?>
-                    <small>Member</small>
-                  </p>
+                  <div>
+                    <p class="mb-0"><?php echo isset($_SESSION['name']) ? htmlspecialchars($_SESSION['name']) : ''; ?></p>
+                    <small>NIPP: <?php echo isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : ''; ?></small>
+                  </div>
                 </li>
                 <!--end::User Image-->
+                <!--begin::Menu Body-->
+                <li class="user-menu-body">
+                  <div class="ps-3 pe-3 pt-2 pb-2">
+                    <span class="badge text-bg-success"><i class="bi bi-circle-fill"></i> Online</span>
+                  </div>
+                  <hr class="m-0" />
+                </li>
+                <!--end::Menu Body-->
                 <!--begin::Menu Footer-->
                 <li class="user-footer">
-                  <a href="#" class="btn btn-default btn-flat">NIPP: <?php echo isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : ''; ?></a>
-                  <a href="../login/login_view.php" class="btn btn-danger ms-auto" >Logout</a>
+                  <a href="../manajemen_user/manajemen_user.php" class="btn btn-sm btn-default btn-flat">
+                    <i class="bi bi-person"></i> Profile
+                  </a>
+                  <a href="../login/login_view.php" class="btn btn-sm btn-danger ms-auto" >
+                    <i class="bi bi-box-arrow-right"></i> Logout
+                  </a>
                 </li>
                 <!--end::Menu Footer-->
               </ul>
@@ -189,7 +201,7 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                 'Pelaksanaan Penghapusan'=> 'bi bi-tools',
                 'Manajemen Menu'         => 'bi bi-list-ul',
                 'Manajemen User'         => 'bi bi-people-fill',
-                'Import DAT'            => 'bi bi-file-earmark-arrow-up'
+                'Import DAT'             => 'bi bi-file-earmark-arrow-up'
             ];
   
             while ($row = mysqli_fetch_assoc($result)) {
