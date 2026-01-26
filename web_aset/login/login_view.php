@@ -22,18 +22,33 @@ if (isset($_POST["login"])) {
         $_SESSION["nipp"] = $row['NIPP'];
         $_SESSION["name"] = $row['Nama'];
         $_SESSION["email"] = $row['Email'];
-        echo "
-        <script>
-            window.location = '../../web_aset/dasbor/dasbor.php'
-        </script>";
-
+        
+        if ($row['Password'] === $password) {
+            echo "
+            <script>
+                sessionStorage.setItem('nipp', '" . $row['NIPP'] . "');
+                sessionStorage.setItem('name', '" . $row['Nama'] . "');
+                sessionStorage.setItem('email', '" . $row['Email'] . "');
+                window.location = '../../web_aset/dasbor/dasbor.php';
+            </script>";
+        } else {
+            $error = "Password salah!";
+        }
     } else {
-      
+        $error = "NIPP tidak terdaftar!";
     }
 }
-
-
 ?>
+
+<?php if (isset($error)): ?>
+  <div class="alert alert-danger" role="alert">
+    <?php echo $error; ?>
+  </div>
+
+<?php 
+    endif; 
+?>
+
 
 <!DOCTYPE html>
 <html lang="id">
