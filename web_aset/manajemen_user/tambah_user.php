@@ -215,12 +215,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             while ($row = mysqli_fetch_assoc($result)) {
                 $namaMenu = trim($row['nama_menu']); 
                 $icon = $iconMap[$namaMenu] ?? 'bi bi-circle'; 
+                
+                $currentDir = basename(dirname($_SERVER['PHP_SELF'])); 
+                $menuDir = $row['menu']; 
+                $isActive = ($currentDir === $menuDir) ? 'active' : '';
+
               if ($namaMenu === 'Manajemen Menu') {
                echo '<li class="nav-header"></li>';
               }
                 echo '
                 <li class="nav-item">
-                    <a href="../'.$row['menu'].'/'.$row['menu'].'.php" class="nav-link">
+                    <a href="../'.$row['menu'].'/'.$row['menu'].'.php" class="nav-link '.$isActive.'">
                         <i class="nav-icon '.$icon.'"></i>
                         <p>'.$row['nama_menu'].'</p>
                     </a>
