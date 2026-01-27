@@ -1,17 +1,15 @@
 <?php
-session_start();
-if(!isset($_SESSION["nipp"])) {
-    header("Location: ../login/login_view.php");
-    exit();
-}
-
 $servername = "localhost";
 $username = "root";
 $password = "";
 $dbname = "asetreg3_db";
 
-// Create connection
 $con = mysqli_connect($servername, $username, $password, $dbname);
+session_start();
+if(!isset($_SESSION["nipp"])) {
+    header("Location: ../login/login_view.php");
+    exit();
+}
 
 // Get user data
 $nipp = $_GET['nipp'];
@@ -26,34 +24,59 @@ $akses_user = [];
   $akses_user[] = $row_access['id_menu']; 
 }
 
+// Handle form submission (update user)
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $nama = mysqli_real_escape_string($con, $_POST['nama']);
-    $email = mysqli_real_escape_string($con, $_POST['email']);
-    $password = mysqli_real_escape_string($con, $_POST['password']);
+    $nipp      = mysqli_real_escape_string($con, $_POST['nipp']);
+    $nama      = mysqli_real_escape_string($con, $_POST['nama']);
+    $email     = mysqli_real_escape_string($con, $_POST['email']);
+    $password  = mysqli_real_escape_string($con, $_POST['password']);
+    $type_user = mysqli_real_escape_string($con, $_POST['Type_User']);
+    $cabang    = mysqli_real_escape_string($con, $_POST['Cabang']);
 
     if (!empty($password)) {
         $hashed_password = password_hash($password, PASSWORD_DEFAULT);
-        $update_query = "UPDATE users SET Nama='$nama', Email='$email', Password='$hashed_password' WHERE NIPP='$nipp'";
+
+        // pakai prepared statement untuk update dengan password
+        $stmt = $con->prepare("UPDATE users 
+                               SET Nama=?, Email=?, Password=?, Type_User=?, Cabang=? 
+                               WHERE NIPP=?");
+        $stmt->bind_param("ssssss", $nama, $email, $hashed_password, $type_user, $cabang, $nipp);
     } else {
-        $update_query = "UPDATE users SET Nama='$nama', Email='$email' WHERE NIPP='$nipp'";
+        // pakai prepared statement untuk update tanpa password
+        $stmt = $con->prepare("UPDATE users 
+                               SET Nama=?, Email=?, Type_User=?, Cabang=? 
+                               WHERE NIPP=?");
+        $stmt->bind_param("sssss", $nama, $email, $type_user, $cabang, $nipp);
     }
-    
-    if (mysqli_query($con, $update_query)) {
-        // Hapus akses lama
-        mysqli_query($con, "DELETE FROM user_access WHERE NIPP='$nipp'");
-        // Insert akses baru
+
+    if ($stmt->execute()) {
+        // hapus akses lama dulu
+        $del_stmt = $con->prepare("DELETE FROM user_access WHERE NIPP=?");
+        $del_stmt->bind_param("s", $nipp);
+        $del_stmt->execute();
+        $del_stmt->close();
+
+        // simpan akses baru
         if(isset($_POST['akses'])) {
+            $ins_stmt = $con->prepare("INSERT INTO user_access (NIPP, id_menu) VALUES (?, ?)");
             foreach($_POST['akses'] as $id_menu) {
-                mysqli_query($con, "INSERT INTO user_access (NIPP, id_menu) VALUES ('$nipp', '$id_menu')");
+                $ins_stmt->bind_param("si", $nipp, $id_menu);
+                $ins_stmt->execute();
             }
+            $ins_stmt->close();
         }
+
+        // set pesan sukses
         $pesan = "User berhasil diupdate!";
         $tipe_pesan = "success";
     } else {
-        $pesan = "Error: " . mysqli_error($con);
+        // set pesan error
+        $pesan = "Gagal update user: " . $stmt->error;
         $tipe_pesan = "danger";
     }
+    $stmt->close();
 }
+
 ?>
 <!doctype html>
 <html lang="en">
@@ -344,6 +367,37 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                       </div>
                     </div>
                   </div>
+                  <div class="row"> 
+                    <div class="col-md-6"> 
+                      <div class="form-group">
+                      <label for="Type_User">Type User</label>
+                      <select name="Type_User" id="Type_User" class="form-control">
+                        <option value="Approval Regional" <?php if(isset($user['Type_User']) && $user['Type_User']=='Approval Regional') echo 'selected'; ?>>Approval Regional</option>
+                        <option value="Approval Sub Regional" <?php if(isset($user['Type_User']) && $user['Type_User']=='Approval Sub Regional') echo 'selected'; ?>>Approval Sub Regional</option>
+                        <option value="User Entry Regional" <?php if(isset($user['Type_User']) && $user['Type_User']=='User Entry Regional') echo 'selected'; ?>>User Entry Regional</option>
+                        <option value="User Entry Sub Regional" <?php if(isset($user['Type_User']) && $user['Type_User']=='User Entry Sub Regional') echo 'selected'; ?>>User Entry Sub Regional</option>
+                        <option value="User Entry Cabang" <?php if(isset($user['Type_User']) && $user['Type_User']=='User Entry Cabang') echo 'selected'; ?>>User Entry Cabang</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="col-md-6"> 
+                    <div class="form-group">
+                      <label for="Cabang">Cabang</label>
+                      <select name="Cabang" id="Cabang" class="form-control">
+                        <?php
+                        $result_cabang = mysqli_query($con, " 
+                          SELECT DISTINCT profit_center, profit_center_text 
+                          FROM import_dat 
+                          ORDER BY profit_center "
+                          ); 
+                          while($row = mysqli_fetch_assoc($result_cabang)) { 
+                            echo '<option value="'.$row['profit_center'].'">'.$row['profit_center'].' - '.$row['profit_center_text'].'</option>'; 
+                            } 
+                            ?> 
+                        </select>
+                    </div>
+                        </div> 
+                      </div>
                 </div>
                 <div class="row">
                 <div class="col-md-12">
