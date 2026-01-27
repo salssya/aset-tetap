@@ -1,42 +1,53 @@
 <?php
+$servername = "localhost";
+$username = "root";
+$password = "";
+$dbname = "asetreg3_db";
+
+$con = mysqli_connect($servername, $username, $password, $dbname);
 session_start();
 if(!isset($_SESSION["nipp"])) {
     header("Location: ../login/login_view.php");
     exit();
 }
 
-$servername = "localhost";
-$username = "root";
-$password = "";
-$dbname = "asetreg3_db";
-
-// Create connection
-$con = mysqli_connect($servername, $username, $password, $dbname);
-
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $nipp = mysqli_real_escape_string($con, $_POST['nipp']);
-    $nama = mysqli_real_escape_string($con, $_POST['nama']);
-    $email = mysqli_real_escape_string($con, $_POST['email']);
-    $password = mysqli_real_escape_string($con, $_POST['password']);
+    $nipp      = mysqli_real_escape_string($con, $_POST['nipp']);
+    $nama      = mysqli_real_escape_string($con, $_POST['nama']);
+    $email     = mysqli_real_escape_string($con, $_POST['email']);
+    $password  = mysqli_real_escape_string($con, $_POST['password']);
+    $type_user = mysqli_real_escape_string($con, $_POST['Type_User']); 
+    $cabang    = mysqli_real_escape_string($con, $_POST['Cabang']);    
+
     $hashed_password = password_hash($password, PASSWORD_DEFAULT);
 
-    $query = "INSERT INTO users (NIPP, Nama, Email, Password) VALUES ('$nipp', '$nama', '$email', '$hashed_password')";
-    if (mysqli_query($con, $query)) {
-      if(isset($_POST['akses'])) {
-            foreach($_POST['akses'] as $id_menu) {
-                mysqli_query($con, "INSERT INTO user_access (NIPP, id_menu) VALUES ('$nipp', '$id_menu')");
-            }
-      }
-      $pesan = "User berhasil ditambahkan!";
-      $tipe_pesan = "success";
-      // Reset form
-      $_POST = array();
+    // cek apakah NIPP sudah ada
+    $check = mysqli_query($con, "SELECT NIPP FROM users WHERE NIPP='$nipp'"); 
+    if(mysqli_num_rows($check) > 0) { 
+        $pesan = "Error: NIPP sudah terdaftar!"; 
+        $tipe_pesan = "danger"; 
     } else {
-        $pesan = "Error: " . mysqli_error($con);
-        $tipe_pesan = "danger";
-    }
+        $stmt = $con->prepare("INSERT INTO users (NIPP, Nama, Email, Password, Type_User, Cabang) 
+        VALUES (?, ?, ?, ?, ?, ?)"); 
+        $stmt->bind_param("ssssss", $nipp, $nama, $email, $hashed_password, $type_user, $cabang); 
+        if ($stmt->execute()) { 
+          if(isset($_POST['akses'])) { 
+            foreach($_POST['akses'] as $id_menu) { 
+              mysqli_query($con, "INSERT INTO user_access (NIPP, id_menu) VALUES ('$nipp', '$id_menu')"); 
+            } 
+          } 
+          $pesan = "User berhasil ditambahkan!"; 
+          $tipe_pesan = "success"; 
+          $_POST = array(); 
+        } else { 
+            $pesan = "Gagal menambahkan User: " . 
+            $stmt->error; $tipe_pesan = "danger"; 
+            } 
+            $stmt->close(); 
+        }
 }
+
 ?>
 <!doctype html>
 <html lang="en">
@@ -329,7 +340,37 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                       </div>
                     </div>
                   </div>
-                </div>
+                <div class="row"> 
+                    <div class="col-md-6"> 
+                      <div class="form-group"> 
+                        <label for="Type_User">Type User</label>
+                        <select name="Type_User" id="Type_User" class="form-control"> 
+                          <option value="Approval Regional">Approval Regional</option> 
+                          <option value="Approval Sub Regional">Approval Sub Regional</option> 
+                          <option value="User Entry Regional">User Entry Regional</option> 
+                          <option value="User Entry Sub Regional">User Entry Sub Regional</option> 
+                          <option value="User Entry Cabang">User Entry Cabang</option> 
+                      </select>
+                      </div> 
+                    </div>
+                    <div class="col-md-6"> 
+                      <div class="form-group"> 
+                        <label for="cabang">Cabang</label> 
+                        <select name="Cabang" id="Cabang" class="form-control">
+                          <?php
+                          $result_cabang = mysqli_query($con, " 
+                          SELECT DISTINCT profit_center, profit_center_text 
+                          FROM import_dat 
+                          ORDER BY profit_center "
+                          ); 
+                          while($row = mysqli_fetch_assoc($result_cabang)) { 
+                            echo '<option value="'.$row['profit_center'].'">'.$row['profit_center'].' - '.$row['profit_center_text'].'</option>'; 
+                            } 
+                            ?> 
+                          </select>
+                          </div> 
+                        </div> 
+                      </div>
                 <div class="row">
                 <div class="col-md-12">
                   <div class="form-group">
