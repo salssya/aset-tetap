@@ -283,22 +283,36 @@ $_SESSION['akses'] = $akses;
                       <th>Nama</th>
                       <th>Email</th>
                       <th>Akses Menu</th>
+                      <th>Type User</th>
+                      <th>Cabang</th>
                       <th>Action</th>
                     </tr>
                   </thead>
                   <tbody>
                     <?php
-                    $query_users = "SELECT users.*, GROUP_CONCAT(user_access.id_menu ORDER BY user_access.id_menu) AS akses_menu 
-                                    FROM users 
-                                    LEFT JOIN user_access ON users.NIPP = user_access.NIPP 
-                                    GROUP BY users.NIPP";
-                    $result_users = mysqli_query($con, $query_users);
+                    $result_users = mysqli_query($con, "
+                      SELECT u.NIPP, u.Nama, u.Email, u.Type_User, u.Cabang,
+                            (
+                              SELECT GROUP_CONCAT(id_menu ORDER BY id_menu SEPARATOR ', ')
+                              FROM user_access
+                              WHERE user_access.NIPP = u.NIPP
+                            ) AS akses_menu,
+                            i.profit_center_text
+                      FROM users u
+                      LEFT JOIN (
+                          SELECT DISTINCT profit_center, profit_center_text
+                          FROM import_dat
+                      ) i ON u.Cabang = i.profit_center
+                    ");
+
                     while ($user = mysqli_fetch_assoc($result_users)) {
                       echo '<tr>
                               <td>' . $user['NIPP'] . '</td>
                               <td>' . $user['Nama'] . '</td>
                               <td>' . $user['Email'] . '</td>
                               <td>' . $user['akses_menu'] . '</td>
+                              <td>' . $user['Type_User'] .' </td>
+                              <td>' . $user['Cabang'] . ' - ' . $user['profit_center_text'] . '</td>
                               <td>
                                 <a href="edit_user.php?nipp=' . $user['NIPP'] . '" class="btn btn-warning btn-sm">Edit</a>
                                 <button type="button" class="btn btn-danger btn-sm" data-bs-toggle="modal" data-bs-target="#deleteModal" data-nipp="' . $user['NIPP'] . '" data-nama="' . $user['Nama'] . '">Delete</button>
