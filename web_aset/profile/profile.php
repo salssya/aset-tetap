@@ -113,48 +113,51 @@ $avatarPath = '../../dist/assets/img/profile.png';
             <!--end::Fullscreen Toggle-->
             <!--begin::User Menu Dropdown-->
             <li class="nav-item dropdown user-menu">
-              <a href="#" class="nav-link dropdown-toggle" data-bs-toggle="dropdown">
-                <img
-                  src="../../dist/assets/img/profile.png"
-                  class="user-image rounded-circle shadow"
-                  alt="User Image"
-                />
-                <span class="d-none d-md-inline"><?php echo isset($_SESSION['name']) ? htmlspecialchars($_SESSION['name']) : ''; ?></span>
-              </a>
-              <ul class="dropdown-menu dropdown-menu-lg dropdown-menu-end">
-                <!--begin::User Image-->
-                <li class="user-header text-bg-primary">
-                  <img
-                    src="../../dist/assets/img/profile.png"
-                    class="rounded-circle shadow"
-                    alt="User Image"
-                  />
-                  <div>
-                    <p class="mb-0"><?php echo isset($_SESSION['name']) ? htmlspecialchars($_SESSION['name']) : ''; ?></p>
-                    <small>NIPP: <?php echo isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : ''; ?></small>
+            <a href="#" class="nav-link dropdown-toggle" data-bs-toggle="dropdown">
+              <img src="../../dist/assets/img/profile.png" 
+                  class="user-image rounded-circle shadow" alt="User Image"/>
+              <span class="d-none d-md-inline">
+                <?php echo htmlspecialchars($_SESSION['name']); ?>
+              </span>
+            </a>
+            <ul class="dropdown-menu dropdown-menu-lg dropdown-menu-end">
+              <!-- User Header -->
+              <li class="user-header text-bg-primary text-center">
+                <img src="../../dist/assets/img/profile.png" 
+                    class="rounded-circle shadow mb-2" alt="User Image" style="width:80px;height:80px;">
+                <p class="mb-0 fw-bold"><?php echo htmlspecialchars($_SESSION['name']); ?></p>
+                <small>NIPP: <?php echo htmlspecialchars($_SESSION['nipp']); ?></small>
+              </li>
+
+              <!-- User Info -->
+              <li class="user-menu-body">
+                <div class="row ps-3 pe-3 pt-2 pb-2 user-info">
+                  <div class="col-6 text-start">
+                    <small class="text-muted">Type User:</small><br>
+                    <span class="fw-semibold small">
+                      <?php echo htmlspecialchars($_SESSION['Type_User']); ?>
+                    </span>
                   </div>
-                </li>
-                <!--end::User Image-->
-                <!--begin::Menu Body-->
-                <li class="user-menu-body">
-                  <div class="ps-3 pe-3 pt-2 pb-2">
-                    <span class="badge text-bg-success"><i class="bi bi-circle-fill"></i> Online</span>
+                  <div class="col-6 text-end">
+                    <small class="text-muted">Cabang:</small><br>
+                    <span class="fw-semibold small">
+                      <?php echo htmlspecialchars($_SESSION['Cabang']); ?>
+                    </span>
                   </div>
-                  <hr class="m-0" />
-                </li>
-                <!--end::Menu Body-->
-                <!--begin::Menu Footer-->
-                <li class="user-footer">
-                  <a href="./profile.php" class="btn btn-sm btn-default btn-flat">
-                    <i class="bi bi-person"></i> Profile
-                  </a>
-                  <a href="../login/login_view.php" class="btn btn-sm btn-danger ms-auto" >
-                    <i class="bi bi-box-arrow-right"></i> Logout
-                  </a>
-                </li>
-                <!--end::Menu Footer-->
-              </ul>
-            </li>
+                </div>
+                <hr class="m-0"/>
+              </li>
+              <!-- Footer -->
+              <li class="user-footer d-flex justify-content-between px-3 py-2">
+                <a href="./profile.php" class="btn btn-sm btn-outline-primary">
+                  <i class="bi bi-person"></i> Profile
+                </a>
+                <a href="../login/login_view.php" class="btn btn-sm btn-danger">
+                  <i class="bi bi-box-arrow-right"></i> Logout
+                </a>
+              </li>
+            </ul>
+          </li>
             <!--end::User Menu Dropdown-->
           </ul>
           <!--end::End Navbar Links-->
@@ -251,43 +254,64 @@ $avatarPath = '../../dist/assets/img/profile.png';
           <!--end::Container-->
         </div>
         <div class="app-content">
-          <!--begin::Container-->
-          <div class="container-fluid">
+  <div class="container-fluid">
+    <div class="row">
+      <div class="col-lg-8 col-md-10 mx-auto">
+        <div class="card card-primary card-outline">
+          <div class="card-header">
+            <h3 class="card-title">Informasi Profile</h3>
+          </div>
+          <div class="card-body">
             <div class="row">
-              <div class="col-lg-8 col-md-10 mx-auto">
-                <div class="card card-primary card-outline">
-                  <div class="card-header">
-                    <h3 class="card-title">Informasi Profile</h3>
-                    <div class="card-tools">
+              <!-- Foto dan Role -->
+              <div class="col-md-4 text-center">
+                <img src="<?php echo $avatarPath; ?>" 
+                     class="img-circle elevation-2 border border-3 border-primary" 
+                     alt="User Image" 
+                     style="width: 120px; height: 120px; object-fit: cover;">
+                <div class="mt-3">
+                  <span class="badge bg-primary">
+                    <?php echo htmlspecialchars($userRole); ?>
+                  </span>
+                </div>
+              </div>
+
+              <!-- Informasi User -->
+              <div class="col-md-8">
+                <div class="row">
+                  <div class="col-12 mb-3">
+                    <h2 class="fw-bold text-primary">
+                      <?php echo htmlspecialchars($_SESSION['name']); ?>
+                    </h2>
+
+                    <div class="mb-2">
+                      <h6 class="mb-1 text-muted">NIPP:</h6>
+                      <p class="fw-semibold"><?php echo htmlspecialchars($_SESSION['nipp']); ?></p>
                     </div>
-                  </div>
-                  <div class="card-body">
-                    <div class="row">
-                      <div class="col-md-4 text-center">
-                        <img src="<?php echo $avatarPath; ?>" class="img-circle elevation-2" alt="User Image" style="width: 120px; height: 120px; object-fit: cover;">
-                        <div class="mt-2">
-                          <span class="badge badge-primary"><?php echo htmlspecialchars($userRole); ?></span>
-                        </div>
-                      </div>
-                     <div class="col-md-8">
-                        <div class="row">
-                            <div class="col-12 mb-3">
-                            <h2 class="fw-bold">
-                                <?php echo htmlspecialchars($_SESSION['name']); ?>
-                            </h2>
 
-                            <h6 class="mb-1">NIPP:</h6>
-                            <p><?php echo htmlspecialchars($_SESSION['nipp']); ?></p>
+                    <div class="mb-2">
+                      <h6 class="mb-1 text-muted">Email:</h6>
+                      <p class="fw-semibold"><?php echo htmlspecialchars($_SESSION['email']); ?></p>
+                    </div>
 
-                            <h6 class="mb-1">Email:</h6>
-                            <p><?php echo htmlspecialchars($_SESSION['email']); ?></p>
-                            </div>
-                        </div>
+                    <div class="mb-2">
+                      <h6 class="mb-1 text-muted">Type User:</h6>
+                      <p class="fw-semibold">
+                        <?php echo isset($_SESSION['Type_User']) ? htmlspecialchars($_SESSION['Type_User']) : 'Belum ada data'; ?>
+                      </p>
+                    </div>
+
+                    <div class="mb-2">
+                      <h6 class="mb-1 text-muted">Cabang:</h6>
+                      <p class="fw-semibold">
+                        <?php echo isset($_SESSION['Cabang']) ? htmlspecialchars($_SESSION['Cabang']) : 'Belum ada data'; ?>
+                      </p>
                     </div>
                   </div>
                 </div>
-                </div>
-          <!--end::Container-->
+              </div>
+            </div>
+          </div>
         </div>
         <!--end::App Content-->
       </main>
