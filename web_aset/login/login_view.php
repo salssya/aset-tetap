@@ -15,24 +15,36 @@ if (isset($_POST["login"])) {
     $nipp = mysqli_real_escape_string($con, $_POST["nipp"]);
     $password = mysqli_real_escape_string($con, $_POST["password"]);
 
-    $check_user = mysqli_query($con, "SELECT * FROM users WHERE NIPP='$nipp'");
+    $check_user = mysqli_query($con, "
+    SELECT u.NIPP, u.Nama, u.Email, u.Password, u.Type_User, u.Cabang, i.profit_center_text
+    FROM users u
+    LEFT JOIN (
+        SELECT DISTINCT profit_center, profit_center_text
+        FROM import_dat
+    ) i ON u.Cabang = i.profit_center
+    WHERE u.NIPP = '$nipp'
+");
 
 if (mysqli_num_rows($check_user) > 0) {
     $row = mysqli_fetch_assoc($check_user);
 
     if ($row['Password'] === $password) {
         // login sukses
-        $_SESSION["nipp"]  = $row['NIPP'];
-        $_SESSION["name"]  = $row['Nama'];
-        $_SESSION["email"] = $row['Email'];
-        $_SESSION["Type_User"] = $row['Type_User']; 
-        $_SESSION["Cabang"] = $row['Cabang'];
+        $_SESSION["nipp"]               = $row['NIPP'];
+        $_SESSION["name"]               = $row['Nama'];
+        $_SESSION["email"]              = $row['Email'];
+        $_SESSION["Type_User"]          = $row['Type_User']; 
+        $_SESSION["Cabang"]             = $row['Cabang'];
+        $_SESSION["profit_center_text"] = $row['profit_center_text'];
 
         echo "
         <script>
             sessionStorage.setItem('nipp', '" . $row['NIPP'] . "');
             sessionStorage.setItem('name', '" . $row['Nama'] . "');
             sessionStorage.setItem('email', '" . $row['Email'] . "');
+            sessionStorage.setItem('Type_User', '" . $row['Type_User'] . "');
+            sessionStorage.setItem('Cabang', '" . $row['Cabang'] . "');
+            sessionStorage.setItem('profit_center_text', '" . $row['profit_center_text'] . "');
             window.location = '../../web_aset/dasbor/dasbor.php';
         </script>";
     } else {
