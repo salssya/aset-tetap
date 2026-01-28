@@ -4,24 +4,36 @@ $username = "root";
 $password = "";
 $dbname = "asetreg3_db";
 
+$con = mysqli_connect($servername, $username, $password, $dbname);
+
 session_start();
 if(!isset($_SESSION["nipp"]) || !isset($_SESSION["name"])) {
     header("Location: ../login/login_view.php");
     exit();
 }
 
-// Create connection
-$con = mysqli_connect($servername, $username, $password, $dbname);
-
-// Get user role
 $userNipp = mysqli_real_escape_string($con, $_SESSION['nipp']);
-$query = "SELECT NIPP, nama, email FROM users WHERE NIPP = '$userNipp'";
+$query = "
+  SELECT u.NIPP, u.Nama, u.Email, u.Type_User, u.Cabang, i.profit_center_text
+  FROM users u
+  LEFT JOIN (
+    SELECT DISTINCT profit_center, profit_center_text
+    FROM import_dat
+  ) i ON u.Cabang = i.profit_center
+  WHERE u.NIPP = '$userNipp'
+";
+
 $result = mysqli_query($con, $query);
 $userRole = 'User';
 if ($result && mysqli_num_rows($result) > 0) {
     $row = mysqli_fetch_assoc($result);
-    $userRole = $row['nama'];
+    $userName   = $row['Nama'];
+    $userEmail  = $row['Email'];
+    $userNipp   = $row['NIPP'];
+    $userType   = $row['Type_User'];
+    $userCabang = $row['Cabang'] . ' - ' . $row['profit_center_text'];
 }
+
 $avatarPath = '../../dist/assets/img/profile.png';
 
 ?>
@@ -134,15 +146,15 @@ $avatarPath = '../../dist/assets/img/profile.png';
                 <div class="row ps-3 pe-3 pt-2 pb-2 user-info">
                   <div class="col-6 text-start">
                     <small class="text-muted">Type User:</small><br>
-                    <span class="fw-semibold small">
+                    <span class="badge bg-primary">
                       <?php echo htmlspecialchars($_SESSION['Type_User']); ?>
                     </span>
                   </div>
                   <div class="col-6 text-end">
                     <small class="text-muted">Cabang:</small><br>
                     <span class="fw-semibold small">
-                      <?php echo htmlspecialchars($_SESSION['Cabang']); ?>
-                    </span>
+                    <p class="fw-semibold"><?php echo htmlspecialchars($userCabang); ?></p>
+                  </span>
                   </div>
                 </div>
                 <hr class="m-0"/>
@@ -266,24 +278,21 @@ $avatarPath = '../../dist/assets/img/profile.png';
               <!-- Foto dan Role -->
               <div class="col-md-4 text-center">
                 <img src="<?php echo $avatarPath; ?>" 
-                     class="img-circle elevation-2 border border-3 border-primary" 
+                     class="rounded-circle shadow mb-2 border border-3 border-primary" 
                      alt="User Image" 
-                     style="width: 120px; height: 120px; object-fit: cover;">
+                     style="width:110px;height:110px;">
                 <div class="mt-3">
-                  <span class="badge bg-primary">
-                    <?php echo htmlspecialchars($userRole); ?>
-                  </span>
+                  <h5 class="mt-1 mb-0 fw-bold">
+                     <?php echo htmlspecialchars($_SESSION['name']); ?> 
+                    </h5> 
+                    <span class="badge bg-primary"> 
+                      <?php echo htmlspecialchars($_SESSION['Type_User']); ?> 
+                </span>
                 </div>
               </div>
-
               <!-- Informasi User -->
               <div class="col-md-8">
-                <div class="row">
-                  <div class="col-12 mb-3">
-                    <h2 class="fw-bold text-primary">
-                      <?php echo htmlspecialchars($_SESSION['name']); ?>
-                    </h2>
-
+                <div class="info mt-2">
                     <div class="mb-2">
                       <h6 class="mb-1 text-muted">NIPP:</h6>
                       <p class="fw-semibold"><?php echo htmlspecialchars($_SESSION['nipp']); ?></p>
@@ -293,18 +302,11 @@ $avatarPath = '../../dist/assets/img/profile.png';
                       <h6 class="mb-1 text-muted">Email:</h6>
                       <p class="fw-semibold"><?php echo htmlspecialchars($_SESSION['email']); ?></p>
                     </div>
-
-                    <div class="mb-2">
-                      <h6 class="mb-1 text-muted">Type User:</h6>
-                      <p class="fw-semibold">
-                        <?php echo isset($_SESSION['Type_User']) ? htmlspecialchars($_SESSION['Type_User']) : 'Belum ada data'; ?>
-                      </p>
-                    </div>
-
+                    
                     <div class="mb-2">
                       <h6 class="mb-1 text-muted">Cabang:</h6>
                       <p class="fw-semibold">
-                        <?php echo isset($_SESSION['Cabang']) ? htmlspecialchars($_SESSION['Cabang']) : 'Belum ada data'; ?>
+                        <?php echo !empty($userCabang) ? htmlspecialchars($userCabang) : 'Belum ada data'; ?>
                       </p>
                     </div>
                   </div>
