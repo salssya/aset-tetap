@@ -176,44 +176,50 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             <!--begin::User Menu Dropdown-->
             <li class="nav-item dropdown user-menu">
               <a href="#" class="nav-link dropdown-toggle" data-bs-toggle="dropdown">
-                <img
-                  src="../../dist/assets/img/profile.png"
-                  class="user-image rounded-circle shadow"
-                  alt="User Image"
-                />
-                <span class="d-none d-md-inline"><?php echo isset($_SESSION['name']) ? htmlspecialchars($_SESSION['name']) : ''; ?></span>
+                <img src="../../dist/assets/img/profile.png" 
+                    class="user-image rounded-circle shadow" alt="User Image"/>
+                <span class="d-none d-md-inline">
+                  <?php echo htmlspecialchars($_SESSION['name']); ?>
+                </span>
               </a>
               <ul class="dropdown-menu dropdown-menu-lg dropdown-menu-end">
-                <!--begin::User Image-->
-                <li class="user-header text-bg-primary">
-                  <img
-                    src="../../dist/assets/img/profile.png"
-                    class="rounded-circle shadow"
-                    alt="User Image"
-                  />
-                  <div>
-                    <p class="mb-0"><?php echo isset($_SESSION['name']) ? htmlspecialchars($_SESSION['name']) : ''; ?></p>
-                    <small>NIPP: <?php echo isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : ''; ?></small>
-                  </div>
+                <!-- User Header -->
+                <li class="user-header text-bg-primary text-center">
+                  <img src="../../dist/assets/img/profile.png" 
+                      class="rounded-circle shadow mb-2" alt="User Image" style="width:80px;height:80px;">
+                  <p class="mb-0 fw-bold"><?php echo htmlspecialchars($_SESSION['name']); ?></p>
+                  <small>NIPP: <?php echo htmlspecialchars($_SESSION['nipp']); ?></small>
                 </li>
-                <!--end::User Image-->
-                <!--begin::Menu Body-->
+
+                <!-- User Info -->
                 <li class="user-menu-body">
-                  <div class="ps-3 pe-3 pt-2 pb-2">
-                    <span class="badge text-bg-success"><i class="bi bi-circle-fill"></i> Online</span>
+                  <div class="row ps-3 pe-3 pt-2 pb-2 user-info">
+                    <div class="col-6 text-start">
+                      <small class="text-muted">Type User:</small><br>
+                      <span class="fw-semibold small">
+                        <?php echo htmlspecialchars($_SESSION['Type_User']); ?>
+                      </span>
+                    </div>
+                    <div class="col-6 text-end">
+                      <small class="text-muted">Cabang:</small><br>
+                      <span class="fw-semibold small">
+                        <?php echo htmlspecialchars($_SESSION['Cabang']); ?>
+                      </span>
+                    </div>
                   </div>
-                  <hr class="m-0" />
+                  <hr class="m-0"/>
                 </li>
-                <!--end::Menu Body-->
-                <!--begin::Menu Footer-->
-                <li class="user-footer">
-                  <a href="../profile/profile.php" class="btn btn-sm btn-default btn-flat">
-                    <i class="bi bi-person"></i> Profile
-                  </a>
-                  <a href="../login/login_view.php" class="btn btn-sm btn-danger ms-auto" >
-                    <i class="bi bi-box-arrow-right"></i> Logout
-                  </a>
-                </li>
+                  <!-- Footer -->
+                  <li class="user-footer d-flex justify-content-between px-3 py-2">
+                    <a href="../profile/profile.php" class="btn btn-sm btn-outline-primary">
+                      <i class="bi bi-person"></i> Profile
+                    </a>
+                    <a href="../login/login_view.php" class="btn btn-sm btn-danger">
+                      <i class="bi bi-box-arrow-right"></i> Logout
+                    </a>
+                  </li>
+                </ul>
+              </li>
                 <!--end::Menu Footer-->
               </ul>
             </li>
