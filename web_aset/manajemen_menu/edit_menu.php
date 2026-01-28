@@ -155,15 +155,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                   <div class="row ps-3 pe-3 pt-2 pb-2 user-info">
                     <div class="col-6 text-start">
                       <small class="text-muted">Type User:</small><br>
-                      <span class="fw-semibold small">
+                      <span class="badge bg-primary">
                         <?php echo htmlspecialchars($_SESSION['Type_User']); ?>
                       </span>
                     </div>
                     <div class="col-6 text-end">
-                      <small class="text-muted">Cabang:</small><br>
-                      <span class="fw-semibold small">
-                        <?php echo htmlspecialchars($_SESSION['Cabang']); ?>
-                      </span>
+                    <small class="text-muted">Cabang:</small><br>
+                    <span class="fw-semibold small">
+                    <p class="fw-semibold"><?php echo htmlspecialchars($_SESSION['Cabang'] . ' - ' . $_SESSION['profit_center_text']); ?></p>
+                  </span>
                     </div>
                   </div>
                   <hr class="m-0"/>
