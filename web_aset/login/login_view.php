@@ -25,6 +25,8 @@ if (mysqli_num_rows($check_user) > 0) {
         $_SESSION["nipp"]  = $row['NIPP'];
         $_SESSION["name"]  = $row['Nama'];
         $_SESSION["email"] = $row['Email'];
+        $_SESSION["Type_User"] = $row['Type_User']; 
+        $_SESSION["Cabang"] = $row['Cabang'];
 
         echo "
         <script>
