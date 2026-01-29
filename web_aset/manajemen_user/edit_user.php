@@ -390,17 +390,20 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     <div class="form-group">
                       <label for="Cabang">Cabang</label>
                       <select name="Cabang" id="Cabang" class="form-control">
-                        <?php
-                        $result_cabang = mysqli_query($con, " 
-                          SELECT DISTINCT profit_center, profit_center_text 
-                          FROM import_dat 
-                          ORDER BY profit_center "
-                          ); 
-                          while($row = mysqli_fetch_assoc($result_cabang)) { 
-                            echo '<option value="'.$row['profit_center'].'">'.$row['profit_center'].' - '.$row['profit_center_text'].'</option>'; 
-                            } 
-                            ?> 
-                        </select>
+                      <?php
+                      $result_cabang = mysqli_query($con, "
+                        SELECT DISTINCT profit_center, profit_center_text 
+                        FROM import_dat 
+                        ORDER BY profit_center
+                      "); 
+                      while($row = mysqli_fetch_assoc($result_cabang)) { 
+                          $selected = (isset($user['Cabang']) && $user['Cabang'] == $row['profit_center']) ? 'selected' : '';
+                          echo '<option value="'.$row['profit_center'].'" '.$selected.'>'.
+                                $row['profit_center'].' - '.$row['profit_center_text'].
+                              '</option>'; 
+                      } 
+                      ?> 
+                    </select>
                     </div>
                         </div> 
                       </div>
