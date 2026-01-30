@@ -307,6 +307,38 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                         <div class="invalid-feedback">Password harus diisi.</div>
                       </div>
                     </div>
+                    <div class="col-md-6">
+                      <div class="form-group">
+                        <label for="Type_User">Type User</label>
+                        <select name="Type_User" id="Type_User" class="form-control" required>
+                          <option value="">-- Pilih Type User --</option>
+                          <option value="Approval Regional">Approval Regional</option>
+                          <option value="Approval Sub Regional">Approval Sub Regional</option>
+                          <option value="User Entry Regional">User Entry Regional</option>
+                          <option value="User Entry Sub Regional">User Entry Sub Regional</option>
+                          <option value="User Entry Cabang">User Entry Cabang</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="col-md-6">
+                                          <div class="form-group">
+                      <label for="Cabang">Cabang</label>
+                      <select name="Cabang" id="Cabang" class="form-control" required>
+                        <option value="">-- Pilih Cabang --</option>
+                        <?php
+                        $result_cabang = mysqli_query($con, "
+                          SELECT DISTINCT profit_center, profit_center_text 
+                          FROM import_dat 
+                          ORDER BY profit_center
+                        ");
+                        while($row = mysqli_fetch_assoc($result_cabang)) {
+                            echo '<option value="'.$row['profit_center'].'">'.
+                                  $row['profit_center'].' - '.$row['profit_center_text'].
+                                '</option>';
+                        }
+                        ?>
+                      </select>
+                    </div>
                   </div>
                 </div>
                 <div class="row">
