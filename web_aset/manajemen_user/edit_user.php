@@ -1,15 +1,17 @@
 <?php
-$servername = "localhost";
-$username = "root";
-$password = "";
-$dbname = "asetreg3_db";
-
-$con = mysqli_connect($servername, $username, $password, $dbname);
 session_start();
 if(!isset($_SESSION["nipp"])) {
     header("Location: ../login/login_view.php");
     exit();
 }
+
+$servername = "localhost";
+$username = "root";
+$password = "";
+$dbname = "asetreg3_db";
+
+// Create connection
+$con = mysqli_connect($servername, $username, $password, $dbname);
 
 // Get user data
 $nipp = $_GET['nipp'];
@@ -24,59 +26,32 @@ $akses_user = [];
   $akses_user[] = $row_access['id_menu']; 
 }
 
-// Handle form submission (update user)
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $nipp      = mysqli_real_escape_string($con, $_POST['nipp']);
-    $nama      = mysqli_real_escape_string($con, $_POST['nama']);
-    $email     = mysqli_real_escape_string($con, $_POST['email']);
-    $password  = mysqli_real_escape_string($con, $_POST['password']);
-    $type_user = mysqli_real_escape_string($con, $_POST['Type_User']);
-    $cabang    = mysqli_real_escape_string($con, $_POST['Cabang']);
+    $nama = mysqli_real_escape_string($con, $_POST['nama']);
+    $email = mysqli_real_escape_string($con, $_POST['email']);
+    $password = mysqli_real_escape_string($con, $_POST['password']);
 
     if (!empty($password)) {
         $hashed_password = password_hash($password, PASSWORD_DEFAULT);
-
-        // pakai prepared statement untuk update dengan password
-        $stmt = $con->prepare("UPDATE users 
-                               SET Nama=?, Email=?, Password=?, Type_User=?, Cabang=? 
-                               WHERE NIPP=?");
-        $stmt->bind_param("ssssss", $nama, $email, $hashed_password, $type_user, $cabang, $nipp);
+        $update_query = "UPDATE users SET Nama='$nama', Email='$email', Password='$hashed_password' WHERE NIPP='$nipp'";
     } else {
-        // pakai prepared statement untuk update tanpa password
-        $stmt = $con->prepare("UPDATE users 
-                               SET Nama=?, Email=?, Type_User=?, Cabang=? 
-                               WHERE NIPP=?");
-        $stmt->bind_param("sssss", $nama, $email, $type_user, $cabang, $nipp);
+        $update_query = "UPDATE users SET Nama='$nama', Email='$email' WHERE NIPP='$nipp'";
     }
-
-    if ($stmt->execute()) {
-        // hapus akses lama dulu
-        $del_stmt = $con->prepare("DELETE FROM user_access WHERE NIPP=?");
-        $del_stmt->bind_param("s", $nipp);
-        $del_stmt->execute();
-        $del_stmt->close();
-
-        // simpan akses baru
+    
+    if (mysqli_query($con, $update_query)) {
+        // Hapus akses lama
+        mysqli_query($con, "DELETE FROM user_access WHERE NIPP='$nipp'");
+        // Insert akses baru
         if(isset($_POST['akses'])) {
-            $ins_stmt = $con->prepare("INSERT INTO user_access (NIPP, id_menu) VALUES (?, ?)");
             foreach($_POST['akses'] as $id_menu) {
-                $ins_stmt->bind_param("si", $nipp, $id_menu);
-                $ins_stmt->execute();
+                mysqli_query($con, "INSERT INTO user_access (NIPP, id_menu) VALUES ('$nipp', '$id_menu')");
             }
-            $ins_stmt->close();
         }
-
-        // set pesan sukses
-        $pesan = "User berhasil diupdate!";
-        $tipe_pesan = "success";
+        echo "<script>alert('User berhasil diupdate'); window.location='manajemen_user.php';</script>";
     } else {
-        // set pesan error
-        $pesan = "Gagal update user: " . $stmt->error;
-        $tipe_pesan = "danger";
+        echo "<script>alert('Error: " . mysqli_error($con) . "');</script>";
     }
-    $stmt->close();
 }
-
 ?>
 <!doctype html>
 <html lang="en">
@@ -157,21 +132,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
           <!--begin::End Navbar Links-->
           <ul class="navbar-nav ms-auto">
             <!--begin::Navbar Search-->
-            <li class="nav-item">
-              <a class="nav-link" data-widget="navbar-search" href="#" role="button">
-                <i class="bi bi-search"></i>
-              </a>
-            </li>
             <!--end::Navbar Search-->
             <!--begin::Messages Dropdown Menu-->
             <!--end::Notifications Dropdown Menu-->
             <!--begin::Fullscreen Toggle-->
-            <li class="nav-item">
-              <a class="nav-link" href="#" data-lte-toggle="fullscreen">
-                <i data-lte-icon="maximize" class="bi bi-arrows-fullscreen"></i>
-                <i data-lte-icon="minimize" class="bi bi-fullscreen-exit" style="display: none"></i>
-              </a>
-            </li>
             <!--end::Fullscreen Toggle-->
             <!--begin::User Menu Dropdown-->
             <li class="nav-item dropdown user-menu">
@@ -192,7 +156,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 </li>
 
                 <!-- User Info -->
-              <li class="user-menu-body">
+                <li class="user-menu-body">
                   <div class="row ps-3 pe-3 pt-2 pb-2 user-info">
                     <div class="col-6 text-start">
                       <small class="text-muted">Type User:</small><br>
@@ -210,19 +174,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                   <hr class="m-0"/>
                 </li>
                   <!-- Footer -->
-                  <li class="user-footer d-flex justify-content-between px-3 py-2">
+                  <li class="user-footer d-flex align-items-center px-3 py-2">
                     <a href="../profile/profile.php" class="btn btn-sm btn-outline-primary">
                       <i class="bi bi-person"></i> Profile
                     </a>
-                    <a href="../login/login_view.php" class="btn btn-sm btn-danger">
+                    <a href="../login/login_view.php" class="btn btn-sm btn-danger ms-auto">
                       <i class="bi bi-box-arrow-right"></i> Logout
                     </a>
                   </li>
                 </ul>
-              </li>
-                <!--end::Menu Footer-->
-              </ul>
-            </li>
             <!--end::User Menu Dropdown-->
           </ul>
           <!--end::End Navbar Links-->
@@ -272,8 +232,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 'Persetujuan Penghapusan'=> 'bi bi-clipboard-check-fill',
                 'Pelaksanaan Penghapusan'=> 'bi bi-tools',
                 'Manajemen Menu'         => 'bi bi-list-ul',
-                'Manajemen User'         => 'bi bi-people-fill',
-                'Import DAT'             => 'bi bi-file-earmark-arrow-up-fill' 
+                'Import DAT'             => 'bi bi-file-earmark-arrow-up-fill',
+                'Daftar Aset Tetap'      => 'bi bi-card-list',
+                'Manajemen User'         => 'bi bi-people-fill' 
             ];
   
             while ($row = mysqli_fetch_assoc($result)) {
@@ -334,15 +295,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
               <!--begin::Form-->
               <form class="needs-validation" method="post" novalidate="">
                 <div class="card-body">
-                  <?php  
-                      if (isset($pesan)) {
-                          echo '<div class="alert alert-' . $tipe_pesan . ' alert-dismissible fade show" role="alert">' . $pesan . 
-                          '<button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button></div>';
-                      }
-                      
-                      // Hanya tampilkan form jika belum submit atau ada error
-                      if (!isset($pesan) || $tipe_pesan == "danger") {
-                      ?>
                   <div class="row">
                     <div class="col-md-6">
                       <div class="form-group">
@@ -373,40 +325,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                       </div>
                     </div>
                   </div>
-                  <div class="row"> 
-                    <div class="col-md-6"> 
-                      <div class="form-group">
-                      <label for="Type_User">Type User</label>
-                      <select name="Type_User" id="Type_User" class="form-control">
-                        <option value="Approval Regional" <?php if(isset($user['Type_User']) && $user['Type_User']=='Approval Regional') echo 'selected'; ?>>Approval Regional</option>
-                        <option value="Approval Sub Regional" <?php if(isset($user['Type_User']) && $user['Type_User']=='Approval Sub Regional') echo 'selected'; ?>>Approval Sub Regional</option>
-                        <option value="User Entry Regional" <?php if(isset($user['Type_User']) && $user['Type_User']=='User Entry Regional') echo 'selected'; ?>>User Entry Regional</option>
-                        <option value="User Entry Sub Regional" <?php if(isset($user['Type_User']) && $user['Type_User']=='User Entry Sub Regional') echo 'selected'; ?>>User Entry Sub Regional</option>
-                        <option value="User Entry Cabang" <?php if(isset($user['Type_User']) && $user['Type_User']=='User Entry Cabang') echo 'selected'; ?>>User Entry Cabang</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div class="col-md-6"> 
-                    <div class="form-group">
-                      <label for="Cabang">Cabang</label>
-                      <select name="Cabang" id="Cabang" class="form-control">
-                      <?php
-                      $result_cabang = mysqli_query($con, "
-                        SELECT DISTINCT profit_center, profit_center_text 
-                        FROM import_dat 
-                        ORDER BY profit_center
-                      "); 
-                      while($row = mysqli_fetch_assoc($result_cabang)) { 
-                          $selected = (isset($user['Cabang']) && $user['Cabang'] == $row['profit_center']) ? 'selected' : '';
-                          echo '<option value="'.$row['profit_center'].'" '.$selected.'>'.
-                                $row['profit_center'].' - '.$row['profit_center_text'].
-                              '</option>'; 
-                      } 
-                      ?> 
-                    </select>
-                    </div>
-                        </div> 
-                      </div>
                 </div>
                 <div class="row">
                 <div class="col-md-12">
@@ -432,11 +350,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                   <button type="submit" class="btn btn-primary">Update</button>
                   <a href="manajemen_user.php" class="btn btn-secondary">Batal</a>
                 </div>
-                <?php } else if (isset($pesan) && $tipe_pesan == "success") { ?>
-                <div class="card-body text-center">
-                  <p><a href="manajemen_user.php" class="btn btn-primary">Kembali ke Daftar User</a></p>
-                </div>
-                <?php } ?>
               </form>
               <!--end::Form-->
               <!--begin::JavaScript-->
@@ -468,7 +381,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
       <!--begin::Footer-->
       <footer class="app-footer">
         <!--begin::To the end-->
-        <div class="float-end d-none d-sm-inline">PT Pelabuhan Indonesia (Persero)</div>
+        <div class="float-end d-none d-sm-inline">PT Pelabuhan Indoensia (Persero)</div>
         <!--end::To the end-->
         <!--begin::Copyright-->
         <strong>

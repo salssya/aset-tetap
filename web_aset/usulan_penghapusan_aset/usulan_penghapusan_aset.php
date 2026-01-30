@@ -159,33 +159,29 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                   <div class="row ps-3 pe-3 pt-2 pb-2 user-info">
                     <div class="col-6 text-start">
                       <small class="text-muted">Type User:</small><br>
-                      <span class="fw-semibold small">
+                      <span class="badge bg-primary">
                         <?php echo htmlspecialchars($_SESSION['Type_User']); ?>
                       </span>
                     </div>
                     <div class="col-6 text-end">
-                      <small class="text-muted">Cabang:</small><br>
-                      <span class="fw-semibold small">
-                        <?php echo htmlspecialchars($_SESSION['Cabang']); ?>
-                      </span>
+                    <small class="text-muted">Cabang:</small><br>
+                    <span class="fw-semibold small">
+                    <p class="fw-semibold"><?php echo htmlspecialchars($_SESSION['Cabang'] . ' - ' . $_SESSION['profit_center_text']); ?></p>
+                  </span>
                     </div>
                   </div>
                   <hr class="m-0"/>
                 </li>
                   <!-- Footer -->
-                  <li class="user-footer d-flex justify-content-between px-3 py-2">
+                  <li class="user-footer d-flex align-items-center px-3 py-2">
                     <a href="../profile/profile.php" class="btn btn-sm btn-outline-primary">
                       <i class="bi bi-person"></i> Profile
                     </a>
-                    <a href="../login/login_view.php" class="btn btn-sm btn-danger">
+                    <a href="../login/login_view.php" class="btn btn-sm btn-danger ms-auto">
                       <i class="bi bi-box-arrow-right"></i> Logout
                     </a>
                   </li>
                 </ul>
-              </li>
-                <!--end::Menu Footer-->
-              </ul>
-            </li>
             <!--end::User Menu Dropdown-->
           </ul>
           <!--end::End Navbar Links-->
@@ -235,8 +231,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 'Persetujuan Penghapusan'=> 'bi bi-clipboard-check-fill',
                 'Pelaksanaan Penghapusan'=> 'bi bi-tools',
                 'Manajemen Menu'         => 'bi bi-list-ul',
-                'Manajemen User'         => 'bi bi-people-fill',
-                'Import DAT'             => 'bi bi-file-earmark-arrow-up-fill'
+                'Import DAT'             => 'bi bi-file-earmark-arrow-up-fill',
+                'Daftar Aset Tetap'      => 'bi bi-card-list',
+                'Manajemen User'         => 'bi bi-people-fill'
             ];
   
             while ($row = mysqli_fetch_assoc($result)) {

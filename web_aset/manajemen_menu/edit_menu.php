@@ -116,21 +116,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
           <!--begin::End Navbar Links-->
           <ul class="navbar-nav ms-auto">
             <!--begin::Navbar Search-->
-            <li class="nav-item">
-              <a class="nav-link" data-widget="navbar-search" href="#" role="button">
-                <i class="bi bi-search"></i>
-              </a>
-            </li>
             <!--end::Navbar Search-->
             <!--begin::Messages Dropdown Menu-->
             <!--end::Notifications Dropdown Menu-->
             <!--begin::Fullscreen Toggle-->
-            <li class="nav-item">
-              <a class="nav-link" href="#" data-lte-toggle="fullscreen">
-                <i data-lte-icon="maximize" class="bi bi-arrows-fullscreen"></i>
-                <i data-lte-icon="minimize" class="bi bi-fullscreen-exit" style="display: none"></i>
-              </a>
-            </li>
             <!--end::Fullscreen Toggle-->
             <!--begin::User Menu Dropdown-->
             <li class="nav-item dropdown user-menu">
@@ -169,19 +158,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                   <hr class="m-0"/>
                 </li>
                   <!-- Footer -->
-                  <li class="user-footer d-flex justify-content-between px-3 py-2">
+                  <li class="user-footer d-flex align-items-center px-3 py-2">
                     <a href="../profile/profile.php" class="btn btn-sm btn-outline-primary">
                       <i class="bi bi-person"></i> Profile
                     </a>
-                    <a href="../login/login_view.php" class="btn btn-sm btn-danger">
+                    <a href="../login/login_view.php" class="btn btn-sm btn-danger ms-auto">
                       <i class="bi bi-box-arrow-right"></i> Logout
                     </a>
                   </li>
                 </ul>
-              </li>
-                <!--end::Menu Footer-->
-              </ul>
-            </li>
             <!--end::User Menu Dropdown-->
           </ul>
           <!--end::End Navbar Links-->
@@ -231,8 +216,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 'Persetujuan Penghapusan'=> 'bi bi-clipboard-check-fill',
                 'Pelaksanaan Penghapusan'=> 'bi bi-tools',
                 'Manajemen Menu'         => 'bi bi-list-ul',
-                'Manajemen User'         => 'bi bi-people-fill',
-                'Import DAT'             => 'bi bi-file-earmark-arrow-up-fill'
+                'Import DAT'             => 'bi bi-file-earmark-arrow-up-fill',
+                'Daftar Aset Tetap'      => 'bi bi-card-list',
+                'Manajemen User'         => 'bi bi-people-fill'
             ];
   
             while ($row = mysqli_fetch_assoc($result)) {
@@ -362,11 +348,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
       <!--begin::Footer-->
       <footer class="app-footer">
         <!--begin::To the end-->
-        <div class="float-end d-none d-sm-inline">PT Pelabuhan Indonesia (Persero)</div>
+        <div class="float-end d-none d-sm-inline">PT Pelabuhan Indoensia (Persero)</div>
         <!--end::To the end-->
         <!--begin::Copyright-->
         <strong>
-          Copyright &copy; Proyek Aset Tetap Regional 3&nbsp;
+          Copyright &copy; Proyek Aset Tetap Regional&nbsp;
         </strong>
         <!--end::Copyright-->
       </footer>

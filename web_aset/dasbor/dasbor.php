@@ -122,33 +122,29 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                   <div class="row ps-3 pe-3 pt-2 pb-2 user-info">
                     <div class="col-6 text-start">
                       <small class="text-muted">Type User:</small><br>
-                      <span class="fw-semibold small">
+                      <span class="badge bg-primary">
                         <?php echo htmlspecialchars($_SESSION['Type_User']); ?>
                       </span>
                     </div>
                     <div class="col-6 text-end">
-                      <small class="text-muted">Cabang:</small><br>
-                      <span class="fw-semibold small">
-                        <?php echo htmlspecialchars($_SESSION['Cabang']); ?>
-                      </span>
+                    <small class="text-muted">Cabang:</small><br>
+                    <span class="fw-semibold small">
+                    <p class="fw-semibold"><?php echo htmlspecialchars($_SESSION['Cabang'] . ' - ' . $_SESSION['profit_center_text']); ?></p>
+                  </span>
                     </div>
                   </div>
                   <hr class="m-0"/>
                 </li>
                   <!-- Footer -->
-                  <li class="user-footer d-flex justify-content-between px-3 py-2">
+                  <li class="user-footer d-flex align-items-center px-3 py-2">
                     <a href="../profile/profile.php" class="btn btn-sm btn-outline-primary">
                       <i class="bi bi-person"></i> Profile
                     </a>
-                    <a href="../login/login_view.php" class="btn btn-sm btn-danger">
+                    <a href="../login/login_view.php" class="btn btn-sm btn-danger ms-auto">
                       <i class="bi bi-box-arrow-right"></i> Logout
                     </a>
                   </li>
                 </ul>
-              </li>
-                <!--end::Menu Footer-->
-              </ul>
-            </li>
             <!--end::User Menu Dropdown-->
           </ul>
           <!--end::End Navbar Links-->
@@ -198,8 +194,9 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                 'Persetujuan Penghapusan'=> 'bi bi-clipboard-check-fill',
                 'Pelaksanaan Penghapusan'=> 'bi bi-tools',
                 'Manajemen Menu'         => 'bi bi-list-ul',
-                'Manajemen User'         => 'bi bi-people-fill',
-                'Import DAT'             => 'bi bi-file-earmark-arrow-up-fill'
+                'Import DAT'             => 'bi bi-file-earmark-arrow-up-fill',
+                'Daftar Aset Tetap'      => 'bi bi-card-list',
+                'Manajemen User'         => 'bi bi-people-fill'
             ]; 
   
             while ($row = mysqli_fetch_assoc($result)) {
@@ -250,31 +247,71 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
             <!-- Info boxes -->
             <div class="row">
               <?php
+
+              // Filter criteria
+              $filterCondition = "WHERE nilai_perolehan_sd <> 0 AND asset_class_name NOT LIKE '%AUC%'";
+
               // Get statistics from database
-              $totalQuery = "SELECT COUNT(*) as total FROM import_dat";
+              $totalQuery = "SELECT COUNT(*) as total FROM import_dat " . $filterCondition;
               $totalResult = mysqli_query($con, $totalQuery);
-              $totalRow = mysqli_fetch_assoc($totalResult);
-              $totalAssets = $totalRow['total'] ?? 0;
+              if (!$totalResult) {
+                  echo "<!-- Query Error: " . mysqli_error($con) . " -->";
+                  $totalAssets = 0;
+              } else {
+                  $totalRow = mysqli_fetch_assoc($totalResult);
+                  $totalAssets = $totalRow['total'] ?? 0;
+              }
               
-              $shutdownQuery = "SELECT COUNT(*) as shutdown FROM import_dat WHERE asset_shutdown = '1' OR asset_shutdown = 'true'";
-              $shutdownResult = mysqli_query($con, $shutdownQuery);
-              $shutdownRow = mysqli_fetch_assoc($shutdownResult);
-              $shutdownCount = $shutdownRow['shutdown'] ?? 0;
+              // Query Nilai Perolehan - CAST to DECIMAL for accurate sum
+              $perolehanQuery = "SELECT CAST(SUM(CAST(COALESCE(nilai_perolehan_sd, 0) AS DECIMAL(20,2))) AS DECIMAL(20,2)) as perolehan FROM import_dat " . $filterCondition;
+              $perolehanResult = mysqli_query($con, $perolehanQuery);
+              $perolehanCount = 0;
               
-              $penghapusanQuery = "SELECT COUNT(*) as penghapusan FROM import_dat WHERE penghapusan IS NOT NULL AND penghapusan != ''";
-              $penghapusanResult = mysqli_query($con, $penghapusanQuery);
-              $penghapusanRow = mysqli_fetch_assoc($penghapusanResult);
-              $penghapusanCount = $penghapusanRow['penghapusan'] ?? 0; 
+              if ($perolehanResult) {
+                  $perolehanRow = mysqli_fetch_assoc($perolehanResult);
+                  $perolehanCount = round((float)($perolehanRow['perolehan'] ?? 0), 0);
+              } else {
+                  echo "<!-- Perolehan Query Error: " . mysqli_error($con) . " -->";
+              }
               
-              $aktifQuery = "SELECT COUNT(*) as aktif FROM import_dat WHERE status_aset = 'Aktif' OR status_aset = 'AKTIF'";
-              $aktifResult = mysqli_query($con, $aktifQuery);
-              $aktifRow = mysqli_fetch_assoc($aktifResult);
-              $aktifCount = $aktifRow['aktif'] ?? 0;
+              // Query Nilai Buku - CAST to DECIMAL for accurate sum
+              $nilai_bukuQuery = "SELECT CAST(SUM(CAST(COALESCE(nilai_buku_sd, 0) AS DECIMAL(20,2))) AS DECIMAL(20,2)) as nilai_buku FROM import_dat " . $filterCondition;
+              $nilai_bukuResult = mysqli_query($con, $nilai_bukuQuery);
+              $nilai_bukuCount = 0;
               
-              $pemilikanQuery = "SELECT COUNT(*) as pemilikan FROM import_dat WHERE kelompok_aset LIKE '%pemilikan%' OR kelompok_aset LIKE '%Pemilikan%'";
-              $pemilikanResult = mysqli_query($con, $pemilikanQuery);
-              $pemilikanRow = mysqli_fetch_assoc($pemilikanResult);
-              $pemilikanCount = $pemilikanRow['pemilikan'] ?? 0;
+              if ($nilai_bukuResult) {
+                  $nilai_bukuRow = mysqli_fetch_assoc($nilai_bukuResult);
+                  $nilai_bukuCount = round((float)($nilai_bukuRow['nilai_buku'] ?? 0), 0);
+              } else {
+                  echo "<!-- Nilai Buku Query Error: " . mysqli_error($con) . " -->";
+              }
+              
+              // Query Akumulasi Penyusutan - CAST to DECIMAL for accurate sum
+              // Use COALESCE to handle NULL values and ensure proper conversion
+              $penyusutanQuery = "SELECT CAST(SUM(CAST(COALESCE(akumulasi_penyusutan, 0) AS DECIMAL(20,2))) AS DECIMAL(20,2)) as penyusutan FROM import_dat " . $filterCondition;
+              $penyusutanResult = mysqli_query($con, $penyusutanQuery);
+              $penyusutanCount = 0;
+              
+              if ($penyusutanResult) {
+                  $penyusutanRow = mysqli_fetch_assoc($penyusutanResult);
+                  // Convert to proper integer for display
+                  $penyusutanCount = round((float)($penyusutanRow['penyusutan'] ?? 0), 0);
+              } else {
+                  echo "<!-- Penyusutan Query Error: " . mysqli_error($con) . " -->";
+              }
+              
+              // Function to format currency
+              function formatCurrency($value) {
+                  if ($value === null || $value === '' || $value == 0) {
+                      return 'Rp 0';
+                  }
+                  // Ensure value is numeric and round to nearest integer
+                  $value = round((float)$value, 0);
+                  if ($value >= 1000000000) {
+                      return 'Rp ' . number_format($value, 0, ',', '.');
+                  }
+                  return 'Rp ' . number_format($value, 0, ',', '.');
+              }
               ?>
               <div class="col-12 col-sm-6 col-md-3">
                 <div class="info-box">
@@ -293,60 +330,55 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
               <div class="col-12 col-sm-6 col-md-3">
                 <div class="info-box">
                   <span class="info-box-icon text-bg-danger shadow-sm">
-                    <i class="bi bi-x-circle-fill"></i>
+                    <i class="bi bi-currency-dollar"></i>
                   </span>
                   <div class="info-box-content">
-                    <span class="info-box-text">Aset Shutdown</span>
-                    <!--<span class="info-box-number"><?php echo $shutdownCount; ?></span>  --><!--menampilkan total dari aset yang di-shutdown -->
+                    <span class="info-box-text">Total Nilai Perolehan</span>
+                    <span class="info-box-number" style="font-size: 0.85rem;"><?php echo formatCurrency($perolehanCount); ?></span>
                   </div>
                   <!-- /.info-box-content -->
                 </div>
                 <!-- /.info-box -->
               </div>
               <!-- /.col -->
-              <!-- fix for small devices only -->
-              <!-- <div class="clearfix hidden-md-up"></div> -->
               <div class="col-12 col-sm-6 col-md-3">
                 <div class="info-box">
                   <span class="info-box-icon text-bg-success shadow-sm">
-                    <i class="bi bi-trash-fill"></i>
+                    <i class="bi bi-currency-dollar"></i>
                   </span>
                   <div class="info-box-content">
-                    <span class="info-box-text">Penghapusan</span>
-                    <!-- <span class="info-box-number"><?php echo $penghapusanCount; ?></span> --> <!--menampilkan total dari aset yang dihapuskan -->
+                    <span class="info-box-text">Total Nilai Buku</span>
+                    <span class="info-box-number" style="font-size: 0.85rem;"><?php echo formatCurrency($nilai_bukuCount); ?></span>
                   </div>
                   <!-- /.info-box-content -->
                 </div>
                 <!-- /.info-box -->
               </div>
-              <!-- /.col -->
               <!-- /.col -->
               <div class="col-12 col-sm-6 col-md-3">
                 <div class="info-box">
                   <span class="info-box-icon text-bg-warning shadow-sm">
-                    <i class="bi bi-check-circle-fill"></i>
+                    <i class="bi bi-currency-dollar"></i>
                   </span>
                   <div class="info-box-content">
-                    <span class="info-box-text">Aset Aktif</span>
-                    <!-- <span class="info-box-number"><?php echo $aktifCount; ?></span> --> <!--menampilkan total dari aset yang aktif -->
+                    <span class="info-box-text">Total Akumulasi Penyusutan</span>
+                    <span class="info-box-number" style="font-size: 0.85rem;"><?php echo formatCurrency($penyusutanCount); ?></span>
                   </div>
                   <!-- /.info-box-content -->
                 </div>
                 <!-- /.info-box -->
               </div>
               <!-- /.col -->
-            </div>
             
             <!--begin::Row-->
             <div class="row">
                 
               <!-- /.col -->
-              <div class="col-md-5">
-                <!-- Info Boxes Style 2 -->
-                <!-- /.info-box -->
-                <div class="card mb-4">
-                  <div class="card-header">
-                    <h3 class="card-title">Distribusi Aset</h3>
+              <div class="col-md-fluid">
+                <!-- Distribusi Aset Card -->
+                <div class="card mb-4 border-top border-primary border-top-3">
+                  <div class="card-header bg-light">
+                    <h3 class="card-title fw-bold">Distribusi Aset</h3>
                     <div class="card-tools">
                       <button type="button" class="btn btn-tool" data-lte-toggle="card-collapse">
                         <i data-lte-icon="expand" class="bi bi-plus-lg"></i>
@@ -359,61 +391,60 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                   </div>
                   <!-- /.card-header -->
                   <div class="card-body">
-                    <!--begin::Row-->
                     <div class="row">
-                      <div class="col-12"><div id="pie-chart"></div></div>
-                      <!-- /.col -->
-                    </div>
-                    <!--end::Row-->
-                  </div>
-                  <!-- /.card-body -->
-                  <div class="card-footer p-0">
-                    <ul class="nav nav-pills flex-column">
-                      <?php
-                      // Get detailed data for pie chart footer
-                      $detailQuery = "SELECT asset_class_name, COUNT(*) as total_count FROM import_dat WHERE asset_class_name IS NOT NULL AND asset_class_name != '' GROUP BY asset_class_name ORDER BY total_count DESC";
-                      $detailResult = mysqli_query($con, $detailQuery);
-                      
-                      $totalCount = 0;
-                      $details = [];
-                      
-                      // Hitung total dan simpan detail
-                      if ($detailResult && mysqli_num_rows($detailResult) > 0) {
-                          while ($row = mysqli_fetch_assoc($detailResult)) {
-                              $details[] = $row;
-                              $totalCount += $row['total_count'];
-                          }
-                      }
-                      
-                      // Tampilkan setiap item dengan persentase
-                      $colorClasses = ['text-secondary'];
-                      $colorStatus = ['text-primary'];
+                        <div class="col-12">
+                        <div id="pie-chart" style="min-height: 320px;"></div>
+                        <?php
+                        // Breakdown table: total nilai_perolehan_sd and total nilai_buku_sd grouped by asset_class_name
+                        $breakdownQuery = "SELECT asset_class_name, COUNT(*) as count, " .
+                                  "CAST(SUM(CAST(COALESCE(nilai_perolehan_sd,0) AS DECIMAL(20,2))) AS DECIMAL(20,2)) as total_nilai, " .
+                                  "CAST(SUM(CAST(COALESCE(nilai_buku_sd,0) AS DECIMAL(20,2))) AS DECIMAL(20,2)) as total_nilai_buku, " .
+                                  "CAST(SUM(CAST(COALESCE(akumulasi_penyusutan,0) AS DECIMAL(20,2))) AS DECIMAL(20,2)) as total_akumulasi_penyusutan, " .
+                                  "CAST(SUM(CAST(COALESCE(penyusutan_bulan,0) AS DECIMAL(20,2))) AS DECIMAL(20,2)) as total_penyusutan_bulan " .
+                                  "FROM import_dat " .
+                                  "WHERE nilai_perolehan_sd <> 0 AND asset_class_name NOT LIKE '%AUC%' " .
+                                  "GROUP BY asset_class_name " .
+                                  "ORDER BY total_nilai DESC";
 
-                      foreach ($details as $index => $detail) {
-                          $colorClass = $colorClasses[$index % 1];
-                          $statusName = htmlspecialchars($detail['asset_class_name']);
-                          $count = $detail['total_count'];
-                          ?>
-                          <li class="nav-item">
-                            <a href="#" class="nav-link">
-                              <?php echo $statusName; ?>
-                              <span class="float-end <?php echo $colorClass; ?>">
-                                <i class="bi <?php echo [$index % 1]; ?> fs-7"></i>
-                                <?php echo $count; ?>
-                              </span>
-                            </a>
-                          </li>
-                          <?php
-                      }
-                      ?>
-                    </ul>
+                        $breakdownResult = mysqli_query($con, $breakdownQuery);
+                        if (!$breakdownResult) {
+                          echo "<!-- Breakdown Query Error: " . mysqli_error($con) . " -->";
+                        }
+
+                        if ($breakdownResult && mysqli_num_rows($breakdownResult) > 0) {
+                          echo '<div class="mt-3 table-responsive">
+                          <table class="table table-sm table-striped mb-0">
+                          <thead><tr><th>Asset Class</th>
+                          <th class="text-end">Jumlah</th> 
+                          <th class="text-end">Total Perolehan</th>
+                          <th class="text-end">Total Nilai Buku</th>
+                          <th class="text-end">Total Akumulasi Penyusutan</th>
+                          <th class="text-end">Total Penyusutan perBulan</th>
+                          </tr></thead><tbody>';
+                          
+                          while ($b = mysqli_fetch_assoc($breakdownResult)) {
+                            echo '<tr>';
+                            echo '<td>' . htmlspecialchars($b['asset_class_name']) . '</td>';
+                            echo '<td class="text-end">' . number_format((int)$b['count']) . '</td>';
+                            echo '<td class="text-end">' . formatCurrency(round((float)$b['total_nilai'], 0)) . '</td>';
+                            echo '<td class="text-end">' . formatCurrency(round((float)$b['total_nilai_buku'], 0)) . '</td>';
+                            echo '<td class="text-end">' . formatCurrency(round((float)$b['total_akumulasi_penyusutan'], 0)) . '</td>';
+                            echo '<td class="text-end">' . formatCurrency(round((float)$b['total_penyusutan_bulan'], 0)) . '</td>';
+                            echo '</tr>';
+                          }
+                          echo '</tbody></table></div>';
+                        } else {
+                          echo '<div class="mt-3 text-muted small">Tidak ada data perolehan per kelas aset.</div>';
+                        }
+                        ?>
+                        </div>
+                    </div>
                   </div>
-                  <!-- /.footer -->
-                </div>
                 <!-- /.card -->
               </div>
               <!-- /.col -->
             </div>
+            <!-- /.row -->
             <!--end::Row-->
             <!-- /.footer -->
                 </div>
@@ -614,31 +645,37 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
       //-------------
 
       <?php
-      // Get data from database for pie chart - grouped by asset_class_name
-      $statusQuery = "SELECT asset_class_name, COUNT(*) as count FROM import_dat WHERE asset_class_name IS NOT NULL AND asset_class_name != '' GROUP BY asset_class_name ORDER BY count DESC";
+      // Get data from database for pie chart - berdasarkan TOTAL NILAI PEROLEHAN per kategori
+      $statusQuery = "SELECT asset_class_name, COUNT(*) as count, 
+                      CAST(SUM(CAST(COALESCE(nilai_perolehan_sd, 0) AS DECIMAL(20,2))) AS DECIMAL(20,2)) as total_nilai
+                      FROM import_dat 
+                      WHERE nilai_perolehan_sd <> 0 AND asset_class_name NOT LIKE '%AUC%'
+                      GROUP BY asset_class_name 
+                      ORDER BY total_nilai DESC";
       $statusResult = mysqli_query($con, $statusQuery);
       
-      $labels = [];
+      $labels = []; 
       $data = [];
+      $details = []; // simpan detail untuk legend footer
       
       if ($statusResult && mysqli_num_rows($statusResult) > 0) {
           while ($row = mysqli_fetch_assoc($statusResult)) {
               $labels[] = htmlspecialchars($row['asset_class_name']);
-              $data[] = (int)$row['count'];
+              // Gunakan total_nilai (dalam Rp) untuk pie chart, rounded to integer
+              $data[] = round((float)$row['total_nilai'], 0);
+              $details[] = [
+                  'name' => htmlspecialchars($row['asset_class_name']),
+                  'count' => (int)$row['count'],
+                  'nilai' => round((float)$row['total_nilai'], 0)
+              ];
           }
-      }
-      
-      // Tambahkan data "Aset Tetap Pemilikan Langsung" ke pie chart jika belum ada
-      $hasPemilikan = in_array('Aset Tetap Pemilikan Langsung', $labels);
-      if (!$hasPemilikan && $pemilikanCount > 0) {
-          $labels[] = 'Aset Tetap Pemilikan Langsung';
-          $data[] = (int)$pemilikanCount;
       }
       
       // Jika tidak ada data, gunakan fallback
       if (empty($labels)) {
-          $labels = ['Chrome', 'Edge', 'FireFox', 'Safari', 'Opera', 'IE'];
-          $data = [700, 500, 400, 600, 300, 100];
+          $labels = ['Bangunan', 'Tanah', 'Kendaraan', 'Peralatan', 'Lainnya'];
+          $data = [5000000000, 3000000000, 2000000000, 1500000000, 1000000000];
+          $details = [];
       }
       
       // Convert PHP arrays to JavaScript
@@ -646,16 +683,120 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
       $dataJson = json_encode($data);
       ?>
 
+      console.log('Chart Labels:', <?php echo $labelsJson; ?>);
+      console.log('Chart Data:', <?php echo $dataJson; ?>);
+
       const pie_chart_options = {
         series: <?php echo $dataJson; ?>,
         chart: {
-          type: 'pie',
+          type: 'donut',
+          height: 320,
+          width: '100%',
+          fontFamily: 'inherit',
+          sparkline: {
+            enabled: false,
+          },
         },
         labels: <?php echo $labelsJson; ?>,
         dataLabels: {
           enabled: false,
         },
-        colors: ['#0d6efd', '#20c997', '#ffc107', '#dc3545', '#17a2b8', '#6c757d'],
+        plotOptions: {
+          pie: {
+            donut: {
+              size: '68%',
+              background: 'transparent',
+              labels: {
+                show: false,
+              },
+            },
+            expandOnClick: true,
+          },
+        },
+        colors: [
+          '#0d6efd', '#20c997', '#ffc107', '#dc3545', '#17a2b8', '#6c757d', 
+          '#198754', '#fd7e14', '#0dcaf0', '#6f42c1', '#e83e8c', '#ff6b6b',
+          '#00bcd4', '#673ab7', '#ff5722', '#795548', '#9c27b0', '#2196f3',
+          '#4caf50', '#cddc39', '#ffeb3b', '#ff9800', '#e91e63', '#009688',
+          '#00897b', '#3f51b5', '#8bc34a', '#ff7043', '#ab47bc', '#42a5f5',
+          '#66bb6a', '#ab47bc'
+        ],
+        legend: {
+          position: 'bottom',
+          fontSize: '12px',
+          fontWeight: 500,
+          labels: {
+            colors: '#666',
+          },
+          itemMargin: {
+            horizontal: 8,
+            vertical: 5,
+          },
+        },
+        responsive: [{
+          breakpoint: 768,
+          options: {
+            chart: {
+              height: 280,
+            },
+            legend: {
+              fontSize: '11px',
+            },
+          },
+        }, {
+          breakpoint: 480,
+          options: {
+            chart: {
+              height: 250,
+            },
+            legend: {
+              fontSize: '10px',
+              itemMargin: {
+                horizontal: 5,
+                vertical: 3,
+              },
+            },
+          },
+        }],
+        tooltip: {
+          enabled: true,
+          theme: 'light',
+          style: {
+            fontSize: '12px',
+          },
+          y: {
+            formatter: function(val) {
+              // Format nilai dalam Rp dengan separator
+              return 'Rp ' + new Intl.NumberFormat('id-ID').format(Math.round(val));
+            },
+            title: {
+              formatter: function(seriesName) {
+                return seriesName;
+              },
+            },
+          },
+          marker: {
+            show: true,
+          },
+        },
+        states: {
+          hover: {
+            filter: {
+              type: 'lighten',
+              value: 0.1,
+            },
+          },
+          active: {
+            filter: {
+              type: 'darken',
+              value: 0.15,
+            },
+          },
+        },
+        stroke: {
+          colors: ['#fff'],
+          width: 2,
+        },
       };
 
       const pie_chart = new ApexCharts(document.querySelector('#pie-chart'), pie_chart_options);

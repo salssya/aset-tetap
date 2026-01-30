@@ -41,8 +41,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
                 $tipe_pesan = "success";
                 // Clear the imported data after saving
                 $importedData = [];
-                // Clear session data
-                unset($_SESSION['importedData']);
             } else {
                 $pesan = "Gagal menyimpan data ke database";
                 $tipe_pesan = "danger";
@@ -87,8 +85,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_FILES['file_excel'])) {
                 $pesan = "File tidak memiliki data untuk diimport";
                 $tipe_pesan = "warning";
             } else {
-                // Save to session
-                $_SESSION['importedData'] = $importedData;
                 $pesan = "File berhasil diimport! Total " . count($importedData) . " baris data";
                 $tipe_pesan = "success";
             }
@@ -103,11 +99,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_FILES['file_excel'])) {
             $tipe_pesan = "danger";
         }
     }
-}
-
-// Get imported data from session if available
-if (isset($_SESSION['importedData'])) {
-    $importedData = $_SESSION['importedData'];
 }
 
 /**
@@ -130,11 +121,11 @@ function readExcelFile($filePath, $ext) {
                 fgetcsv($handle, 0, $delimiter);
                 
                 while (($row = fgetcsv($handle, 0, $delimiter)) !== false) {
-                    // Pad ke 47 kolom untuk DAT-des.csv
-                    while (count($row) < 47) {
+                    // Pad ke 44 kolom untuk DAT-des.csv
+                    while (count($row) < 44) {
                         $row[] = '';
                     }
-                    $rows[] = array_slice($row, 0, 47);
+                    $rows[] = array_slice($row, 0, 44);
                 }
                 fclose($handle);
             }
@@ -254,11 +245,11 @@ function readXLSXFile($filePath) {
             }
             
             if (!empty($cellData)) {
-                // Pad dengan kolom kosong hingga 47 kolom
-                while (count($cellData) < 47) {
+                // Pad dengan kolom kosong hingga 44 kolom
+                while (count($cellData) < 44) {
                     $cellData[] = '';
                 }
-                $rows[] = array_slice($cellData, 0, 47);
+                $rows[] = array_slice($cellData, 0, 44);
             }
         }
         
@@ -307,11 +298,11 @@ function convertXLSXtoCSVAndParse($filePath) {
             fgetcsv($handle, 0, $delimiter);
             
             while (($row = fgetcsv($handle, 0, $delimiter)) !== false) {
-                // Pad ke 47 kolom
-                while (count($row) < 47) {
+                // Pad ke 44 kolom
+                while (count($row) < 44) {
                     $row[] = '';
                 }
-                $rows[] = array_slice($row, 0, 47);
+                $rows[] = array_slice($row, 0, 44);
             }
             fclose($handle);
         }
@@ -341,14 +332,14 @@ function readXLSFile($filePath) {
     if (file_exists($temp_csv)) {
         if (($handle = fopen($temp_csv, 'r')) !== false) {
             // Skip header
-            fgetcsv($handle, NULL, ';');
-
-            while (($row = fgetcsv($handle, NULL, ';')) !== false) {
-                // Pad ke 47 kolom untuk DAT-des.csv
-                while (count($row) < 47) {
+            fgetcsv($handle, 1000, ',');
+            
+            while (($row = fgetcsv($handle, 1000, ',')) !== false) {
+                // Pad ke 44 kolom untuk DAT-des.csv
+                while (count($row) < 44) {
                     $row[] = '';
                 }
-                $rows[] = array_slice($row, 0, 47);
+                $rows[] = array_slice($row, 0, 44);
             }
             fclose($handle);
         }
@@ -379,7 +370,7 @@ function saveDataToDatabase($con, $importedData) {
     $create_table_sql = "CREATE TABLE IF NOT EXISTS import_dat (
         id INT AUTO_INCREMENT PRIMARY KEY,
         nomor_asset_utama VARCHAR(50),
-        subreg varchar(50),
+        subreg VARCHAR(50),
         profit_center VARCHAR(20),
         profit_center_text VARCHAR(100),
         cost_center_baru VARCHAR(20),
@@ -389,8 +380,6 @@ function saveDataToDatabase($con, $importedData) {
         periode_bulan VARCHAR(20),
         tahun_buku VARCHAR(4),
         nomor_asset_asal VARCHAR(50),
-        nomor_asset VARCHAR(50),
-        sub_number VARCHAR(50),
         gl_account VARCHAR(20),
         asset_class VARCHAR(20),
         asset_class_name VARCHAR(100),
@@ -407,10 +396,10 @@ function saveDataToDatabase($con, $importedData) {
         nilai_perolehan_awal VARCHAR(50),
         nilai_residu_persen VARCHAR(20),
         nilai_residu_rp VARCHAR(50),
-        nilai_perolehan_sd BIGINT,
+        nilai_perolehan_sd VARCHAR(50),
         adjusment_nilai_perolehan VARCHAR(50),
         nilai_buku_awal VARCHAR(50),
-        nilai_buku_sd BIGINT,
+        nilai_buku_sd VARCHAR(50),
         penyusutan_bulan VARCHAR(50),
         penyusutan_sd VARCHAR(50),
         penyusutan_tahun_lalu VARCHAR(50),
@@ -419,19 +408,20 @@ function saveDataToDatabase($con, $importedData) {
         adjusment_akm_penyusutan VARCHAR(50),
         penghapusan VARCHAR(20),
         asset_shutdown VARCHAR(20),
-        akumulasi_penyusutan BIGINT,
-        additional_description VARCHAR(200),
-        serial_number VARCHAR(25),
-        alamat VARCHAR(500),
-        gl_account_exp VARCHAR(25),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         imported_by VARCHAR(20),
-        UNIQUE KEY uk_nomor_asset (nomor_asset_utama)
+        UNIQUE KEY uk_nomor_asset (nomor_asset)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
     
     if (!mysqli_query($con, $create_table_sql)) {
         throw new Exception("Gagal membuat tabel: " . mysqli_error($con));
+    }
+    
+    // Hapus data lama sebelum memasukkan data baru
+    $truncate_sql = "TRUNCATE TABLE import_dat";
+    if (!mysqli_query($con, $truncate_sql)) {
+        throw new Exception("Gagal menghapus data lama: " . mysqli_error($con));
     }
     
     // Get current user
@@ -450,9 +440,6 @@ function saveDataToDatabase($con, $importedData) {
         'periode_bulan',
         'tahun_buku',
         'nomor_asset_asal',
-        'nomor_asset',
-        'sub_number',
-        'nomor_asset_sub_num',
         'gl_account',
         'asset_class',
         'asset_class_name',
@@ -545,7 +532,7 @@ function saveDataToDatabase($con, $importedData) {
   <!--begin::Head-->
   <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-    <title>Web Aset Tetap</title>
+    <title>Import DAT - Web Aset Tetap</title>
     <link rel="icon" type="image/png" href="../../dist/assets/img/emblem.png" /> 
     <link rel="shortcut icon" type="image/png" href="../../dist/assets/img/emblem.png" />  
     <!--begin::Accessibility Meta Tags-->
@@ -598,12 +585,55 @@ function saveDataToDatabase($con, $importedData) {
     <!--begin::Required Plugin(AdminLTE)-->
     <link rel="stylesheet" href="../../dist/css/adminlte.css" />
     <!--end::Required Plugin(AdminLTE)-->
+    <!-- Custom Styles for Horizontal Scroll -->
+    <style>
+      .table-responsive {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        border: 1px solid #dee2e6;
+        border-radius: 0.25rem;
+      }
+      .table-responsive::-webkit-scrollbar {
+        height: 8px;
+      }
+      .table-responsive::-webkit-scrollbar-track {
+        background: #f1f1f1;
+      }
+      .table-responsive::-webkit-scrollbar-thumb {
+        background: #888;
+        border-radius: 4px;
+      }
+      .table-responsive::-webkit-scrollbar-thumb:hover {
+        background: #555;
+      }
+      #myTable {
+        margin-bottom: 0;
+      }
+      #myTable thead th, 
+      #myTable tbody td {
+        padding: 8px 12px;
+        white-space: nowrap;
+        min-width: 130px;
+      }
+      #myTable thead th {
+        background-color: #f8f9fa;
+        font-weight: 600;
+        border-bottom: 2px solid #dee2e6;
+      }
+      #myTable tbody td {
+        border-bottom: 1px solid #dee2e6;
+      }
+    </style>
+    <!--end::Custom Styles-->
     <!-- apexcharts -->
     <link
       rel="stylesheet"
       href="https://cdn.jsdelivr.net/npm/apexcharts@3.37.1/dist/apexcharts.css"
       integrity="sha256-4MX+61mt9NVvvuPjUWdUdyfZfxSB1/Rf9WtqRHgG5S0="
       crossorigin="anonymous"
+    />
+    <link rel="stylesheet"
+      href="https://cdn.datatables.net/2.3.6/css/dataTables.dataTables.min.css"
     />
   </head>
   <body class="layout-fixed sidebar-expand-lg sidebar-open bg-body-tertiary">
@@ -718,8 +748,8 @@ function saveDataToDatabase($con, $importedData) {
               id="navigation"
             >
             <?php  
-            $query = "
-                SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '1234567890' ORDER BY menus.urutan_menu ASC";
+            $userNipp = isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : '';
+            $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '" . mysqli_real_escape_string($con, $userNipp) . "' ORDER BY menus.urutan_menu ASC";
             $result = mysqli_query($con, $query) or die(mysqli_error($con));
             $iconMap = [
                 'Dasboard'               => 'bi bi-grid-fill',
@@ -736,13 +766,18 @@ function saveDataToDatabase($con, $importedData) {
   
             while ($row = mysqli_fetch_assoc($result)) {
                 $namaMenu = trim($row['nama_menu']); 
-                $icon = $iconMap[$namaMenu] ?? 'bi bi-circle'; 
+                $icon = $iconMap[$namaMenu] ?? 'bi bi-circle';
+                
+                $currentPage = basename($_SERVER['PHP_SELF']);
+                $menuFile = $row['menu'].'.php'; 
+                $isActive = ($currentPage === $menuFile) ? 'active' : '';
+
               if ($namaMenu === 'Manajemen Menu') {
                echo '<li class="nav-header"></li>';
               }
                 echo '
                 <li class="nav-item">
-                    <a href="../'.$row['menu'].'/'.$row['menu'].'.php" class="nav-link">
+                    <a href="../'.$row['menu'].'/'.$row['menu'].'.php" class="nav-link '.$isActive.'">
                         <i class="nav-icon '.$icon.'"></i>
                         <p>'.$row['nama_menu'].'</p>
                     </a>
@@ -764,7 +799,13 @@ function saveDataToDatabase($con, $importedData) {
           <div class="container-fluid">
             <!--begin::Row-->
             <div class="row">
-              <div class="col-sm-6"><h3 class="mb-0">Import DAT</h3></div>
+              <div class="col-sm-6"><h3 class="mb-0">Hasil Import DAT</h3></div>
+              <div class="col-sm-6">
+                <ol class="breadcrumb float-sm-end">
+                  <li class="breadcrumb-item"><a href="../dasbor/dasbor.php">Home</a></li>
+                  <li class="breadcrumb-item active">Hasil Import DAT</li>
+                </ol>
+              </div>
             </div>
             <!--end::Row-->
           </div>
@@ -777,141 +818,162 @@ function saveDataToDatabase($con, $importedData) {
                   <!--begin::Header-->
                   <!--end::Header-->
                   <!--begin::Form-->
-                  <div class="card card-primary card-outline mb-4">
                   <!--begin::Header-->
-                  <div class="card-header"><div class="card-title">Import data dari Excel</div></div>
-                  <!--end::Header-->
-                  <!--begin::Form-->
-                  <form method="POST" enctype="multipart/form-data">
-                    <!--begin::Body-->
-                    <div class="card-body">
-                      <?php if (!empty($pesan)): ?>
-                      <div class="alert alert-<?php echo $tipe_pesan; ?> alert-dismissible fade show" role="alert">
-                        <?php echo htmlspecialchars($pesan); ?>
-                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                  <div class="row">
+                    <div class="card card-outline mb-4">
+                     <div class="card-header">
+                    <div class="row w-100">
+                      <div class="col-md-8">
+                        <h3 class="card-title">Hasil Import Data (Loading Data Est 1 Menit)</h3>
                       </div>
-                      <?php endif; ?>
-                      
-                      <div class="mb-3">
-                        <label for="file_excel" class="form-label">Pilih File Excel atau CSV</label>
-                        <input type="file" class="form-control" id="file_excel" name="file_excel" accept=".xls,.xlsx,.csv" required>
-                        <small class="form-text text-muted">
-                          Format yang didukung: <strong>.csv</strong>
-                        </small>
-                      </div>
-                    </div>
-                    <!--end::Body-->
-                    <!--begin::Footer-->
-                    <div class="card-footer">
-                      <div class="d-flex gap-2">
-                        <button type="submit" class="btn btn-primary">
-                          <i class="bi bi-cloud-arrow-up"></i> Upload
-                        </button>
-                        <button type="button" class="btn btn-success" onclick="confirmSaveData()" id="saveBtn" style="display: none;">
-                          <i class="bi bi-check-circle"></i> Simpan ke Database
-                        </button>
-                      </div>
-                    </div>
-                    <!--end::Footer-->
-                  </form>
-                  <!--end::Form-->
-                  </div>
-                  <!--end::Form-->
-                  
-                  <!-- Data Preview Card -->
-                  <?php if (!empty($importedData)): ?>
-                  <div class="card mb-4">
-                    <div class="card-header d-flex justify-content-between align-items-center">
-                      <h3 class="card-title">Preview Data (<?php echo count($importedData); ?> baris)</h3>
-                    </div>
-                    <div class="card-body" style="overflow-x: auto;">
-                      <table class="table table-bordered table-striped table-sm" role="table">
-                        <thead class="table-dark sticky-top">
-                          <tr>
-                            <th scope="col" style="white-space: nowrap;">No Asset Utama</th>
-                            <th scope="col" style="white-space: nowrap;">SubReg</th>
-                            <th scope="col" style="white-space: nowrap;">Profit Center</th>
-                            <th scope="col" style="white-space: nowrap;">PC Text</th>
-                            <th scope="col" style="white-space: nowrap;">Cost Center Baru</th>
-                            <th scope="col" style="white-space: nowrap;">Deskripsi CC</th>
-                            <th scope="col" style="white-space: nowrap;">Cabang/Kawasan</th>
-                            <th scope="col" style="white-space: nowrap;">Kode Plant</th>
-                            <th scope="col" style="white-space: nowrap;">Periode</th>
-                            <th scope="col" style="white-space: nowrap;">Tahun</th>
-                            <th scope="col" style="white-space: nowrap;">Asset Asal</th>
-                            <th scope="col" style="white-space: nowrap;">Asset No</th>
-                            <th scope="col" style="white-space: nowrap;">Sub Number</th>
-                            <th scope="col" style="white-space: nowrap;">Nomor Asset_Sub Number</th>
-                            <th scope="col" style="white-space: nowrap;">GL Account</th>
-                            <th scope="col" style="white-space: nowrap;">Asset Class</th>
-                            <th scope="col" style="white-space: nowrap;">Nama Class</th>
-                            <th scope="col" style="white-space: nowrap;">Kel. Aset</th>
-                            <th scope="col" style="white-space: nowrap;">Status</th>
-                            <th scope="col" style="white-space: nowrap;">Asset No Text</th>
-                            <th scope="col" style="white-space: nowrap;">Akuisisi</th>
-                            <th scope="col" style="white-space: nowrap;">Keterangan</th>
-                            <th scope="col" style="white-space: nowrap;">Tgl Akusisi</th>
-                            <th scope="col" style="white-space: nowrap;">Tgl Perolehan</th>
-                            <th scope="col" style="white-space: nowrap;">Tgl Penyusutan</th>
-                            <th scope="col" style="white-space: nowrap;">Masa Manfaat</th>
-                            <th scope="col" style="white-space: nowrap;">Sisa Manfaat</th>
-                            <th scope="col" style="white-space: nowrap;">Nilai Perolehan AT</th>
-                            <th scope="col" style="white-space: nowrap;">Residu %</th>
-                            <th scope="col" style="white-space: nowrap;">Residu Rp</th>
-                            <th scope="col" style="white-space: nowrap;">Nilai Perolehan s.d</th>
-                            <th scope="col" style="white-space: nowrap;">Adjusment Nilai</th>
-                            <th scope="col" style="white-space: nowrap;">Nilai Buku AT</th>
-                            <th scope="col" style="white-space: nowrap;">Nilai Buku s.d</th>
-                            <th scope="col" style="white-space: nowrap;">Penyusutan/Bulan</th>
-                            <th scope="col" style="white-space: nowrap;">Penyusutan s.d</th>
-                            <th scope="col" style="white-space: nowrap;">Penyusutan TL</th>
-                            <th scope="col" style="white-space: nowrap;">Penyusutan/Tahun</th>
-                            <th scope="col" style="white-space: nowrap;">Akm Penyusutan TL</th>
-                            <th scope="col" style="white-space: nowrap;">Adjusment Akm</th>
-                            <th scope="col" style="white-space: nowrap;">Penghapusan</th>
-                            <th scope="col" style="white-space: nowrap;">Asset Shutdown</th>
-                            <th scope="col" style="white-space: nowrap;">Akumulasi Penyusutan</th>
-                            <th scope="col" style="white-space: nowrap;">Additional Description</th>
-                            <th scope="col" style="white-space: nowrap;">Serial Number</th>
-                            <th scope="col" style="white-space: nowrap;">Alamat</th>
-                            <th scope="col" style="white-space: nowrap;">GL Account Exp</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <?php
-                          foreach ($importedData as $row) {
-                              echo '<tr class="align-middle">';
-                              for ($i = 0; $i < 47; $i++) {
-                                  $cellValue = isset($row[$i]) ? htmlspecialchars((string)$row[$i]) : '-';
-                                  echo '<td style="font-size: 0.85rem;">' . $cellValue . '</td>';
-                              }
-                              echo '</tr>';
+                      <div class="col-md-4 text-end">
+                        <?php
+                        // Get the latest import info
+                        $latestImportQuery = "SELECT COUNT(*) as total_records, MAX(created_at) as last_import FROM import_dat";
+                        $latestImportResult = mysqli_query($con, $latestImportQuery);
+                        
+                        if ($latestImportResult) {
+                          $latestImportRow = mysqli_fetch_assoc($latestImportResult);
+                          $totalRecords = $latestImportRow['total_records'] ?? 0;
+                          $lastImportDate = $latestImportRow['last_import'] ?? null;
+                          
+                          if ($lastImportDate) {
+                            // Format tanggal ke format Indonesia
+                            $dateTime = new DateTime($lastImportDate);
+                            $formattedDate = $dateTime->format('d M Y H:i:s');
+                            echo '<span style="color: #dc3545; font-weight: bold;">Diimport: ' . htmlspecialchars($formattedDate) . '</span>';
                           }
-                          ?>
-                        </tbody>
-                      </table>
-                    </div>
-                    <div class="card-footer clearfix">
-                      <div class="row">
-                        <div class="col-md-12">
-                          <form id="saveForm" method="POST" style="display:inline;">
-                            <input type="hidden" name="action" value="save_data">
-                            <input type="hidden" id="dataInput" name="data" value="">
-                            <button type="button" class="btn btn-success" onclick="submitSaveForm()">
-                              <i class="bi bi-check-circle"></i> Simpan ke Database
-                            </button>
-                          </form>
-                        </div>
+                        }
+                        ?>
                       </div>
                     </div>
                   </div>
-                  <?php endif; ?>
-                  
-                  <!-- Hidden form for saving data - DEPRECATED, using inline form now -->
-                  <form id="saveFormHidden" method="POST" style="display:none;">
-                    <input type="hidden" name="action" value="save_data">
-                    <input type="hidden" id="dataInputHidden" name="data" value="">
-                  </form>
+                  <div class="card-body">
+                        <!-- Table Wrapper with Horizontal Scroll -->
+                        <div class="table-responsive">
+                        <!-- Table -->
+                        <table id="myTable" class="display nowrap table table-striped" style="width:100%; min-width: 5400px;">
+                            <thead>
+                                <tr>
+                                  <th >No Asset Utama</th>
+                                  <th >Subreg</th>
+                                  <th >Profit Center</th>
+                                  <th >PC Text</th>
+                                  <th >Cost Center Baru</th>
+                                  <th >Deskripsi CC</th>
+                                  <th >Cabang/Kawasan</th>
+                                  <th >Kode Plant</th>
+                                  <th >Periode</th>
+                                  <th >Tahun</th>
+                                  <th >Asset Asal</th>
+                                  <th >GL Account</th>
+                                  <th >Asset Class</th>
+                                  <th >Nama Class</th>
+                                  <th >Kel. Aset</th>
+                                  <th >Status</th>
+                                  <th >Asset No Text</th>
+                                  <th >Akuisisi</th>
+                                  <th >Keterangan</th>
+                                  <th>Tgl Akusisi</th>
+                                  <th>Tgl Perolehan</th>
+                                  <th>Tgl Penyusutan</th>
+                                  <th>Masa Manfaat</th>
+                                  <th>Sisa Manfaat</th>
+                                  <th>Nilai Perolehan AT</th>
+                                  <th>Residu %</th>
+                                  <th>Residu Rp</th>
+                                  <th>Nilai Perolehan s.d</th>
+                                  <th>Adjusment Nilai</th>
+                                  <th>Nilai Buku AT</th>
+                                  <th>Nilai Buku s.d</th>
+                                  <th>Penyusutan/Bulan</th>
+                                  <th>Penyusutan s.d</th>
+                                  <th>Penyusutan TL</th>
+                                  <th>Penyusutan/Tahun</th>
+                                  <th>Akm Penyusutan TL</th>
+                                  <th>Adjusment Akm</th>
+                                  <th>Penghapusan</th>
+                                  <th>Asset Shutdown</th>
+                                  <th>Akumulasi Penyusutan</th>
+                                  <th>Additional Description</th>
+                                  <th>Serial Number</th>
+                                  <th>Alamat</th>
+                                  <th>GL Account EXP. Depre.</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            <?php  
+
+            $query = "SELECT * FROM import_dat";
+            $result = mysqli_query($con, $query);
+            
+            if (!$result) {
+                echo '<tr><td colspan="45">Error: ' . mysqli_error($con) . '</td></tr>';
+            } elseif (mysqli_num_rows($result) == 0) {
+                // Jika tidak ada data dengan kolom tersebut, tampilkan semua data
+                $query = "SELECT * FROM import_dat";
+                $result = mysqli_query($con, $query);
+            }
+            
+            while ($row = mysqli_fetch_assoc($result)) {
+              echo '
+                                <tr>
+                                    <td>'.htmlspecialchars($row['nomor_asset_utama']).'</td>
+                                    <td>'.htmlspecialchars($row['subreg']).'</td>
+                                    <td>'.htmlspecialchars($row['profit_center']).'</td>
+                                    <td>'.htmlspecialchars($row['profit_center_text']).'</td>
+                                    <td>'.htmlspecialchars($row['cost_center_baru']).'</td>
+                                    <td>'.htmlspecialchars($row['deskripsi_cost_center']).'</td>
+                                    <td>'.htmlspecialchars($row['nama_cabang_kawasan']).'</td>
+                                    <td>'.htmlspecialchars($row['kode_plant']).'</td>
+                                    <td>'.htmlspecialchars($row['periode_bulan']).'</td>
+                                    <td>'.htmlspecialchars($row['tahun_buku']).'</td>
+                                    <td>'.htmlspecialchars($row['nomor_asset_asal']).'</td>
+                                    <td>'.htmlspecialchars($row['gl_account']).'</td>
+                                    <td>'.htmlspecialchars($row['asset_class']).'</td>
+                                    <td>'.htmlspecialchars($row['asset_class_name']).'</td>
+                                    <td>'.htmlspecialchars($row['kelompok_aset']).'</td>
+                                    <td>'.htmlspecialchars($row['status_aset']).'</td>
+                                    <td>'.htmlspecialchars($row['asset_main_no_text']).'</td>
+                                    <td>'.htmlspecialchars($row['akuisisi']).'</td>
+                                    <td>'.htmlspecialchars($row['keterangan_asset']).'</td>
+                                    <td>'.htmlspecialchars($row['tgl_akuisisi']).'</td>
+                                    <td>'.htmlspecialchars($row['tgl_perolehan']).'</td>
+                                    <td>'.htmlspecialchars($row['tgl_penyusutan']).'</td>
+                                    <td>'.htmlspecialchars($row['masa_manfaat']).'</td>
+                                    <td>'.htmlspecialchars($row['sisa_manfaat']).'</td>
+                                    <td>'.htmlspecialchars($row['nilai_perolehan_awal']).'</td>
+                                    <td>'.htmlspecialchars($row['nilai_residu_persen']).'</td>
+                                    <td>'.htmlspecialchars($row['nilai_residu_rp']).'</td>
+                                    <td>'.htmlspecialchars($row['nilai_perolehan_sd']).'</td>
+                                    <td>'.htmlspecialchars($row['adjusment_nilai_perolehan']).'</td>
+                                    <td>'.htmlspecialchars($row['nilai_buku_awal']).'</td>
+                                    <td>'.htmlspecialchars($row['nilai_buku_sd']).'</td>
+                                    <td>'.htmlspecialchars($row['penyusutan_bulan']).'</td>
+                                    <td>'.htmlspecialchars($row['penyusutan_sd']).'</td>
+                                    <td>'.htmlspecialchars($row['penyusutan_tahun_lalu']).'</td>
+                                    <td>'.htmlspecialchars($row['penyusutan_tahun']).'</td>
+                                    <td>'.htmlspecialchars($row['akm_penyusutan_tahun_lalu']).'</td>
+                                    <td>'.htmlspecialchars($row['adjusment_akm_penyusutan']).'</td>
+                                    <td>'.htmlspecialchars($row['penghapusan']).'</td>
+                                    <td>'.htmlspecialchars($row['asset_shutdown']).'</td>
+                                    <td>'.htmlspecialchars($row['akumulasi_penyusutan']).'</td>
+                                    <td>'.htmlspecialchars($row['additional_description']).'</td>
+                                    <td>'.htmlspecialchars($row['serial_number'] ?? '-').'</td>
+                                    <td>'.htmlspecialchars($row['alamat'] ?? '-').'</td>
+                                    <td>'.htmlspecialchars($row['gl_account_exp'] ?? '-').'</td>
+                                </tr>
+              ';
+            }
+            ?>
+                            </tbody>
+                        </table>
+                        </div>
+                        <!-- End Table Wrapper -->
+                  </div>
+                </div>
+            </div>
+                  <!--end::Form-->
             <!--end::Row-->
           </div>
         </div>
@@ -921,11 +983,11 @@ function saveDataToDatabase($con, $importedData) {
       <!--begin::Footer-->
       <footer class="app-footer">
         <!--begin::To the end-->
-        <div class="float-end d-none d-sm-inline">PT Pelabuhan Indoensia (Persero)</div>
+        <div class="float-end d-none d-sm-inline">PT Pelabuhan Indon3sia (Persero)</div>
         <!--end::To the end-->
         <!--begin::Copyright-->
         <strong>
-          Copyright &copy; Proyek Aset Tetap Regional&nbsp;
+          Copyright &copy; Proyek Aset Tetap Regional 3&nbsp;
         </strong>
         <!--end::Copyright-->
       </footer>
@@ -974,6 +1036,15 @@ function saveDataToDatabase($con, $importedData) {
     <!--end::OverlayScrollbars Configure-->
     <!-- OPTIONAL SCRIPTS -->
     <!-- apexcharts -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.datatables.net/2.3.6/js/dataTables.js"></script>
+    <script src="https://cdn.datatables.net/responsive/3.0.0/js/dataTables.responsive.js"></script>
+    <script src="https://cdn.datatables.net/buttons/3.0.0/js/dataTables.buttons.js"></script>
+    <script src="https://cdn.datatables.net/buttons/3.0.0/js/buttons.html5.js"></script>
+    <script src="https://cdn.datatables.net/buttons/3.0.0/js/buttons.print.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/pdfmake.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/vfs_fonts.min.js"></script>
     <script
       src="https://cdn.jsdelivr.net/npm/apexcharts@3.37.1/dist/apexcharts.min.js"
       integrity="sha256-+vh8GkaU7C9/wbSLIcwq82tQ2wTf44aOHA8HlBMwRI8="
@@ -984,71 +1055,60 @@ function saveDataToDatabase($con, $importedData) {
       // IT'S ALL JUST JUNK FOR DEMO
       // ++++++++++++++++++++++++++++++++++++++++++
 
-      /* apexcharts
-       * -------
-       * Here we will create a few charts using apexcharts
-       */
+      // Optimized document ready function
+      $(document).ready(function() {
+        // Add loading state to import button
+        const submitBtn = document.querySelector('form[method="POST"][enctype="multipart/form-data"] button[type="submit"]');
+        
+        if (submitBtn) {
+          submitBtn.addEventListener('click', function(e) {
+            const fileInput = document.getElementById('file_excel');
+            if (!fileInput.value) {
+              e.preventDefault();
+              alert('Silakan pilih file terlebih dahulu');
+              return;
+            }
+          });
+        }
+      });
 
-      //-----------------------
-      // - MONTHLY SALES CHART -
-      //-----------------------
+      // Initialize DataTable dengan responsive
+      let dataTable = null;
+      
+      $(document).ready(function() {
+        // Destroy existing DataTable jika ada
+        if ($.fn.DataTable.isDataTable('#myTable')) {
+          $('#myTable').DataTable().destroy();
+        }
 
-      const sales_chart_options = {
-        series: [
-          {
-            name: 'Digital Goods',
-            data: [28, 48, 40, 19, 86, 27, 90],
-          },
-          {
-            name: 'Electronics',
-            data: [65, 59, 80, 81, 56, 55, 40],
-          },
-        ],
-        chart: {
-          height: 180,
-          type: 'area',
-          toolbar: {
-            show: false,
-          },
-        },
-        legend: {
-          show: false,
-        },
-        colors: ['#0d6efd', '#20c997'],
-        dataLabels: {
-          enabled: false,
-        },
-        stroke: {
-          curve: 'smooth',
-        },
-        xaxis: {
-          type: 'datetime',
-          categories: [
-            '2023-01-01',
-            '2023-02-01',
-            '2023-03-01',
-            '2023-04-01',
-            '2023-05-01',
-            '2023-06-01',
-            '2023-07-01',
+        dataTable = $('#myTable').DataTable({
+          responsive: false,
+          autoWidth: false,
+          scrollX: true,
+          scrollCollapse: true,
+          fixedHeader: true,
+          paging: true,
+          pageLength: 10,
+          searching: true,
+          ordering: true,
+          info: true,
+          processing: true,
+          deferRender: true,
+          retrieve: true,
+          columnDefs: [
+            {
+              targets: '_all',
+              className: 'dt-body-center'
+            }
           ],
-        },
-        tooltip: {
-          x: {
-            format: 'MMMM yyyy',
+          language: {
+            url: '//cdn.datatables.net/plug-ins/1.13.7/i18n/id.json'
           },
-        },
-      };
-
-      const sales_chart = new ApexCharts(
-        document.querySelector('#sales-chart'),
-        sales_chart_options,
-      );
-      sales_chart.render();
-
-      //---------------------------
-      // - END MONTHLY SALES CHART -
-      //---------------------------
+          initComplete: function() {
+            console.log('DataTable initialized successfully');
+          }
+        });
+      });
 
       function createSparklineChart(selector, data) {
         const options = {
@@ -1089,6 +1149,7 @@ function saveDataToDatabase($con, $importedData) {
         chart.render();
       }
 
+      // Only initialize sparkline charts if they exist in the page
       const table_sparkline_1_data = [25, 66, 41, 89, 63, 25, 44, 12, 36, 9, 54];
       const table_sparkline_2_data = [12, 56, 21, 39, 73, 45, 64, 52, 36, 59, 44];
       const table_sparkline_3_data = [15, 46, 21, 59, 33, 15, 34, 42, 56, 19, 64];
@@ -1097,57 +1158,52 @@ function saveDataToDatabase($con, $importedData) {
       const table_sparkline_6_data = [5, 36, 11, 69, 23, 15, 14, 42, 26, 19, 44];
       const table_sparkline_7_data = [12, 56, 21, 39, 73, 45, 64, 52, 36, 59, 74];
 
-      createSparklineChart('#table-sparkline-1', table_sparkline_1_data);
-      createSparklineChart('#table-sparkline-2', table_sparkline_2_data);
-      createSparklineChart('#table-sparkline-3', table_sparkline_3_data);
-      createSparklineChart('#table-sparkline-4', table_sparkline_4_data);
-      createSparklineChart('#table-sparkline-5', table_sparkline_5_data);
-      createSparklineChart('#table-sparkline-6', table_sparkline_6_data);
-      createSparklineChart('#table-sparkline-7', table_sparkline_7_data);
-
-      //-------------
-      // - PIE CHART -
-      //-------------
-
-      const pie_chart_options = {
-        series: [700, 500, 400, 600, 300, 100],
-        chart: {
-          type: 'donut',
-        },
-        labels: ['Chrome', 'Edge', 'FireFox', 'Safari', 'Opera', 'IE'],
-        dataLabels: {
-          enabled: false,
-        },
-        colors: ['#0d6efd', '#20c997', '#ffc107', '#d63384', '#6f42c1', '#adb5bd'],
-      };
-
-      const pie_chart = new ApexCharts(document.querySelector('#pie-chart'), pie_chart_options);
-      pie_chart.render();
+      // Only create sparklines if their containers exist
+      if (document.querySelector('#table-sparkline-1')) createSparklineChart('#table-sparkline-1', table_sparkline_1_data);
+      if (document.querySelector('#table-sparkline-2')) createSparklineChart('#table-sparkline-2', table_sparkline_2_data);
+      if (document.querySelector('#table-sparkline-3')) createSparklineChart('#table-sparkline-3', table_sparkline_3_data);
+      if (document.querySelector('#table-sparkline-4')) createSparklineChart('#table-sparkline-4', table_sparkline_4_data);
+      if (document.querySelector('#table-sparkline-5')) createSparklineChart('#table-sparkline-5', table_sparkline_5_data);
+      if (document.querySelector('#table-sparkline-6')) createSparklineChart('#table-sparkline-6', table_sparkline_6_data);
+      if (document.querySelector('#table-sparkline-7')) createSparklineChart('#table-sparkline-7', table_sparkline_7_data);
 
       //-----------------
       // - END PIE CHART -
       //-----------------
 
-      // Function to submit save form with data from preview table
-      function submitSaveForm() {
-        // Get table data from preview
-        const tableRows = document.querySelectorAll('.card-body table tbody tr');
+      // Function to confirm and save data to database
+      function confirmSaveData() {
+        // Validasi table tersedia
+        if (!dataTable) {
+          alert('Tabel belum siap. Silakan refresh halaman.');
+          return;
+        }
         
-        if (tableRows.length === 0) {
+        // Get table data dari DataTable instance
+        const rows = dataTable.rows().data();
+        
+        if (rows.length === 0) {
           alert('Tidak ada data untuk disimpan');
           return;
         }
         
-        // Extract data from table
+        // Extract data dari setiap row
         const importedData = [];
-        tableRows.forEach((row) => {
-          const cells = row.querySelectorAll('td');
-          if (cells.length > 0) {
-            const rowData = [];
-            // Get only first 47 columns
-            for (let i = 0; i < Math.min(47, cells.length); i++) {
-              rowData.push(cells[i].textContent.trim());
-            }
+        
+        // Iterate through all rows in the table
+        dataTable.rows().every(function(index) {
+          const node = this.node();
+          const cells = $(node).find('td');
+          
+          const rowData = [];
+          
+          // Ambil semua cell dalam row
+          cells.each(function() {
+            rowData.push($(this).text().trim());
+          });
+          
+          // Pastikan row bukan placeholder "Belum ada data"
+          if (rowData[0] && rowData[0] !== 'Belum ada data' && rowData[0] !== '') {
             importedData.push(rowData);
           }
         });
@@ -1164,14 +1220,14 @@ function saveDataToDatabase($con, $importedData) {
           // Set hidden input with data
           document.getElementById('dataInput').value = JSON.stringify(importedData);
           
+          // Disable save button during submit
+          const saveBtn = document.getElementById('saveBtn');
+          saveBtn.disabled = true;
+          saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Sedang menyimpan...';
+          
           // Submit form
           document.getElementById('saveForm').submit();
         }
-      }
-
-      // Legacy function for backward compatibility
-      function confirmSaveData() {
-        submitSaveForm();
       }
     </script>
     <!--end::Script-->
