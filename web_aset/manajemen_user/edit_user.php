@@ -325,6 +325,40 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                       </div>
                     </div>
                   </div>
+                  <div class="row">
+                    <div class="col-md-6">
+                      <div class="form-group">
+                      <label for="Type_User">Type User</label>
+                      <select name="Type_User" id="Type_User" class="form-control" required>
+                        <option value="Approval Regional" <?php if(isset($user['Type_User']) && $user['Type_User']=='Approval Regional') echo 'selected'; ?>>Approval Regional</option>
+                        <option value="Approval Sub Regional" <?php if(isset($user['Type_User']) && $user['Type_User']=='Approval Sub Regional') echo 'selected'; ?>>Approval Sub Regional</option>
+                        <option value="User Entry Regional" <?php if(isset($user['Type_User']) && $user['Type_User']=='User Entry Regional') echo 'selected'; ?>>User Entry Regional</option>
+                        <option value="User Entry Sub Regional" <?php if(isset($user['Type_User']) && $user['Type_User']=='User Entry Sub Regional') echo 'selected'; ?>>User Entry Sub Regional</option>
+                        <option value="User Entry Cabang" <?php if(isset($user['Type_User']) && $user['Type_User']=='User Entry Cabang') echo 'selected'; ?>>User Entry Cabang</option>
+                      </select>
+                    </div>
+                    </div>
+                    <div class="col-md-6">
+                     <div class="form-group">
+                        <label for="Cabang">Cabang</label>
+                        <select name="Cabang" id="Cabang" class="form-control" required>
+                          <?php
+                          $result_cabang = mysqli_query($con, "
+                            SELECT DISTINCT profit_center, profit_center_text 
+                            FROM import_dat 
+                            ORDER BY profit_center
+                          ");
+                          while($row = mysqli_fetch_assoc($result_cabang)) {
+                              // untuk edit user, cek apakah cabang user sama dengan profit_center
+                              $selected = (isset($user['Cabang']) && $user['Cabang'] == $row['profit_center']) ? 'selected' : '';
+                              echo '<option value="'.$row['profit_center'].'" '.$selected.'>'.
+                                    $row['profit_center'].' - '.$row['profit_center_text'].
+                                  '</option>';
+                          }
+                          ?>
+                        </select>
+                    </div>  
+                  </div>
                 </div>
                 <div class="row">
                 <div class="col-md-12">
