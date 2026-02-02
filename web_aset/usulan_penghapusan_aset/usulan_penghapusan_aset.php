@@ -3,7 +3,7 @@ $servername = "localhost";
 $username = "root";
 $password = "";
 $dbname = "asetreg3_db";
-
+ 
 // Create connection
 $con = mysqli_connect($servername, $username, $password, $dbname);
 session_start();
@@ -12,44 +12,186 @@ if(!isset($_SESSION["nipp"]) || !isset($_SESSION["name"])) {
     exit();
 }
 
-// Jika form disubmit
-if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    // Validasi input tidak boleh kosong
-    if (empty($_POST['nama_menu']) || empty($_POST['menu']) || empty($_POST['urutan_menu'])) {
-        $pesan = "Semua field harus diisi!";
-        $tipe_pesan = "danger";
-    } else {
-        // Gunakan prepared statement untuk menghindari SQL injection
-        $nama_menu = trim($_POST['nama_menu']);
-        $menu = trim($_POST['menu']);
-        $urutan_menu = intval($_POST['urutan_menu']);
-        
-        $stmt = $con->prepare("INSERT INTO menus (nama_menu, menu, urutan_menu) VALUES (?, ?, ?)");
-        $stmt->bind_param("ssi", $nama_menu, $menu, $urutan_menu);
-        
-        if ($stmt->execute()) {
-            $pesan = "Menu berhasil ditambahkan!";
-            $tipe_pesan = "success";
-            // Reset form
-            $_POST = array();
-        } else {
-            $pesan = "Gagal menambahkan menu: " . $stmt->error;
-            $tipe_pesan = "danger";
-        }
-        $stmt->close();
+// Initialize variables
+$importedData = [];
+$pesan = "";
+$tipe_pesan = "";
+$saved_count = 0;
+
+
+// Fetch data from hasil_dat table
+$query = "SELECT * FROM import_dat ORDER BY nomor_asset_utama ASC";
+$result = mysqli_query($con, $query);
+
+$asset_data = [];
+if ($result) {
+    while ($row = mysqli_fetch_assoc($result)) {
+        $asset_data[] = $row;
     }
 }
 
+// Handle save to database with status (draft or submitted)
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && ($_POST['action'] === 'save_draft' || $_POST['action'] === 'submit_data')) {
+    $is_submit = ($_POST['action'] === 'submit_data');
+    
+    if (!isset($_POST['selected_items']) || empty($_POST['selected_items'])) {
+        $pesan = "Tidak ada data yang dipilih";
+        $tipe_pesan = "warning";
+    } else {
+        try {
+            $selected_ids = json_decode($_POST['selected_items'], true);
+            
+            if (empty($selected_ids)) {
+                $pesan = "Tidak ada data yang dipilih";
+                $tipe_pesan = "warning";
+            } else {
+                // Save to database with status
+                $saved_count = saveSelectedAssets($con, $selected_ids, $is_submit, $_SESSION['nipp']);
+                
+                if ($saved_count > 0) {
+                    if ($is_submit) {
+                        $pesan = "✅ Berhasil submit " . $saved_count . " aset. Data telah masuk ke menu Lengkapi Dokumen";
+                        $tipe_pesan = "success";
+                    } else {
+                        $pesan = "✅ Berhasil menyimpan " . $saved_count . " aset sebagai draft";
+                        $tipe_pesan = "success";
+                    }
+                } else {
+                    $pesan = "Tidak ada data baru yang disimpan (data mungkin sudah ada)";
+                    $tipe_pesan = "info";
+                }
+            }
+        } catch (Exception $e) {
+            $pesan = "Error: " . $e->getMessage();
+            $tipe_pesan = "danger";
+        }
+    }
+}
+
+// Function to save selected assets to usulan_penghapusan table
+function saveSelectedAssets($con, $selected_ids, $is_submit, $created_by) {
+    $saved_count = 0;
+    $status = $is_submit ? 'submitted' : 'draft';
+    
+    // Prepare statement untuk insert
+    $stmt = $con->prepare("INSERT INTO usulan_penghapusan (
+        nomor_asset_utama, 
+        subreg, 
+        profit_center, 
+        pc_text, 
+        cost_center_baru, 
+        deskripsi_cc, 
+        cabang_kawasan, 
+        tahun,
+        status, 
+        created_at, 
+        created_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)");
+    
+    foreach ($selected_ids as $asset_id) {
+        // Get asset data from hasil_dat
+        $query = "SELECT * FROM hasil_dat WHERE id = ?";
+        $get_stmt = $con->prepare($query);
+        $get_stmt->bind_param("i", $asset_id);
+        $get_stmt->execute();
+        $result = $get_stmt->get_result();
+        
+        if ($row = $result->fetch_assoc()) {
+            // Check if asset already exists in usulan_penghapusan
+            $check = $con->prepare("SELECT id FROM usulan_penghapusan WHERE no_asset_utama = ?");
+            $check->bind_param("s", $row['nomor_asset_utama']);
+            $check->execute();
+            $check_result = $check->get_result();
+            
+            if ($check_result->num_rows > 0) {
+                // Skip duplicate
+                $check->close();
+                continue;
+            }
+            $check->close();
+            
+            // Insert data
+            $stmt->bind_param("ssssssssss", 
+                $row['nomor_asset_utama'],
+                $row['subreg'],
+                $row['profit_center'],
+                $row['pc_text'],
+                $row['cost_center_baru'],
+                $row['deskripsi_cc'],
+                $row['cabang_kawasan'],
+                $row['tahun'],
+                $status,
+                $created_by
+            );
+            
+            if ($stmt->execute()) {
+                $saved_count++;
+            }
+        }
+        
+        $get_stmt->close();
+    }
+    
+    $stmt->close();
+    return $saved_count;
+}
+    
+    // Begin transaction for data integrity
+    mysqli_begin_transaction($con);
+    
+    try {
+        foreach ($importedData as $row_index => $row) {
+            // Prepare values
+            $values = [];
+            foreach ($column_names as $col_idx => $col_name) {
+                $value = isset($row[$col_idx]) ? $row[$col_idx] : '';
+                $values[] = "'" . mysqli_real_escape_string($con, $value) . "'";
+            }
+            
+            // Add imported_by
+            $values[] = "'" . mysqli_real_escape_string($con, $nipp) . "'";
+            
+            // Build insert query
+            $columns = implode(', ', $column_names) . ', imported_by';
+            $insert_sql = "INSERT INTO import_dat (" . $columns . ") VALUES (" . implode(', ', $values) . ")";
+            
+            if (mysqli_query($con, $insert_sql)) {
+                $saved_count++;
+            } else {
+                // Check if error is duplicate entry
+                $error = mysqli_error($con);
+                if (strpos($error, 'Duplicate entry') !== false) {
+                    $failed_rows[] = "Baris " . ($row_index + 2) . ": Asset sudah ada di database";
+                } else {
+                    $failed_rows[] = "Baris " . ($row_index + 2) . ": " . $error;
+                }
+            }
+        }
+        
+        // Commit transaction
+        mysqli_commit($con);
+        
+    } catch (Exception $e) {
+        // Rollback on error
+        mysqli_rollback($con);
+        throw new Exception("Gagal menyimpan data: " . $e->getMessage());
+    }
+    
+    // Log failed rows (optional)
+    if (!empty($failed_rows)) {
+        error_log("Import failed rows: " . implode("; ", array_slice($failed_rows, 0, 5)));
+    }
+    
 ?>
+
 <!doctype html>
 <html lang="en">
   <!--begin::Head-->
   <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-    <title>Usulan Penghapusan - Web Aset Tetap</title>
-    <!-- Favicon -->
+    <title>Ususlan Penghapusan - Web Aset Tetap</title>
     <link rel="icon" type="image/png" href="../../dist/assets/img/emblem.png" /> 
-    <link rel="shortcut icon" type="image/png" href="../../dist/assets/img/emblem.png" />
+    <link rel="shortcut icon" type="image/png" href="../../dist/assets/img/emblem.png" />  
     <!--begin::Accessibility Meta Tags-->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
     <meta name="color-scheme" content="light dark" />
@@ -100,12 +242,55 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     <!--begin::Required Plugin(AdminLTE)-->
     <link rel="stylesheet" href="../../dist/css/adminlte.css" />
     <!--end::Required Plugin(AdminLTE)-->
+    <!-- Custom Styles for Horizontal Scroll -->
+    <style>
+      .table-responsive {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        border: 1px solid #dee2e6;
+        border-radius: 0.25rem;
+      }
+      .table-responsive::-webkit-scrollbar {
+        height: 8px;
+      }
+      .table-responsive::-webkit-scrollbar-track {
+        background: #f1f1f1;
+      }
+      .table-responsive::-webkit-scrollbar-thumb {
+        background: #888;
+        border-radius: 4px;
+      }
+      .table-responsive::-webkit-scrollbar-thumb:hover {
+        background: #555;
+      }
+      #myTable {
+        margin-bottom: 0;
+      }
+      #myTable thead th, 
+      #myTable tbody td {
+        padding: 8px 12px;
+        white-space: nowrap;
+        min-width: 130px;
+      }
+      #myTable thead th {
+        background-color: #f8f9fa;
+        font-weight: 600;
+        border-bottom: 2px solid #dee2e6;
+      }
+      #myTable tbody td {
+        border-bottom: 1px solid #dee2e6;
+      }
+    </style>
+    <!--end::Custom Styles-->
     <!-- apexcharts -->
     <link
       rel="stylesheet"
       href="https://cdn.jsdelivr.net/npm/apexcharts@3.37.1/dist/apexcharts.css"
       integrity="sha256-4MX+61mt9NVvvuPjUWdUdyfZfxSB1/Rf9WtqRHgG5S0="
       crossorigin="anonymous"
+    />
+    <link rel="stylesheet"
+      href="https://cdn.datatables.net/2.3.6/css/dataTables.dataTables.min.css"
     />
   </head>
   <body class="layout-fixed sidebar-expand-lg sidebar-open bg-body-tertiary">
@@ -275,7 +460,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
               <div class="col-sm-6">
                 <ol class="breadcrumb float-sm-end">
                   <li class="breadcrumb-item"><a href="../dasbor/dasbor.php">Home</a></li>
-                  <li class="breadcrumb-item"><a href="manajemen_menu.php">Usulan Penghapusan</a></li>
+                  <li class="breadcrumb-item active">Usulan Penghapusan</li>
                 </ol>
               </div>
             </div>
@@ -285,87 +470,114 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         </div>
         <div class="app-content">
           <!--begin::Container-->
-
-            <!-- Info boxes -->
-          <div class="card card-info card-outline mb-4" id="form-usulan">
+          <div class="container-fluid">
+            <!--begin::Row-->
                   <!--begin::Header-->
-                  <div class="card-header"><div class="card-title">Form Usulan</div></div>
                   <!--end::Header-->
                   <!--begin::Form-->
-                  <form class="needs-validation" method="POST" action="" novalidate="">
-                    <!--begin::Body-->
-                    <div class="card-body">
-                   <?php  
-                        if (isset($pesan)) {
-                            echo '<div class="alert alert-' . $tipe_pesan . ' alert-dismissible fade show" role="alert">' . $pesan . 
-                            '<button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button></div>';
-                        }
-                        
-                        // Hanya tampilkan form jika belum submit atau ada error
-                        if (!isset($pesan) || $tipe_pesan == "danger") {
-                        echo 
-                        '<div class="mb-3">
-                                  <label for="nama_menu" class="form-label">Nama Menu</label>
-                                  <input type="text" name="nama_menu" class="form-control" id="nama_menu" aria-describedby="namaMenuHelp" value="' . (isset($_POST['nama_menu']) ? htmlspecialchars($_POST['nama_menu']) : '') . '" required>
-                                  <div id="namaMenuHelp" class="form-text">
-                                  </div>
-                                </div>
-                                <div class="mb-3">
-                                  <label for="menu" class="form-label">Text Link Menu</label>
-                                  <input type="text" name="menu" class="form-control" id="menu" value="' . (isset($_POST['menu']) ? htmlspecialchars($_POST['menu']) : '') . '" required>
-                                </div>
-                                <div class="mb-3">
-                                  <label for="urutan_menu" class="form-label">No Urut</label>
-                                  <input type="number" name="urutan_menu" class="form-control" id="urutan_menu" value="' . (isset($_POST['urutan_menu']) ? htmlspecialchars($_POST['urutan_menu']) : '') . '" required>
-                                </div>
-                                <button type="submit" class="btn btn-primary">Ajukan Usulan</button> 
-                                <a href="manajemen_menu.php" class="btn btn-secondary">Batal</a>
-                              </div>';
-                      } else if (isset($pesan) && $tipe_pesan == "success") {
-                          echo '<div class="text-center"><p><a href="manajemen_menu.php" class="btn btn-primary">Kembali ke Daftar Menu</a></p></div>';
-                      }
-                      ?>
-
+                  <!--begin::Header-->
+                  <div class="row">
+                    <div class="card card-outline mb-4">
+                    <div class="card-header">
+                      <ul class="nav nav-tabs card-header-tabs" id="usulanTabs" role="tablist">
+                        <li class="nav-item">
+                          <button class="nav-link active" id="aset-tab" data-bs-toggle="tab" data-bs-target="#aset" type="button" role="tab">
+                            Daftar Aset Tetap
+                          </button>
+                        </li>
+                        <li class="nav-item">
+                          <button class="nav-link" id="dokumen-tab" data-bs-toggle="tab" data-bs-target="#dokumen" type="button" role="tab">
+                            Lengkapi Dokumen
+                          </button>
+                        </li>
+                        <li class="nav-item">
+                          <button class="nav-link" id="summary-tab" data-bs-toggle="tab" data-bs-target="#summary" type="button" role="tab">
+                            Summary
+                          </button>
+                        </li>
+                      </ul>
                     </div>
-                    <!--end::Footer-->
-                  </form>
-                  <!--end::Form-->
-                  <!--begin::JavaScript-->
-                  <script>
-                    // Example starter JavaScript for disabling form submissions if there are invalid fields
-                    (() => {
-                      'use strict';
+                   <div class="card-body">
+                    <div class="tab-content" id="usulanTabsContent">
+                      
+                          <!-- Tab Pilih Aset -->
+                          <div class="tab-pane fade show active" id="aset" role="tabpanel">
+                            <h5>Pilih untuk Usulan Penghapusan</h5>  
+                            <!-- Table -->
+                            <div class="table-responsive">
+                              <table id="myTable" class="display nowrap table table-striped table-sm w-auto">
+                                <thead>
+                                  <tr>
+                                    <th>No Asset Utama</th>
+                                    <th>Subreg</th>
+                                    <th>Profit Center</th>
+                                    <th>PC Text</th>
+                                    <th>Cost Center Baru</th>
+                                    <th>Deskripsi CC</th>
+                                    <th>Cabang/Kawasan</th>
+                                    <th>Tahun</th>
+                                    <th>Action</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  <?php  
+                                    $query = "SELECT * FROM import_dat";
+                                    $result = mysqli_query($con, $query);
+                                    if (!$result) {
+                                      echo '<tr><td colspan="45">Error: ' . mysqli_error($con) . '</td></tr>';
+                                    } elseif (mysqli_num_rows($result) == 0) {
+                                      $query = "SELECT * FROM import_dat";
+                                      $result = mysqli_query($con, $query);
+                                    }
+                                    while ($row = mysqli_fetch_assoc($result)) {
+                                      echo '
+                                        <tr>
+                                          <td>'.htmlspecialchars($row['nomor_asset_utama']).'</td>
+                                          <td>'.htmlspecialchars($row['subreg']).'</td>
+                                          <td>'.htmlspecialchars($row['profit_center']).'</td>
+                                          <td>'.htmlspecialchars($row['profit_center_text']).'</td>
+                                          <td>'.htmlspecialchars($row['cost_center_baru']).'</td>
+                                          <td>'.htmlspecialchars($row['deskripsi_cost_center']).'</td>
+                                          <td>'.htmlspecialchars($row['nama_cabang_kawasan']).'</td>
+                                          <td>'.htmlspecialchars($row['kode_plant']).'</td>
+                                          <td>
+                                            <input type="checkbox" class="row-checkbox" value="'.htmlspecialchars($row['id']).'"> 
+                                        </tr>';
+                                    }
+                                  ?>
+                                </tbody>
+                              </table>
+                            </div>
+                            <!-- End Table -->
+                            <!-- Tombol hanya di tab aset -->
+                             <!-- Action Buttons -->
+                                    <form id="actionForm" method="POST">
+                                        
+                                        <div class="action-buttons">
+                                            <button type="button" class="btn btn-secondary btn-action" id="saveDraftBtn" onclick="saveData('draft')">
+                                                <i class="bi bi-save"></i> Simpan sebagai Draft
+                                            </button>
+                                            <button type="button" class="btn btn-primary btn-action" id="submitBtn" onclick="saveData('submit')">
+                                                <i class="bi bi-send-check"></i> Submit ke Lengkapi Dokumen
+                                            </button>
+                                            <button type="button" class="btn btn-danger" onclick="clearSelection()">
+                                                <i class="bi bi-x-circle"></i> Batal Pilihan
+                                            </button>
+                                        </div>
+                                    </form>
+                                    
+                                    <!-- Selection Info --> 
+                                    <div id="selectionInfo" class="alert alert-info mt-3" style="display: none;">
+                                        <i class="bi bi-check2-circle"></i> Anda telah memilih <span id="selectionCount">0</span> aset.
+                                    </div>
 
-                      // Fetch all the forms we want to apply custom Bootstrap validation styles to
-                      const forms = document.querySelectorAll('.needs-validation');
-
-                      // Loop over them and prevent submission
-                      Array.from(forms).forEach((form) => {
-                        form.addEventListener(
-                          'submit',
-                          (event) => {
-                            if (!form.checkValidity()) {
-                              event.preventDefault();
-                              event.stopPropagation();
-                            }
-
-                            form.classList.add('was-validated');
-                          },
-                          false,
-                        );
-                      });
-                    })();
-                  </script>
-                  <!--end::JavaScript-->
+                          <!-- End Tab Pilih Aset -->
+                  </div>
                 </div>
-                <!-- /.card -->
-              </div>
-              <!-- /.col -->
             </div>
+                  <!--end::Form-->
             <!--end::Row-->
-            <!-- /.footer -->
-                </div>
-          <!--end::Container-->
+          </div>
         </div>
         <!--end::App Content-->
       </main>
@@ -373,7 +585,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
       <!--begin::Footer-->
       <footer class="app-footer">
         <!--begin::To the end-->
-        <div class="float-end d-none d-sm-inline">PT Pelabuhan Indonesia (Persero)</div>
+        <div class="float-end d-none d-sm-inline">PT Pelabuhan Indon3sia (Persero)</div>
         <!--end::To the end-->
         <!--begin::Copyright-->
         <strong>
@@ -426,6 +638,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     <!--end::OverlayScrollbars Configure-->
     <!-- OPTIONAL SCRIPTS -->
     <!-- apexcharts -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.datatables.net/2.3.6/js/dataTables.js"></script>
+    <script src="https://cdn.datatables.net/responsive/3.0.0/js/dataTables.responsive.js"></script>
+    <script src="https://cdn.datatables.net/buttons/3.0.0/js/dataTables.buttons.js"></script>
+    <script src="https://cdn.datatables.net/buttons/3.0.0/js/buttons.html5.js"></script>
+    <script src="https://cdn.datatables.net/buttons/3.0.0/js/buttons.print.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/pdfmake.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/vfs_fonts.min.js"></script>
     <script
       src="https://cdn.jsdelivr.net/npm/apexcharts@3.37.1/dist/apexcharts.min.js"
       integrity="sha256-+vh8GkaU7C9/wbSLIcwq82tQ2wTf44aOHA8HlBMwRI8="
@@ -436,71 +657,50 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
       // IT'S ALL JUST JUNK FOR DEMO
       // ++++++++++++++++++++++++++++++++++++++++++
 
-      /* apexcharts
-       * -------
-       * Here we will create a few charts using apexcharts
-       */
+      // Optimized document ready function
+      $(document).ready(function() {
+        // Add loading state to import button
+        const submitBtn = document.querySelector('form[method="POST"][enctype="multipart/form-data"] button[type="submit"]');        
+        if (submitBtn) {
+          submitBtn.addEventListener('click', function(e) {
+            const fileInput = document.getElementById('file_excel');
+            if (!fileInput.value) {
+              e.preventDefault();
+              alert('Silakan pilih file terlebih dahulu');
+              return;
+            }
+          });
+        }
 
-      //-----------------------
-      // - MONTHLY SALES CHART -
-      //-----------------------
-
-      const sales_chart_options = {
-        series: [
-          {
-            name: 'Digital Goods',
-            data: [28, 48, 40, 19, 86, 27, 90],
+      // Initialize DataTable dengan responsive
+          $('#myTable').DataTable({
+            responsive: true,
+            autoWidth: false,
+            scrollX: true,
+            scrollCollapse: true,
+            fixedHeader: true,
+            paging: true,
+            pageLength: 10,
+            searching: true,
+            ordering: true,
+            info: true,
+            processing: true,
+            deferRender: true,
+            retrieve: true,
+            columnDefs: [
+              {
+                targets: '_all',
+                className: 'dt-body-center'
+              }
+            ],
+            language: {
+              url: '//cdn.datatables.net/plug-ins/1.13.7/i18n/id.json'
           },
-          {
-            name: 'Electronics',
-            data: [65, 59, 80, 81, 56, 55, 40],
-          },
-        ],
-        chart: {
-          height: 180,
-          type: 'area',
-          toolbar: {
-            show: false,
-          },
-        },
-        legend: {
-          show: false,
-        },
-        colors: ['#0d6efd', '#20c997'],
-        dataLabels: {
-          enabled: false,
-        },
-        stroke: {
-          curve: 'smooth',
-        },
-        xaxis: {
-          type: 'datetime',
-          categories: [
-            '2023-01-01',
-            '2023-02-01',
-            '2023-03-01',
-            '2023-04-01',
-            '2023-05-01',
-            '2023-06-01',
-            '2023-07-01',
-          ],
-        },
-        tooltip: {
-          x: {
-            format: 'MMMM yyyy',
-          },
-        },
-      };
-
-      const sales_chart = new ApexCharts(
-        document.querySelector('#sales-chart'),
-        sales_chart_options,
-      );
-      sales_chart.render();
-
-      //---------------------------
-      // - END MONTHLY SALES CHART -
-      //---------------------------
+            initComplete: function() {
+            console.log('DataTable initialized successfully');
+          }
+        });
+      });
 
       function createSparklineChart(selector, data) {
         const options = {
@@ -541,6 +741,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         chart.render();
       }
 
+      // Only initialize sparkline charts if they exist in the page
       const table_sparkline_1_data = [25, 66, 41, 89, 63, 25, 44, 12, 36, 9, 54];
       const table_sparkline_2_data = [12, 56, 21, 39, 73, 45, 64, 52, 36, 59, 44];
       const table_sparkline_3_data = [15, 46, 21, 59, 33, 15, 34, 42, 56, 19, 64];
@@ -549,36 +750,85 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
       const table_sparkline_6_data = [5, 36, 11, 69, 23, 15, 14, 42, 26, 19, 44];
       const table_sparkline_7_data = [12, 56, 21, 39, 73, 45, 64, 52, 36, 59, 74];
 
-      createSparklineChart('#table-sparkline-1', table_sparkline_1_data);
-      createSparklineChart('#table-sparkline-2', table_sparkline_2_data);
-      createSparklineChart('#table-sparkline-3', table_sparkline_3_data);
-      createSparklineChart('#table-sparkline-4', table_sparkline_4_data);
-      createSparklineChart('#table-sparkline-5', table_sparkline_5_data);
-      createSparklineChart('#table-sparkline-6', table_sparkline_6_data);
-      createSparklineChart('#table-sparkline-7', table_sparkline_7_data);
-
-      //-------------
-      // - PIE CHART -
-      //-------------
-
-      const pie_chart_options = {
-        series: [700, 500, 400, 600, 300, 100],
-        chart: {
-          type: 'donut',
-        },
-        labels: ['Chrome', 'Edge', 'FireFox', 'Safari', 'Opera', 'IE'],
-        dataLabels: {
-          enabled: false,
-        },
-        colors: ['#0d6efd', '#20c997', '#ffc107', '#d63384', '#6f42c1', '#adb5bd'],
-      };
-
-      const pie_chart = new ApexCharts(document.querySelector('#pie-chart'), pie_chart_options);
-      pie_chart.render();
+      // Only create sparklines if their containers exist
+      if (document.querySelector('#table-sparkline-1')) createSparklineChart('#table-sparkline-1', table_sparkline_1_data);
+      if (document.querySelector('#table-sparkline-2')) createSparklineChart('#table-sparkline-2', table_sparkline_2_data);
+      if (document.querySelector('#table-sparkline-3')) createSparklineChart('#table-sparkline-3', table_sparkline_3_data);
+      if (document.querySelector('#table-sparkline-4')) createSparklineChart('#table-sparkline-4', table_sparkline_4_data);
+      if (document.querySelector('#table-sparkline-5')) createSparklineChart('#table-sparkline-5', table_sparkline_5_data);
+      if (document.querySelector('#table-sparkline-6')) createSparklineChart('#table-sparkline-6', table_sparkline_6_data);
+      if (document.querySelector('#table-sparkline-7')) createSparklineChart('#table-sparkline-7', table_sparkline_7_data);
 
       //-----------------
       // - END PIE CHART -
       //-----------------
+
+      // Select All functionality
+            $('#selectAll').on('change', function() {
+                const isChecked = $(this).prop('checked');
+                $('.row-checkbox').prop('checked', isChecked);
+                updateSelectedCount();
+            });
+            
+            // Individual checkbox
+            $(document).on('change', '.row-checkbox', function() {
+                const totalCheckboxes = $('.row-checkbox').length;
+                const checkedCheckboxes = $('.row-checkbox:checked').length;
+                $('#selectAll').prop('checked', totalCheckboxes === checkedCheckboxes);
+                updateSelectedCount();
+            });
+        
+        function updateSelectedCount() {
+            const count = $('.row-checkbox:checked').length;
+            $('#selectionCount').text(count);
+            
+            if (count > 0) {
+                $('#selectionInfo').slideDown();
+            } else {
+                $('#selectionInfo').slideUp();
+            }
+        }
+        
+        function clearSelection() {
+            $('.row-checkbox').prop('checked', false);
+            $('#selectAll').prop('checked', false);
+            updateSelectedCount();
+        }
+        
+        function saveData(type) {
+            // Get selected checkboxes
+            const selectedIds = [];
+            $('.row-checkbox:checked').each(function() {
+                selectedIds.push($(this).val());
+            });
+            
+            if (selectedIds.length === 0) {
+                alert('⚠️ Silakan pilih minimal 1 aset untuk diusulkan penghapusan');
+                return;
+            }
+            
+            const actionText = type === 'draft' ? 'menyimpan sebagai draft' : 'submit ke menu Lengkapi Dokumen';
+            const actionIcon = type === 'draft' ? '💾' : '📤';
+            const message = `${actionIcon} Anda yakin ingin ${actionText}?\n\nJumlah aset: ${selectedIds.length} aset`;
+            
+            if (confirm(message)) {
+                // Set selected items and action type
+                document.getElementById('selectedItemsInput').value = JSON.stringify(selectedIds);
+                document.getElementById('actionType').value = type === 'draft' ? 'save_draft' : 'submit_data';
+                
+                // Disable buttons
+                const btnId = type === 'draft' ? 'saveDraftBtn' : 'submitBtn';
+                const btn = document.getElementById(btnId);
+                btn.disabled = true;
+                btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Memproses...';
+                
+                // Also disable the other button
+                const otherBtnId = type === 'draft' ? 'submitBtn' : 'saveDraftBtn';
+                document.getElementById(otherBtnId).disabled = true;
+          // Submit form
+          document.getElementById('saveForm').submit();
+        }
+      }
     </script>
     <!--end::Script-->
   </body>
