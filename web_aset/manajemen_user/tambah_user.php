@@ -15,24 +15,72 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
 
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $nipp = mysqli_real_escape_string($con, $_POST['nipp']);
-    $nama = mysqli_real_escape_string($con, $_POST['nama']);
-    $email = mysqli_real_escape_string($con, $_POST['email']);
-    $password = mysqli_real_escape_string($con, $_POST['password']);
+    // Basic validation
+    $nipp = trim($_POST['nipp'] ?? '');
+    $nama = trim($_POST['nama'] ?? '');
+    $email = trim($_POST['email'] ?? '');
+    $password = $_POST['password'] ?? '';
+    $type_user = trim($_POST['Type_User'] ?? '');
+    $cabang = trim($_POST['Cabang'] ?? '');
+
+    if ($nipp === '' || $nama === '' || $email === '' || $password === '') {
+        header('Location: tambah_user.php?status=invalid_input');
+        exit();
+    }
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        header('Location: tambah_user.php?status=invalid_email');
+        exit();
+    }
+    if (strlen($nipp) > 50) {
+        header('Location: tambah_user.php?status=invalid_nipp');
+        exit();
+    }
+
+    // Check duplicate NIPP
+    $chk = mysqli_prepare($con, "SELECT COUNT(*) as cnt FROM users WHERE NIPP = ?");
+    mysqli_stmt_bind_param($chk, 's', $nipp);
+    mysqli_stmt_execute($chk);
+    $res_chk = mysqli_stmt_get_result($chk);
+    $row_chk = mysqli_fetch_assoc($res_chk);
+    mysqli_stmt_close($chk);
+    if ($row_chk && (int)$row_chk['cnt'] > 0) {
+        header('Location: tambah_user.php?status=exists');
+        exit();
+    }
+
+    // Store user
     $hashed_password = password_hash($password, PASSWORD_DEFAULT);
 
-    $query = "INSERT INTO users (NIPP, Nama, Email, Password) VALUES ('$nipp', '$nama', '$email', '$hashed_password')";
-    if (mysqli_query($con, $query)) {
-      if(isset($_POST['akses'])) {
-            foreach($_POST['akses'] as $id_menu) {
-                mysqli_query($con, "INSERT INTO user_access (NIPP, id_menu) VALUES ('$nipp', '$id_menu')");
+    mysqli_begin_transaction($con);
+    try {
+        $stmt = mysqli_prepare($con, "INSERT INTO users (NIPP, Nama, Email, Password, Type_User, Cabang) VALUES (?, ?, ?, ?, ?, ?)");
+        if (!$stmt) throw new Exception(mysqli_error($con));
+        mysqli_stmt_bind_param($stmt, 'ssssss', $nipp, $nama, $email, $hashed_password, $type_user, $cabang);
+        if (!mysqli_stmt_execute($stmt)) throw new Exception(mysqli_stmt_error($stmt));
+        mysqli_stmt_close($stmt);
+
+        // Insert akses
+        if (isset($_POST['akses']) && is_array($_POST['akses'])) {
+            $stmtIns = mysqli_prepare($con, "INSERT INTO user_access (NIPP, id_menu) VALUES (?, ?)");
+            if (!$stmtIns) throw new Exception(mysqli_error($con));
+            foreach ($_POST['akses'] as $id_menu) {
+                if (!ctype_digit((string)$id_menu)) continue;
+                $id_int = (int)$id_menu;
+                mysqli_stmt_bind_param($stmtIns, 'si', $nipp, $id_int);
+                if (!mysqli_stmt_execute($stmtIns)) throw new Exception(mysqli_stmt_error($stmtIns));
             }
-      }
-      echo "<script>alert('User berhasil ditambahkan'); window.location='manajemen_user.php';</script>";
-    } else {
-        echo "<script>alert('Error: " . mysqli_error($con) . "');</script>";
+            mysqli_stmt_close($stmtIns);
+        }
+
+        mysqli_commit($con);
+        header('Location: manajemen_user.php?status=created');
+        exit();
+    } catch (Exception $e) {
+        mysqli_rollback($con);
+        header('Location: tambah_user.php?status=error&msg=' . urlencode($e->getMessage()));
+        exit();
     }
-}
+} 
 ?>
 <!doctype html>
 <html lang="en">
@@ -312,11 +360,20 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                         <label for="Type_User">Type User</label>
                         <select name="Type_User" id="Type_User" class="form-control" required>
                           <option value="">-- Pilih Type User --</option>
-                          <option value="Approval Regional">Approval Regional</option>
-                          <option value="Approval Sub Regional">Approval Sub Regional</option>
-                          <option value="User Entry Regional">User Entry Regional</option>
-                          <option value="User Entry Sub Regional">User Entry Sub Regional</option>
-                          <option value="User Entry Cabang">User Entry Cabang</option>
+                          <?php
+                            $typeOptions = [
+                              'Approval Regional',
+                              'Approval Sub Regional',
+                              'User Entry Regional',
+                              'User Entry Sub Regional',
+                              'User Entry Cabang'
+                            ];
+                            $selectedType = $_POST['Type_User'] ?? '';
+                            foreach ($typeOptions as $opt) {
+                              $sel = ($selectedType === $opt) ? 'selected' : '';
+                              echo '<option value="'.htmlspecialchars($opt).'" '.$sel.'>'.htmlspecialchars($opt).'</option>';
+                            }
+                          ?>
                         </select>
                       </div>
                     </div>

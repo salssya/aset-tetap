@@ -13,43 +13,101 @@ $dbname = "asetreg3_db";
 // Create connection
 $con = mysqli_connect($servername, $username, $password, $dbname);
 
-// Get user data
-$nipp = $_GET['nipp'];
-$query = "SELECT * FROM users WHERE NIPP = '$nipp'";
-$result = mysqli_query($con, $query);
-$user = mysqli_fetch_assoc($result);
+// Validate GET nipp and fetch user data
+if (!isset($_GET['nipp']) || trim($_GET['nipp']) === '') {
+    header('Location: manajemen_user.php?status=missing_id');
+    exit();
+}
+$nipp = mysqli_real_escape_string($con, $_GET['nipp']);
 
-// Handle form submission
-$akses_user = [];
- $result_access = mysqli_query($con, "SELECT id_menu FROM user_access WHERE NIPP='$nipp'"); 
- while($row_access = mysqli_fetch_assoc($result_access)) { 
-  $akses_user[] = $row_access['id_menu']; 
+// Fetch user using prepared statement
+$stmtUser = mysqli_prepare($con, "SELECT * FROM users WHERE NIPP = ?");
+mysqli_stmt_bind_param($stmtUser, 's', $nipp);
+mysqli_stmt_execute($stmtUser);
+$resultUser = mysqli_stmt_get_result($stmtUser);
+$user = mysqli_fetch_assoc($resultUser);
+mysqli_stmt_close($stmtUser);
+
+if (!$user) {
+    header('Location: manajemen_user.php?status=not_found');
+    exit();
 }
 
-if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $nama = mysqli_real_escape_string($con, $_POST['nama']);
-    $email = mysqli_real_escape_string($con, $_POST['email']);
-    $password = mysqli_real_escape_string($con, $_POST['password']);
+// Get user access
+$akses_user = [];
+$stmtAccess = mysqli_prepare($con, "SELECT id_menu FROM user_access WHERE NIPP = ?");
+mysqli_stmt_bind_param($stmtAccess, 's', $nipp);
+mysqli_stmt_execute($stmtAccess);
+$result_access = mysqli_stmt_get_result($stmtAccess);
+while($row_access = mysqli_fetch_assoc($result_access)) {
+    $akses_user[] = (int)$row_access['id_menu'];
+}
+mysqli_stmt_close($stmtAccess);
 
-    if (!empty($password)) {
-        $hashed_password = password_hash($password, PASSWORD_DEFAULT);
-        $update_query = "UPDATE users SET Nama='$nama', Email='$email', Password='$hashed_password' WHERE NIPP='$nipp'";
-    } else {
-        $update_query = "UPDATE users SET Nama='$nama', Email='$email' WHERE NIPP='$nipp'";
+// Handle form submission
+if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+    // Ensure POST nipp matches GET nipp
+    $post_nipp = isset($_POST['nipp']) ? trim($_POST['nipp']) : '';
+    if ($post_nipp === '' || $post_nipp !== $nipp) {
+        header('Location: manajemen_user.php?status=invalid_nipp');
+        exit();
     }
-    
-    if (mysqli_query($con, $update_query)) {
-        // Hapus akses lama
-        mysqli_query($con, "DELETE FROM user_access WHERE NIPP='$nipp'");
-        // Insert akses baru
-        if(isset($_POST['akses'])) {
-            foreach($_POST['akses'] as $id_menu) {
-                mysqli_query($con, "INSERT INTO user_access (NIPP, id_menu) VALUES ('$nipp', '$id_menu')");
-            }
+
+    $nama = trim($_POST['nama'] ?? '');
+    $email = trim($_POST['email'] ?? '');
+    $type_user = trim($_POST['Type_User'] ?? '');
+    $cabang = trim($_POST['Cabang'] ?? '');
+    $password = $_POST['password'] ?? '';
+
+    // Basic validation
+    if ($nama === '' || $email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        header("Location: edit_user.php?nipp=$nipp&status=invalid_input");
+        exit();
+    }
+
+    // Begin transaction
+    mysqli_begin_transaction($con);
+    try {
+        if ($password !== '') {
+            $hashed_password = password_hash($password, PASSWORD_DEFAULT);
+            $stmtUp = mysqli_prepare($con, "UPDATE users SET Nama = ?, Email = ?, Password = ?, Type_User = ?, Cabang = ? WHERE NIPP = ?");
+            if (!$stmtUp) throw new Exception(mysqli_error($con));
+            mysqli_stmt_bind_param($stmtUp, 'ssssss', $nama, $email, $hashed_password, $type_user, $cabang, $nipp);
+        } else {
+            $stmtUp = mysqli_prepare($con, "UPDATE users SET Nama = ?, Email = ?, Type_User = ?, Cabang = ? WHERE NIPP = ?");
+            if (!$stmtUp) throw new Exception(mysqli_error($con));
+            mysqli_stmt_bind_param($stmtUp, 'sssss', $nama, $email, $type_user, $cabang, $nipp);
         }
-        echo "<script>alert('User berhasil diupdate'); window.location='manajemen_user.php';</script>";
-    } else {
-        echo "<script>alert('Error: " . mysqli_error($con) . "');</script>";
+
+        if (!mysqli_stmt_execute($stmtUp)) throw new Exception(mysqli_stmt_error($stmtUp));
+        mysqli_stmt_close($stmtUp);
+
+        // Update user_access
+        $stmtDel = mysqli_prepare($con, "DELETE FROM user_access WHERE NIPP = ?");
+        if (!$stmtDel) throw new Exception(mysqli_error($con));
+        mysqli_stmt_bind_param($stmtDel, 's', $nipp);
+        if (!mysqli_stmt_execute($stmtDel)) throw new Exception(mysqli_stmt_error($stmtDel));
+        mysqli_stmt_close($stmtDel);
+
+        if (isset($_POST['akses']) && is_array($_POST['akses'])) {
+            $stmtIns = mysqli_prepare($con, "INSERT INTO user_access (NIPP, id_menu) VALUES (?, ?)");
+            if (!$stmtIns) throw new Exception(mysqli_error($con));
+            foreach ($_POST['akses'] as $id_menu) {
+                if (!ctype_digit((string)$id_menu)) continue; // skip invalid
+                $id_menu_int = (int)$id_menu;
+                mysqli_stmt_bind_param($stmtIns, 'si', $nipp, $id_menu_int);
+                if (!mysqli_stmt_execute($stmtIns)) throw new Exception(mysqli_stmt_error($stmtIns));
+            }
+            mysqli_stmt_close($stmtIns);
+        }
+
+        mysqli_commit($con);
+        header('Location: manajemen_user.php?status=updated');
+        exit();
+    } catch (Exception $e) {
+        mysqli_rollback($con);
+        header('Location: edit_user.php?nipp=' . urlencode($nipp) . '&status=error&msg=' . urlencode($e->getMessage()));
+        exit();
     }
 }
 ?>
@@ -330,11 +388,24 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                       <div class="form-group">
                       <label for="Type_User">Type User</label>
                       <select name="Type_User" id="Type_User" class="form-control" required>
-                        <option value="Approval Regional" <?php if(isset($user['Type_User']) && $user['Type_User']=='Approval Regional') echo 'selected'; ?>>Approval Regional</option>
-                        <option value="Approval Sub Regional" <?php if(isset($user['Type_User']) && $user['Type_User']=='Approval Sub Regional') echo 'selected'; ?>>Approval Sub Regional</option>
-                        <option value="User Entry Regional" <?php if(isset($user['Type_User']) && $user['Type_User']=='User Entry Regional') echo 'selected'; ?>>User Entry Regional</option>
-                        <option value="User Entry Sub Regional" <?php if(isset($user['Type_User']) && $user['Type_User']=='User Entry Sub Regional') echo 'selected'; ?>>User Entry Sub Regional</option>
-                        <option value="User Entry Cabang" <?php if(isset($user['Type_User']) && $user['Type_User']=='User Entry Cabang') echo 'selected'; ?>>User Entry Cabang</option>
+                        <?php
+                          $typeOptions = [
+                            'Approval Regional',
+                            'Approval Sub Regional',
+                            'User Entry Regional',
+                            'User Entry Sub Regional',
+                            'User Entry Cabang'
+                          ];
+                          $currentType = $user['Type_User'] ?? '';
+                          // If current saved value not in options, add it as selected first
+                          if (!empty($currentType) && !in_array($currentType, $typeOptions)) {
+                            echo '<option value="'.htmlspecialchars($currentType).'" selected>'.htmlspecialchars($currentType).' (saved)</option>';
+                          }
+                          foreach ($typeOptions as $opt) {
+                            $sel = ($currentType === $opt) ? 'selected' : '';
+                            echo '<option value="'.htmlspecialchars($opt).'" '.$sel.'>'.htmlspecialchars($opt).'</option>';
+                          }
+                        ?>
                       </select>
                     </div>
                     </div>
@@ -343,17 +414,36 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                         <label for="Cabang">Cabang</label>
                         <select name="Cabang" id="Cabang" class="form-control" required>
                           <?php
-                          $result_cabang = mysqli_query($con, "
-                            SELECT DISTINCT profit_center, profit_center_text 
-                            FROM import_dat 
-                            ORDER BY profit_center
-                          ");
-                          while($row = mysqli_fetch_assoc($result_cabang)) {
-                              // untuk edit user, cek apakah cabang user sama dengan profit_center
-                              $selected = (isset($user['Cabang']) && $user['Cabang'] == $row['profit_center']) ? 'selected' : '';
-                              echo '<option value="'.$row['profit_center'].'" '.$selected.'>'.
-                                    $row['profit_center'].' - '.$row['profit_center_text'].
-                                  '</option>';
+                          // Collect cabang options and mark selected; ensure current user cabang exists in options
+                          $result_cabang = mysqli_query($con, "SELECT DISTINCT profit_center, profit_center_text FROM import_dat ORDER BY profit_center");
+                          $options = [];
+                          $currentCabang = $user['Cabang'] ?? '';
+                          $foundCurrent = false;
+                          while ($row = mysqli_fetch_assoc($result_cabang)) {
+                              $options[] = $row;
+                              if ($currentCabang !== '' && $currentCabang == $row['profit_center']) {
+                                  $foundCurrent = true;
+                              }
+                          }
+
+                          // If current cabang not found among options, try to fetch its text; otherwise add a simple option
+                          if (!$foundCurrent && !empty($currentCabang)) {
+                              $q = mysqli_prepare($con, "SELECT profit_center_text FROM import_dat WHERE profit_center = ? LIMIT 1");
+                              mysqli_stmt_bind_param($q, 's', $currentCabang);
+                              mysqli_stmt_execute($q);
+                              $res = mysqli_stmt_get_result($q);
+                              $rowx = mysqli_fetch_assoc($res);
+                              if ($rowx && !empty($rowx['profit_center_text'])) {
+                                  echo '<option value="'.htmlspecialchars($currentCabang).'" selected>'.htmlspecialchars($currentCabang).' - '.htmlspecialchars($rowx['profit_center_text']).' (saved)</option>';
+                              } else {
+                                  echo '<option value="'.htmlspecialchars($currentCabang).'" selected>'.htmlspecialchars($currentCabang).' (saved)</option>';
+                              }
+                              mysqli_stmt_close($q);
+                          }
+
+                          foreach ($options as $row) {
+                              $selected = ($currentCabang !== '' && $currentCabang == $row['profit_center']) ? 'selected' : '';
+                              echo '<option value="'.htmlspecialchars($row['profit_center']).'" '.$selected.'>'.htmlspecialchars($row['profit_center']).' - '.htmlspecialchars($row['profit_center_text']).'</option>';
                           }
                           ?>
                         </select>

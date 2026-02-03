@@ -54,6 +54,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
     }
 }
 
+// Handle clear preview (hapus table)
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] === 'clear_preview') {
+    // Hapus data preview dari session
+    if (isset($_SESSION['importedData'])) {
+        unset($_SESSION['importedData']);
+    }
+    $importedData = [];
+    $pesan = "✅ Preview data berhasil dihapus";
+    $tipe_pesan = "success";
+}
+
 // Handle file upload
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_FILES['file_excel'])) {
     $file = $_FILES['file_excel'];
@@ -618,20 +629,6 @@ function saveDataToDatabase($con, $importedData) {
           <!--begin::End Navbar Links-->
           <ul class="navbar-nav ms-auto">
             <!--begin::Navbar Search-->
-            <li class="nav-item">
-              <a class="nav-link" data-widget="navbar-search" href="#" role="button">
-                <i class="bi bi-search"></i>
-              </a>
-            </li>
-            <!--end::Navbar Search-->
-            <!--begin::Messages Dropdown Menu-->
-            <!--end::Notifications Dropdown Menu-->
-            <!--begin::Fullscreen Toggle-->
-            <li class="nav-item">
-              <a class="nav-link" href="#" data-lte-toggle="fullscreen">
-                <i data-lte-icon="maximize" class="bi bi-arrows-fullscreen"></i>
-                <i data-lte-icon="minimize" class="bi bi-fullscreen-exit" style="display: none"></i>
-              </a>
             </li>
             <!--end::Fullscreen Toggle-->
             <!--begin::User Menu Dropdown-->
@@ -736,13 +733,18 @@ function saveDataToDatabase($con, $importedData) {
   
             while ($row = mysqli_fetch_assoc($result)) {
                 $namaMenu = trim($row['nama_menu']); 
-                $icon = $iconMap[$namaMenu] ?? 'bi bi-circle'; 
+                $icon = $iconMap[$namaMenu] ?? 'bi bi-circle';
+                
+                $currentPage = basename($_SERVER['PHP_SELF']);
+                $menuFile = $row['menu'].'.php'; 
+                $isActive = ($currentPage === $menuFile) ? 'active' : '';
+
               if ($namaMenu === 'Manajemen Menu') {
                echo '<li class="nav-header"></li>';
               }
                 echo '
                 <li class="nav-item">
-                    <a href="../'.$row['menu'].'/'.$row['menu'].'.php" class="nav-link">
+                    <a href="../'.$row['menu'].'/'.$row['menu'].'.php" class="nav-link '.$isActive.'">
                         <i class="nav-icon '.$icon.'"></i>
                         <p>'.$row['nama_menu'].'</p>
                     </a>
@@ -765,6 +767,12 @@ function saveDataToDatabase($con, $importedData) {
             <!--begin::Row-->
             <div class="row">
               <div class="col-sm-6"><h3 class="mb-0">Import DAT</h3></div>
+              <div class="col-sm-6">
+                <ol class="breadcrumb float-sm-end">
+                  <li class="breadcrumb-item"><a href="../dasbor/dasbor.php">Home</a></li>
+                  <li class="breadcrumb-item active">Import Data Dari Excel</li>
+                </ol>
+              </div>
             </div>
             <!--end::Row-->
           </div>
@@ -894,13 +902,22 @@ function saveDataToDatabase($con, $importedData) {
                     <div class="card-footer clearfix">
                       <div class="row">
                         <div class="col-md-12">
-                          <form id="saveForm" method="POST" style="display:inline;">
-                            <input type="hidden" name="action" value="save_data">
-                            <input type="hidden" id="dataInput" name="data" value="">
-                            <button type="button" class="btn btn-success" onclick="submitSaveForm()">
-                              <i class="bi bi-check-circle"></i> Simpan ke Database
-                            </button>
-                          </form>
+                          <div class="d-flex gap-2">
+                            <form id="saveForm" method="POST" style="display:inline;">
+                              <input type="hidden" name="action" value="save_data">
+                              <input type="hidden" id="dataInput" name="data" value="">
+                              <button type="button" class="btn btn-success" onclick="submitSaveForm()">
+                                <i class="bi bi-check-circle"></i> Simpan ke Database
+                              </button>
+                            </form>
+
+                            <form id="clearForm" method="POST" style="display:inline;">
+                              <input type="hidden" name="action" value="clear_preview">
+                              <button type="button" class="btn btn-danger" id="clearBtn" onclick="confirmClearTable()">
+                                <i class="bi bi-trash"></i> Hapus Table
+                              </button>
+                            </form>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -972,6 +989,27 @@ function saveDataToDatabase($con, $importedData) {
       });
     </script>
     <!--end::OverlayScrollbars Configure-->
+
+    <!-- Confirmation Modal (Bootstrap) -->
+    <div class="modal fade" id="confirmModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header align-items-center">
+            <h5 class="modal-title d-flex align-items-center" id="confirmModalTitle">
+              <span id="confirmModalIcon" class="me-2"></span>
+              <span id="confirmModalTitleText"></span>
+            </h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body" id="confirmModalBody"></div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" id="confirmModalCancelBtn" data-bs-dismiss="modal">Batal</button>
+            <button type="button" class="btn btn-primary" id="confirmModalConfirmBtn">Ya</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- OPTIONAL SCRIPTS -->
     <!-- apexcharts -->
     <script
@@ -1134,7 +1172,7 @@ function saveDataToDatabase($con, $importedData) {
         const tableRows = document.querySelectorAll('.card-body table tbody tr');
         
         if (tableRows.length === 0) {
-          alert('Tidak ada data untuk disimpan');
+          showAlertModal('Info', 'Tidak ada data untuk disimpan', 'info');
           return;
         }
         
@@ -1153,25 +1191,112 @@ function saveDataToDatabase($con, $importedData) {
         });
         
         if (importedData.length === 0) {
-          alert('Tidak ada data valid untuk disimpan');
+          showAlertModal('Info', 'Tidak ada data valid untuk disimpan', 'info');
           return;
         }
         
-        // Show confirmation dialog
+        // Show confirmation dialog using modal
         const message = `Anda yakin ingin menyimpan ${importedData.length} baris data ke database?\n\nData yang sudah ada dengan nomor asset yang sama akan ditolak.`;
-        
-        if (confirm(message)) {
-          // Set hidden input with data
-          document.getElementById('dataInput').value = JSON.stringify(importedData);
-          
-          // Submit form
-          document.getElementById('saveForm').submit();
-        }
+        showConfirmModal('Konfirmasi Simpan', message, { variant: 'success', confirmText: 'Simpan', cancelText: 'Batal' })
+          .then((confirmed) => {
+            if (confirmed) {
+              // Set hidden input with data
+              document.getElementById('dataInput').value = JSON.stringify(importedData);
+              // Submit form
+              document.getElementById('saveForm').submit();
+            }
+          });
       }
 
       // Legacy function for backward compatibility
       function confirmSaveData() {
         submitSaveForm();
+      }
+
+      // Confirm and clear preview table
+      function confirmClearTable() {
+        const tableRows = document.querySelectorAll('.card-body table tbody tr');
+        if (tableRows.length === 0) {
+          showAlertModal('Info', 'Tidak ada data untuk dihapus', 'info');
+          return;
+        }
+        showConfirmModal('Hapus Preview', 'Anda yakin ingin menghapus preview data?', { variant: 'danger', confirmText: 'Hapus', cancelText: 'Batal' })
+          .then((confirmed) => {
+            if (confirmed) {
+              document.getElementById('clearForm').submit();
+            }
+          });
+      }
+
+      // Utility: Promise-based modal confirm using Bootstrap 5
+      function showConfirmModal(title, message, options = {}) {
+        return new Promise((resolve) => {
+          const modalEl = document.getElementById('confirmModal');
+          const modalTitleText = document.getElementById('confirmModalTitleText');
+          const modalBody = document.getElementById('confirmModalBody');
+          const modalIcon = document.getElementById('confirmModalIcon');
+          const confirmBtn = document.getElementById('confirmModalConfirmBtn');
+          const cancelBtn = document.getElementById('confirmModalCancelBtn');
+
+          const variant = options.variant || 'primary';
+          const confirmText = options.confirmText || 'Ya';
+          const cancelText = options.cancelText || 'Batal';
+          const showCancel = (options.showCancel !== false);
+
+          // Set content
+          modalTitleText.textContent = title;
+          modalBody.textContent = message;
+          confirmBtn.textContent = confirmText;
+          cancelBtn.textContent = cancelText;
+          cancelBtn.style.display = showCancel ? '' : 'none';
+
+          // set icon / color classes
+          let iconHtml = '';
+          confirmBtn.className = 'btn ' + (variant === 'danger' ? 'btn-danger' : variant === 'success' ? 'btn-success' : variant === 'warning' ? 'btn-warning' : 'btn-primary');
+
+          if (variant === 'danger') {
+            iconHtml = '<i class="bi bi-trash-fill text-danger"></i>';
+          } else if (variant === 'success') {
+            iconHtml = '<i class="bi bi-check-circle-fill text-success"></i>';
+          } else if (variant === 'warning') {
+            iconHtml = '<i class="bi bi-exclamation-triangle-fill text-warning"></i>';
+          } else {
+            iconHtml = '<i class="bi bi-question-circle-fill text-primary"></i>';
+          }
+          modalIcon.innerHTML = iconHtml;
+
+          const bsModal = new bootstrap.Modal(modalEl, { backdrop: 'static', keyboard: false });
+
+          const confirmHandler = () => {
+            cleanup();
+            resolve(true);
+          };
+          const cancelHandler = () => {
+            cleanup();
+            resolve(false);
+          };
+          const hideHandler = () => {
+            cleanup();
+            resolve(false);
+          };
+          function cleanup() {
+            confirmBtn.removeEventListener('click', confirmHandler);
+            cancelBtn.removeEventListener('click', cancelHandler);
+            modalEl.removeEventListener('hidden.bs.modal', hideHandler);
+            try { bsModal.hide(); } catch (e) {}
+          }
+
+          confirmBtn.addEventListener('click', confirmHandler);
+          cancelBtn.addEventListener('click', cancelHandler);
+          modalEl.addEventListener('hidden.bs.modal', hideHandler);
+
+          bsModal.show();
+        });
+      }
+
+      function showAlertModal(title, message, variant = 'info') {
+        // show as modal with only OK
+        return showConfirmModal(title, message, { variant: variant, showCancel: false, confirmText: 'OK' });
       }
     </script>
     <!--end::Script-->

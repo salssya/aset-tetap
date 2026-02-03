@@ -20,17 +20,47 @@ if (isset($_POST["login"])) {
 if (mysqli_num_rows($check_user) > 0) {
     $row = mysqli_fetch_assoc($check_user);
 
-    if ($row['Password'] === $password) {
+    // Verify password (supports hashed passwords and legacy plaintext)
+    $isPasswordValid = false;
+    if (!empty($row['Password'])) {
+        if (password_verify($password, $row['Password'])) {
+            $isPasswordValid = true;
+        } elseif ($password === $row['Password']) {
+            // fallback for plain-text stored passwords
+            $isPasswordValid = true;
+        }
+    }
+
+    if ($isPasswordValid) {
         // login sukses
         $_SESSION["nipp"]  = $row['NIPP'];
         $_SESSION["name"]  = $row['Nama'];
         $_SESSION["email"] = $row['Email'];
+        // set Type_User and Cabang if available
+        $_SESSION["Type_User"] = isset($row['Type_User']) ? $row['Type_User'] : '';
+        $_SESSION["Cabang"]    = isset($row['Cabang']) ? $row['Cabang'] : '';
+        $_SESSION["profit_center_text"] = '';
 
+        // Try to populate profit_center_text from import_dat if Cabang available
+        if (!empty($_SESSION["Cabang"])) {
+            $stmt = mysqli_prepare($con, "SELECT profit_center_text FROM import_dat WHERE profit_center = ? LIMIT 1");
+            if ($stmt) {
+                mysqli_stmt_bind_param($stmt, 's', $_SESSION["Cabang"]);
+                mysqli_stmt_execute($stmt);
+                $res = mysqli_stmt_get_result($stmt);
+                if ($r = mysqli_fetch_assoc($res)) {
+                    $_SESSION["profit_center_text"] = $r['profit_center_text'];
+                }
+                mysqli_stmt_close($stmt);
+            }
+        }
+
+        // Use json_encode to safely inject strings into JS
         echo "
         <script>
-            sessionStorage.setItem('nipp', '" . $row['NIPP'] . "');
-            sessionStorage.setItem('name', '" . $row['Nama'] . "');
-            sessionStorage.setItem('email', '" . $row['Email'] . "');
+            sessionStorage.setItem('nipp', " . json_encode($row['NIPP']) . ");
+            sessionStorage.setItem('name', " . json_encode($row['Nama']) . ");
+            sessionStorage.setItem('email', " . json_encode($row['Email']) . ");
             window.location = '../../web_aset/dasbor/dasbor.php';
         </script>";
     } else {

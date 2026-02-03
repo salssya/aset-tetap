@@ -370,7 +370,7 @@ function saveDataToDatabase($con, $importedData) {
     $create_table_sql = "CREATE TABLE IF NOT EXISTS import_dat (
         id INT AUTO_INCREMENT PRIMARY KEY,
         nomor_asset_utama VARCHAR(50),
-        subreg VARCHAR(50),
+        subreg varchar(50),
         profit_center VARCHAR(20),
         profit_center_text VARCHAR(100),
         cost_center_baru VARCHAR(20),
@@ -380,6 +380,9 @@ function saveDataToDatabase($con, $importedData) {
         periode_bulan VARCHAR(20),
         tahun_buku VARCHAR(4),
         nomor_asset_asal VARCHAR(50),
+        nomor_asset VARCHAR(50),
+        sub_number VARCHAR(50),
+        nomor_asset_sub_num VARCHAR(50),
         gl_account VARCHAR(20),
         asset_class VARCHAR(20),
         asset_class_name VARCHAR(100),
@@ -396,10 +399,10 @@ function saveDataToDatabase($con, $importedData) {
         nilai_perolehan_awal VARCHAR(50),
         nilai_residu_persen VARCHAR(20),
         nilai_residu_rp VARCHAR(50),
-        nilai_perolehan_sd VARCHAR(50),
+        nilai_perolehan_sd BIGINT,
         adjusment_nilai_perolehan VARCHAR(50),
         nilai_buku_awal VARCHAR(50),
-        nilai_buku_sd VARCHAR(50),
+        nilai_buku_sd BIGINT,
         penyusutan_bulan VARCHAR(50),
         penyusutan_sd VARCHAR(50),
         penyusutan_tahun_lalu VARCHAR(50),
@@ -408,10 +411,15 @@ function saveDataToDatabase($con, $importedData) {
         adjusment_akm_penyusutan VARCHAR(50),
         penghapusan VARCHAR(20),
         asset_shutdown VARCHAR(20),
+        akumulasi_penyusutan BIGINT,
+        additional_description VARCHAR(200),
+        serial_number VARCHAR(25),
+        alamat VARCHAR(500),
+        gl_account_exp VARCHAR(25),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         imported_by VARCHAR(20),
-        UNIQUE KEY uk_nomor_asset (nomor_asset)
+        UNIQUE KEY uk_nomor_asset (nomor_asset_utama)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
     
     if (!mysqli_query($con, $create_table_sql)) {
@@ -440,6 +448,9 @@ function saveDataToDatabase($con, $importedData) {
         'periode_bulan',
         'tahun_buku',
         'nomor_asset_asal',
+        'nomor_asset',
+        'sub_number',
+        'nomor_asset_sub_num',
         'gl_account',
         'asset_class',
         'asset_class_name',
@@ -647,22 +658,11 @@ function saveDataToDatabase($con, $importedData) {
           <!--end::Start Navbar Links-->
           <!--begin::End Navbar Links-->
           <ul class="navbar-nav ms-auto">
-            <!--begin::Navbar Search-->
-            <li class="nav-item">
-              <a class="nav-link" data-widget="navbar-search" href="#" role="button">
-                <i class="bi bi-search"></i>
-              </a>
-            </li>
+            <!--begin::Navbar Search--> 
             <!--end::Navbar Search-->
             <!--begin::Messages Dropdown Menu-->
             <!--end::Notifications Dropdown Menu-->
             <!--begin::Fullscreen Toggle-->
-            <li class="nav-item">
-              <a class="nav-link" href="#" data-lte-toggle="fullscreen">
-                <i data-lte-icon="maximize" class="bi bi-arrows-fullscreen"></i>
-                <i data-lte-icon="minimize" class="bi bi-fullscreen-exit" style="display: none"></i>
-              </a>
-            </li>
             <!--end::Fullscreen Toggle-->
             <!--begin::User Menu Dropdown-->
             <li class="nav-item dropdown user-menu">
@@ -803,7 +803,7 @@ function saveDataToDatabase($con, $importedData) {
               <div class="col-sm-6">
                 <ol class="breadcrumb float-sm-end">
                   <li class="breadcrumb-item"><a href="../dasbor/dasbor.php">Home</a></li>
-                  <li class="breadcrumb-item active">Hasil Import DAT</li>
+                  <li class="breadcrumb-item active">Daftar Aset Tetap</li>
                 </ol>
               </div>
             </div>
@@ -841,7 +841,7 @@ function saveDataToDatabase($con, $importedData) {
                             // Format tanggal ke format Indonesia
                             $dateTime = new DateTime($lastImportDate);
                             $formattedDate = $dateTime->format('d M Y H:i:s');
-                            echo '<span style="color: #dc3545; font-weight: bold;">Diimport: ' . htmlspecialchars($formattedDate) . '</span>';
+                            echo '<span style="color: #dc3545; ms-auto; font-weight: bold;">Diimport: ' . htmlspecialchars($formattedDate) . '</span>';
                           }
                         }
                         ?>

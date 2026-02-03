@@ -249,9 +249,42 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
               <?php
 
               // Filter criteria
-              $filterCondition = "WHERE nilai_perolehan_sd <> 0 AND asset_class_name NOT LIKE '%AUC%'";
+              $filterConditionBase = "WHERE nilai_perolehan_sd <> 0 AND asset_class_name NOT LIKE '%AUC%'";
+              $filterCondition = $filterConditionBase;
 
-              // Get statistics from database
+              if (isset($_SESSION['Type_User']) && stripos($_SESSION['Type_User'], 'Sub') !== false) {
+                  $userCabang = mysqli_real_escape_string($con, $_SESSION['Cabang'] ?? '');
+                  $determinedSubreg = '';
+
+                  if ($userCabang !== '') {
+                      $stmt = mysqli_prepare($con, "SELECT DISTINCT subreg FROM import_dat WHERE profit_center = ? AND TRIM(subreg) <> '' LIMIT 1");
+                      if ($stmt) {
+                          mysqli_stmt_bind_param($stmt, 's', $userCabang);
+                          mysqli_stmt_execute($stmt);
+                          $res = mysqli_stmt_get_result($stmt);
+                          if ($r = mysqli_fetch_assoc($res)) {
+                              $determinedSubreg = $r['subreg'];
+                          }
+                          mysqli_stmt_close($stmt);
+                      }
+                  }
+
+                  // Fallback: if session contains a subreg value use it
+                  if (empty($determinedSubreg) && !empty($_SESSION['subreg'])) {
+                      $determinedSubreg = $_SESSION['subreg'];
+                  }
+
+                  // Apply filter if we were able to determine a subreg
+                  if (!empty($determinedSubreg)) {
+                      $filterCondition .= " AND subreg = '" . mysqli_real_escape_string($con, $determinedSubreg) . "'";
+                  }
+              } elseif (isset($_SESSION['Type_User']) && stripos($_SESSION['Type_User'], 'Cabang') !== false) {
+                  $userCabang = mysqli_real_escape_string($con, $_SESSION['Cabang'] ?? '');
+                  if ($userCabang !== '') {
+                      $filterCondition .= " AND profit_center = '" . $userCabang . "'";
+                  }
+              }
+
               $totalQuery = "SELECT COUNT(*) as total FROM import_dat " . $filterCondition;
               $totalResult = mysqli_query($con, $totalQuery);
               if (!$totalResult) {
@@ -402,7 +435,7 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                                   "CAST(SUM(CAST(COALESCE(akumulasi_penyusutan,0) AS DECIMAL(20,2))) AS DECIMAL(20,2)) as total_akumulasi_penyusutan, " .
                                   "CAST(SUM(CAST(COALESCE(penyusutan_bulan,0) AS DECIMAL(20,2))) AS DECIMAL(20,2)) as total_penyusutan_bulan " .
                                   "FROM import_dat " .
-                                  "WHERE nilai_perolehan_sd <> 0 AND asset_class_name NOT LIKE '%AUC%' " .
+                                  $filterCondition . " " .
                                   "GROUP BY asset_class_name " .
                                   "ORDER BY total_nilai DESC";
 
@@ -649,7 +682,7 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
       $statusQuery = "SELECT asset_class_name, COUNT(*) as count, 
                       CAST(SUM(CAST(COALESCE(nilai_perolehan_sd, 0) AS DECIMAL(20,2))) AS DECIMAL(20,2)) as total_nilai
                       FROM import_dat 
-                      WHERE nilai_perolehan_sd <> 0 AND asset_class_name NOT LIKE '%AUC%'
+                      " . $filterCondition . " 
                       GROUP BY asset_class_name 
                       ORDER BY total_nilai DESC";
       $statusResult = mysqli_query($con, $statusQuery);
@@ -714,7 +747,7 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
           },
         },
         colors: [
-          '#0d6efd', '#20c997', '#ffc107', '#dc3545', '#17a2b8', '#6c757d', 
+          '#1666df', '#20c997', '#ffc107', '#dc3545', '#17a2b8', '#6c757d', 
           '#198754', '#fd7e14', '#0dcaf0', '#6f42c1', '#e83e8c', '#ff6b6b',
           '#00bcd4', '#673ab7', '#ff5722', '#795548', '#9c27b0', '#2196f3',
           '#4caf50', '#cddc39', '#ffeb3b', '#ff9800', '#e91e63', '#009688',
