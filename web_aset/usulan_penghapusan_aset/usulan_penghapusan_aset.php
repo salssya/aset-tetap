@@ -50,6 +50,39 @@ while ($row = $result_draft->fetch_assoc()) {
 }
 $stmt_draft->close();
 
+//Query untuk data yang perlu dilengkapi dokumen (untuk tab "Lengkapi Dokumen")
+$userNipp = $_SESSION['nipp'];
+$query_lengkapi = "SELECT up.*, 
+                   id.keterangan_asset as nama_aset, 
+                   id.asset_class_name as kategori_aset,
+                   id.subreg,
+                   id.profit_center_text,
+                   id.masa_manfaat as umur_ekonomis,
+                   id.sisa_manfaat as sisa_umur_ekonomis,
+                   id.tgl_perolehan,
+                   id.nilai_buku_sd as nilai_buku,
+                   id.nilai_perolehan_sd as nilai_perolehan
+                   FROM usulan_penghapusan up 
+                   LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama 
+                   WHERE up.created_by = ? 
+                   AND up.status IN ('lengkapi_dokumen', 'dokumen_lengkap') 
+                   ORDER BY up.created_at DESC";
+$stmt_lengkapi = $con->prepare($query_lengkapi);
+$stmt_lengkapi->bind_param("s", $userNipp);
+$stmt_lengkapi->execute();
+$result_lengkapi = $stmt_lengkapi->get_result();
+
+$lengkapi_data = [];
+$lengkapi_asset_numbers = []; // Array untuk auto-centang checkbox
+while ($row = $result_lengkapi->fetch_assoc()) {
+    // Hilangkan kode "AUC-" dari nama_aset dan kategori_aset
+    $row['nama_aset'] = str_replace('AUC-', '', $row['nama_aset']);
+    $row['kategori_aset'] = str_replace('AUC-', '', $row['kategori_aset']);
+    
+    $lengkapi_data[] = $row;
+    $lengkapi_asset_numbers[] = $row['nomor_asset_utama']; // Simpan nomor aset
+}
+$stmt_lengkapi->close();
 // Handle save to database dengan status draft/submit
 $pesan = "";
 $tipe_pesan = "";
@@ -62,17 +95,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
         $pesan = "Tidak ada data yang dipilih";
         $tipe_pesan = "warning";
     } else {
-        $selected_ids = json_decode($_POST['selected_items'], true);
+        $selected_data = json_decode($_POST['selected_items'], true);
         
-        // Validasi bahwa selected_ids adalah array dan tidak kosong
-        if (is_array($selected_ids) && count($selected_ids) > 0) {
-            $saved_count = saveSelectedAssets($con, $selected_ids, $is_submit, $_SESSION['nipp'], $userProfitCenter);
+        // Validasi bahwa selected_data adalah array dan tidak kosong
+        if (is_array($selected_data) && count($selected_data) > 0) {
+            $saved_count = saveSelectedAssets($con, $selected_data, $is_submit, $_SESSION['nipp'], $userProfitCenter);
 
             if ($saved_count > 0) {
                 if ($is_submit) {
-                    // Redirect ke Lengkapi Dokumen SEGERA setelah berhasil save
-                    $_SESSION['success_message'] = "Berhasil menyimpan " . $saved_count . " aset untuk diajukan";
-                    header("Location: ../usulan_penghapusan_aset/lengkapi_dokumen.php");
+                    // Redirect ke tab Lengkapi Dokumen di halaman yang sama
+                    $_SESSION['success_message'] = "✅ Berhasil mengusulkan " . $saved_count . " aset untuk penghapusan";
+                    header("Location: " . $_SERVER['PHP_SELF'] . "#dokumen");
                     exit();
                 } else {
                     // Untuk draft, reload halaman dengan pesan sukses
@@ -98,19 +131,205 @@ if (isset($_SESSION['success_message'])) {
     unset($_SESSION['success_message']);
 }
 
+// Tampilkan pesan warning dari session jika ada
+if (isset($_SESSION['warning_message'])) {
+    $pesan = $_SESSION['warning_message'];
+    $tipe_pesan = "warning";
+    unset($_SESSION['warning_message']);
+}
+
+// Handle form lengkapi dokumen submit
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] === 'lengkapi_dokumen_submit') {
+    $usulan_id = intval($_POST['usulan_id']);
+    $jumlah_aset = intval($_POST['jumlah_aset']);
+    $mekanisme_penghapusan = $_POST['mekanisme_penghapusan'];
+    $fisik_aset = $_POST['fisik_aset'];
+    $justifikasi_alasan = $_POST['justifikasi_alasan'];
+    $kajian_hukum = $_POST['kajian_hukum'];
+    $kajian_ekonomis = $_POST['kajian_ekonomis'];
+    $kajian_risiko = $_POST['kajian_risiko'];
+    
+    // Handle file upload foto
+    $foto_path = null;
+    if (isset($_FILES['foto']) && $_FILES['foto']['error'] === UPLOAD_ERR_OK) {
+        $file = $_FILES['foto'];
+        $upload_dir = '../../uploads/foto_aset/';
+        
+        // Create directory if not exists
+        if (!file_exists($upload_dir)) {
+            mkdir($upload_dir, 0777, true);
+        }
+        
+        // Validate file size (max 5MB)
+        if ($file['size'] > 5 * 1024 * 1024) {
+            $pesan = "Ukuran foto terlalu besar. Maksimal 5MB.";
+            $tipe_pesan = "danger";
+        } else {
+            // Validate file type
+            $allowed_types = ['image/jpeg', 'image/jpg', 'image/png'];
+            $finfo = finfo_open(FILEINFO_MIME_TYPE);
+            $mime_type = finfo_file($finfo, $file['tmp_name']);
+            finfo_close($finfo);
+            
+            if (!in_array($mime_type, $allowed_types)) {
+                $pesan = "Tipe file tidak didukung. Gunakan JPG, JPEG, atau PNG.";
+                $tipe_pesan = "danger";
+            } else {
+                $file_ext = pathinfo($file['name'], PATHINFO_EXTENSION);
+                $new_filename = 'foto_' . $usulan_id . '_' . time() . '.' . $file_ext;
+                $upload_path = $upload_dir . $new_filename;
+                
+                if (move_uploaded_file($file['tmp_name'], $upload_path)) {
+                    $foto_path = $upload_path;
+                } else {
+                    $pesan = "Gagal mengupload foto.";
+                    $tipe_pesan = "danger";
+                }
+            }
+        }
+    }
+    
+    // Update database jika tidak ada error upload
+    if ($tipe_pesan !== 'danger') {
+        $stmt = $con->prepare("UPDATE usulan_penghapusan SET 
+            jumlah_aset = ?,
+            mekanisme_penghapusan = ?,
+            fisik_aset = ?,
+            justifikasi_alasan = ?,
+            kajian_hukum = ?,
+            kajian_ekonomis = ?,
+            kajian_risiko = ?,
+            foto_path = ?,
+            status = 'dokumen_lengkap',
+            updated_at = NOW()
+            WHERE id = ?");
+        
+        $stmt->bind_param("isssssssi", 
+            $jumlah_aset, 
+            $mekanisme_penghapusan, 
+            $fisik_aset,
+            $justifikasi_alasan, 
+            $kajian_hukum, 
+            $kajian_ekonomis, 
+            $kajian_risiko,
+            $foto_path,
+            $usulan_id
+        );
+        
+        if ($stmt->execute()) {
+            $_SESSION['show_success_modal'] = true;
+            header("Location: " . $_SERVER['PHP_SELF'] . "#dokumen");
+            exit();
+            exit();
+        } else {
+            $pesan = "Gagal menyimpan data: " . $stmt->error;
+            $tipe_pesan = "danger";
+        }
+        $stmt->close();
+    }
+}
+
 // Handle hapus draft
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && $_POST['action'] === 'delete_draft') {
     $draft_id = intval($_POST['draft_id']);
     $del = $con->prepare("DELETE FROM usulan_penghapusan WHERE id = ? AND status = 'draft' AND created_by = ?");
     $del->bind_param("is", $draft_id, $_SESSION['nipp']);
     if ($del->execute() && $del->affected_rows > 0) {
-        $pesan = "✅ Draft berhasil dihapus.";
-        $tipe_pesan = "success";
+        $_SESSION['success_message'] = "✅ Draft usulan berhasil dibatalkan.";
     } else {
-        $pesan = "⚠️ Gagal menghapus draft.";
-        $tipe_pesan = "warning";
+        $_SESSION['warning_message'] = "⚠️ Gagal membatalkan draft.";
     }
     $del->close();
+    header("Location: " . $_SERVER['PHP_SELF']);
+    exit();
+}
+
+// Handle cancel draft dari tombol di tabel (sama dengan delete_draft tapi dengan pesan berbeda)
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] === 'cancel_draft') {
+    $draft_id = intval($_POST['draft_id']);
+    $del = $con->prepare("DELETE FROM usulan_penghapusan WHERE id = ? AND status = 'draft' AND created_by = ?");
+    $del->bind_param("is", $draft_id, $_SESSION['nipp']);
+    if ($del->execute() && $del->affected_rows > 0) {
+        $_SESSION['success_message'] = "✅ Draft usulan berhasil dibatalkan.";
+    } else {
+        $_SESSION['warning_message'] = "⚠️ Gagal membatalkan draft.";
+    }
+    $del->close();
+    header("Location: " . $_SERVER['PHP_SELF']);
+    exit();
+}
+
+// Handle hapus usulan dari tab Lengkapi Dokumen
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] === 'delete_usulan') {
+    $usulan_id = intval($_POST['usulan_id']);
+    $del = $con->prepare("DELETE FROM usulan_penghapusan 
+                          WHERE id = ? 
+                          AND created_by = ? 
+                          AND status IN ('lengkapi_dokumen', 'dokumen_lengkap')");
+    $del->bind_param("is", $usulan_id, $_SESSION['nipp']);
+    
+    if ($del->execute() && $del->affected_rows > 0) {
+        $_SESSION['success_message'] = "✅ Usulan berhasil dihapus.";
+    } else {
+        $_SESSION['success_message'] = "⚠️ Gagal menghapus usulan.";
+    }
+    $del->close();
+    
+    header("Location: " . $_SERVER['PHP_SELF']);
+    exit();
+}
+
+// Handle update dropdown field (mekanisme penghapusan / fisik aset)
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] === 'update_dropdown_field') {
+    $asset_id = intval($_POST['asset_id']);
+    $nomor_aset = $_POST['nomor_aset'];
+    $field_type = $_POST['field_type']; // 'mekanisme' atau 'fisik'
+    $value = $_POST['value'];
+    
+    // Cek apakah sudah ada record di usulan_penghapusan untuk aset ini
+    $check = $con->prepare("SELECT id FROM usulan_penghapusan WHERE nomor_asset_utama = ? AND created_by = ?");
+    $check->bind_param("ss", $nomor_aset, $_SESSION['nipp']);
+    $check->execute();
+    $result = $check->get_result();
+    
+    if ($result->num_rows > 0) {
+        // Update existing record
+        $row = $result->fetch_assoc();
+        $usulan_id = $row['id'];
+        
+        if ($field_type === 'mekanisme') {
+            $upd = $con->prepare("UPDATE usulan_penghapusan SET mekanisme_penghapusan = ?, updated_at = NOW() WHERE id = ?");
+            $upd->bind_param("si", $value, $usulan_id);
+        } else if ($field_type === 'fisik') {
+            $upd = $con->prepare("UPDATE usulan_penghapusan SET fisik_aset = ?, updated_at = NOW() WHERE id = ?");
+            $upd->bind_param("si", $value, $usulan_id);
+        }
+        
+        if ($upd->execute()) {
+            echo json_encode(['success' => true, 'message' => 'Updated']);
+        } else {
+            echo json_encode(['success' => false, 'message' => 'Failed to update']);
+        }
+        $upd->close();
+    } else {
+        // Create new draft record
+        $userProfitCenter = isset($_SESSION['Cabang']) ? $_SESSION['Cabang'] : '';
+        $ins = $con->prepare("INSERT INTO usulan_penghapusan (nomor_asset_utama, profit_center, status, created_by, created_at, updated_at, mekanisme_penghapusan, fisik_aset) VALUES (?, ?, 'draft', ?, NOW(), NOW(), ?, ?)");
+        
+        $mekanisme_val = ($field_type === 'mekanisme') ? $value : '';
+        $fisik_val = ($field_type === 'fisik') ? $value : '';
+        
+        $ins->bind_param("sssss", $nomor_aset, $userProfitCenter, $_SESSION['nipp'], $mekanisme_val, $fisik_val);
+        
+        if ($ins->execute()) {
+            echo json_encode(['success' => true, 'message' => 'Created']);
+        } else {
+            echo json_encode(['success' => false, 'message' => 'Failed to create']);
+        }
+        $ins->close();
+    }
+    $check->close();
+    exit();
 }
 
 // Handle submit dari tab draft (ubah status draft → submitted)
@@ -151,7 +370,7 @@ while ($row = $dr->fetch_assoc()) {
 $dq->close();
 
 // Function untuk simpan aset
-function saveSelectedAssets($con, $selected_ids, $is_submit, $created_by, $userProfitCenter) {
+function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $userProfitCenter) {
     $saved_count = 0;
     // Status: draft (simpan draft) atau lengkapi_dokumen (submit ke lengkapi dokumen)
     $status = $is_submit ? 'lengkapi_dokumen' : 'draft';
@@ -169,14 +388,21 @@ function saveSelectedAssets($con, $selected_ids, $is_submit, $created_by, $userP
         tgl_perolehan,
         nilai_buku,
         nilai_perolehan,
+        mekanisme_penghapusan,
+        fisik_aset,
         status,
         created_at,
         created_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)");
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)");
 
     $tahun_usulan = date('Y'); 
 
-    foreach ($selected_ids as $asset_id) {
+    foreach ($selected_data as $asset_data) {
+        // Extract data dari object: {id, nomor_aset, mekanisme, fisik}
+        $asset_id = isset($asset_data['id']) ? $asset_data['id'] : $asset_data; // Backward compatibility
+        $mekanisme_pilihan = isset($asset_data['mekanisme']) && !empty($asset_data['mekanisme']) ? $asset_data['mekanisme'] : null;
+        $fisik_pilihan = isset($asset_data['fisik']) && !empty($asset_data['fisik']) ? $asset_data['fisik'] : null;
+        
         $query = "SELECT * FROM import_dat WHERE id = ? AND profit_center = ?";
         $get_stmt = $con->prepare($query);
         $get_stmt->bind_param("is", $asset_id, $userProfitCenter);
@@ -185,8 +411,8 @@ function saveSelectedAssets($con, $selected_ids, $is_submit, $created_by, $userP
 
         if ($row = $result->fetch_assoc()) {
             // Cek apakah aset sudah ada di database
-            $check = $con->prepare("SELECT id, status FROM usulan_penghapusan WHERE nomor_asset_utama = ? AND profit_center = ?");
-            $check->bind_param("ss", $row['nomor_asset_utama'], $userProfitCenter);
+            $check = $con->prepare("SELECT id, status FROM usulan_penghapusan WHERE nomor_asset_utama = ? AND created_by = ?");
+            $check->bind_param("ss", $row['nomor_asset_utama'], $created_by);
             $check->execute();
             $check_result = $check->get_result();
 
@@ -211,8 +437,8 @@ function saveSelectedAssets($con, $selected_ids, $is_submit, $created_by, $userP
             }
             $check->close();
 
-            // Aset belum ada di database → INSERT baru
-            $stmt->bind_param("issssssiisddss",
+            // Aset belum ada di database → INSERT baru dengan mekanisme dan fisik
+            $stmt->bind_param("issssssiisddssss",
                 $tahun_usulan,
                 $row['nomor_asset_utama'],
                 $row['subreg'],
@@ -223,8 +449,10 @@ function saveSelectedAssets($con, $selected_ids, $is_submit, $created_by, $userP
                 $row['masa_manfaat'],          
                 $row['sisa_manfaat'],         
                 $row['tgl_perolehan'],
-                $row['nilai_buku_sd'],          // integer (i)
-                $row['nilai_perolehan_sd'],     // integer (i)
+                $row['nilai_buku_sd'],          
+                $row['nilai_perolehan_sd'],
+                $mekanisme_pilihan,  // Dari dropdown
+                $fisik_pilihan,      // Dari dropdown     
                 $status,
                 $created_by
             );
@@ -518,7 +746,7 @@ function saveSelectedAssets($con, $selected_ids, $is_submit, $created_by, $userP
           <div class="container-fluid">
             <!--begin::Row-->
             <div class="row">
-              <div class="col-sm-6"><h3 class="mb-0">Usulan Penghapusan Aset</h3></div>
+              <div class="col-sm-6"><h3 class="mb-0">Usulan Penghapusan Aset Tetap</h3></div>
               <div class="col-sm-6">
                 <ol class="breadcrumb float-sm-end">
                   <li class="breadcrumb-item"><a href="../dasbor/dasbor.php">Home</a></li>
@@ -533,20 +761,29 @@ function saveSelectedAssets($con, $selected_ids, $is_submit, $created_by, $userP
         <div class="app-content">
           <!--begin::Container-->
           <div class="container-fluid">
+            
+            <!-- Alert Pesan Global -->
+            <?php if ($pesan): ?>
+            <div class="alert alert-<?= $tipe_pesan ?> alert-dismissible fade show" role="alert">
+                <?= $pesan ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+            <?php endif; ?>
+
             <!--begin::Row-->
                   <!--begin::Header-->
                   <!--end::Header-->
                   <!--begin::Form-->
                   <!--begin::Header-->
                   <div class="row">
-              <div class="col-12">
-                <div class="card">
-                  <div class="card-header">
-                    <h3 class="card-title">Daftar Aset untuk Usulan Penghapusan</h3>
-                  </div>
-                  <!-- /.card-header -->
-                  <div class="card-body">
-                    
+                    <div class="col-12">
+                      <div class="card">
+                        <div class="card-body">
+                          <p class="text-muted mb-3" id="infoText">
+                            <i class="bi bi-info-circle me-1"></i>
+                            <span id="infoTextContent">Pilih aset yang akan diusulkan untuk penghapusan</span>
+                          </p>
+
                     <!-- Nav tabs -->
                     <ul class="nav nav-tabs mb-3" id="myTab" role="tablist">
                       <li class="nav-item" role="presentation">
@@ -556,12 +793,8 @@ function saveSelectedAssets($con, $selected_ids, $is_submit, $created_by, $userP
                       </li>
                       <li class="nav-item" role="presentation">
                         <button class="nav-link" id="lengkapi-dokumen-tab" data-bs-toggle="tab" data-bs-target="#dokumen" type="button" role="tab" aria-controls="dokumen" aria-selected="false">
-                          <i class="bi bi-file-earmark-check me-2"></i>Lengkapi Dokumen
-                        </button>
-                      </li>
-                      <li class="nav-item" role="presentation">
-                        <button class="nav-link" id="summary-tab" data-bs-toggle="tab" data-bs-target="#summary" type="button" role="tab" aria-controls="summary" aria-selected="false">
-                          <i class="bi bi-clipboard-data me-2"></i>Summary
+                          <i class="bi bi-file-earmark-check me-2"></i>Lengkapi Data Aset
+                          
                         </button>
                       </li>
                     </ul>
@@ -576,7 +809,10 @@ function saveSelectedAssets($con, $selected_ids, $is_submit, $created_by, $userP
                               <table id="myTable" class="display nowrap table table-striped table-sm w-100">
                                 <thead>
                                   <tr>
+                                    <th style="width:40px;">Action</th>
                                     <th style="width:50px;">Pilih</th>
+                                    <th>Mekanisme Penghapusan</th>
+                                    <th>Fisik Aset</th>
                                     <th>Nomor Aset</th>
                                     <th>SubReg</th>
                                     <th>Profit Center</th>
@@ -595,36 +831,83 @@ function saveSelectedAssets($con, $selected_ids, $is_submit, $created_by, $userP
                                     // Ambil profit center dari session
                                     $userProfitCenter = isset($_SESSION['Cabang']) ? $_SESSION['Cabang'] : '';
 
-                                    // Query hanya untuk profit center user
-                                    $query = "SELECT * FROM import_dat WHERE profit_center = ?";
+                                    // Query dengan LEFT JOIN ke usulan_penghapusan untuk mendapatkan mekanisme dan fisik aset
+                                    $query = "SELECT id.*, 
+                                              up.id as draft_id,
+                                              up.mekanisme_penghapusan, 
+                                              up.fisik_aset,
+                                              up.status as draft_status
+                                              FROM import_dat id 
+                                              LEFT JOIN usulan_penghapusan up ON id.nomor_asset_utama = up.nomor_asset_utama 
+                                              WHERE id.profit_center = ?
+                                              ORDER BY id.nomor_asset_utama ASC";
                                     $stmt = $con->prepare($query);
                                     $stmt->bind_param("s", $userProfitCenter);
                                     $stmt->execute();
                                     $result = $stmt->get_result();
 
                                     if (!$result) {
-                                      echo '<tr><td colspan="11">Error: ' . mysqli_error($con) . '</td></tr>';
+                                      echo '<tr><td colspan="14">Error: ' . mysqli_error($con) . '</td></tr>';
                                     } elseif ($result->num_rows == 0) {
-                                      echo '<tr><td colspan="11" class="text-center">Tidak ada data aset</td></tr>';
+                                      echo '<tr><td colspan="14" class="text-center">Tidak ada data aset</td></tr>';
                                     } else {
                                      while ($row = $result->fetch_assoc()) {
-                                        // Auto-check jika aset ini ada di draft
+                                        // Auto-check jika aset ini ada di draft ATAU sudah di-submit
                                         $isInDraft = in_array($row['nomor_asset_utama'], $draft_asset_numbers);
-                                        $checkedAttr = $isInDraft ? ' checked' : '';
+                                        $isSubmitted = in_array($row['nomor_asset_utama'], $lengkapi_asset_numbers);
+                                        $checkedAttr = ($isInDraft || $isSubmitted) ? ' checked' : '';
+                                        $disabledAttr = $isSubmitted ? ' disabled title="Aset sudah di-submit"' : '';
                                         
                                         // Format nilai currency (Rupiah)
                                         $nilai_buku = isset($row['nilai_buku_sd']) ? 'Rp ' . number_format($row['nilai_buku_sd'], 0, ',', '.') : '-';
                                         $nilai_perolehan = isset($row['nilai_perolehan_sd']) ? 'Rp ' . number_format($row['nilai_perolehan_sd'], 0, ',', '.') : '-';
                                         
+                                        // Hilangkan kode "AUC-" dari asset_class_name dan keterangan_asset
+                                        $kategori_aset = str_replace('AUC-', '', $row['asset_class_name']);
+                                        $nama_aset = str_replace('AUC-', '', $row['keterangan_asset']);
+                                        
+                                        // Tampilkan mekanisme dan fisik aset jika sudah ada usulan
+                                        $mekanisme = !empty($row['mekanisme_penghapusan']) ? htmlspecialchars($row['mekanisme_penghapusan']) : '-';
+                                        $fisik = !empty($row['fisik_aset']) ? htmlspecialchars($row['fisik_aset']) : '-';
+                                        
+                                        // Tombol hapus draft (hanya tampil jika status = 'draft')
+                                        $hapusDraftBtn = '';
+                                        if ($isInDraft && !empty($row['draft_id']) && $row['draft_status'] === 'draft') {
+                                            $hapusDraftBtn = '<button type="button" class="btn btn-sm btn-outline-danger" 
+                                                onclick="confirmCancelDraft('.intval($row['draft_id']).', \''.htmlspecialchars(addslashes($row['nomor_asset_utama'])).'\', \''.htmlspecialchars(addslashes($nama_aset)).'\')" 
+                                                title="Batalkan draft usulan ini">
+                                                <i class="bi bi-x-circle"></i>
+                                            </button>';
+                                        }
+                                        
+                                        // Dropdown Mekanisme Penghapusan
+                                        $selectedMekanisme = !empty($row['mekanisme_penghapusan']) ? $row['mekanisme_penghapusan'] : '';
+                                        $mekanismeDropdown = '<select class="form-select form-select-sm mekanisme-dropdown" data-asset-id="'.htmlspecialchars($row['id']).'" data-nomor-aset="'.htmlspecialchars($row['nomor_asset_utama']).'" '.($isSubmitted ? 'disabled' : '').'>
+                                            <option value="">-</option>
+                                            <option value="Jual Lelang"'.($selectedMekanisme === 'Jual Lelang' ? ' selected' : '').'>Jual Lelang</option>
+                                            <option value="Hapus Administrasi"'.($selectedMekanisme === 'Hapus Administrasi' ? ' selected' : '').'>Hapus Administrasi</option>
+                                        </select>';
+                                        
+                                        // Dropdown Fisik Aset
+                                        $selectedFisik = !empty($row['fisik_aset']) ? $row['fisik_aset'] : '';
+                                        $fisikDropdown = '<select class="form-select form-select-sm fisik-dropdown" data-asset-id="'.htmlspecialchars($row['id']).'" data-nomor-aset="'.htmlspecialchars($row['nomor_asset_utama']).'" '.($isSubmitted ? 'disabled' : '').'>
+                                            <option value="">-</option>
+                                            <option value="Ada"'.($selectedFisik === 'Ada' ? ' selected' : '').'>Ada</option>
+                                            <option value="Tidak Ada"'.($selectedFisik === 'Tidak Ada' ? ' selected' : '').'>Tidak Ada</option>
+                                        </select>';
+                                        
                                         echo '<tr>
+                                          <td style="text-align:center;">'.$hapusDraftBtn.'</td>
                                           <td style="text-align:center;">
-                                            <input type="checkbox" class="row-checkbox form-check-input" value="'.htmlspecialchars($row['id']).'"'.$checkedAttr.'>
+                                            <input type="checkbox" class="row-checkbox form-check-input" value="'.htmlspecialchars($row['id']).'"'.$checkedAttr.$disabledAttr.'>
                                           </td>
+                                          <td>'.$mekanismeDropdown.'</td>
+                                          <td>'.$fisikDropdown.'</td>
                                           <td>'.htmlspecialchars($row['nomor_asset_utama']).'</td>
                                           <td>'.htmlspecialchars($row['subreg']).'</td>
-                                          <td>'.htmlspecialchars($row['profit_center']).'</td>
-                                          <td>'.htmlspecialchars($row['keterangan_asset']).'</td>
-                                          <td>'.htmlspecialchars($row['asset_class_name']).'</td>
+                                          <td>'.htmlspecialchars($row['profit_center']).(!empty($row['profit_center_text']) ? ' - '.htmlspecialchars($row['profit_center_text']) : '').'</td>
+                                          <td>'.htmlspecialchars($nama_aset).'</td>
+                                          <td>'.htmlspecialchars($kategori_aset).'</td>
                                           <td>'.htmlspecialchars($row['masa_manfaat']).'</td>
                                           <td>'.htmlspecialchars($row['sisa_manfaat']).'</td>
                                           <td>'.htmlspecialchars($row['tgl_perolehan']).'</td>
@@ -651,7 +934,7 @@ function saveSelectedAssets($con, $selected_ids, $is_submit, $created_by, $userP
                                                 <i class="bi bi-save"></i> Simpan sebagai Draft
                                             </button>
                                             <button type="button" class="btn btn-primary btn-action" id="submitBtn" onclick="saveData('submit')">
-                                                <i class="bi bi-send-check"></i> Submit ke Lengkapi Dokumen
+                                                <i class="bi bi-send-check"></i> Submit ke Lengkapi Data
                                             </button>
                                             <button type="button" class="btn btn-danger" onclick="clearSelection()">
                                                 <i class="bi bi-x-circle"></i> Batal Pilihan
@@ -665,36 +948,119 @@ function saveSelectedAssets($con, $selected_ids, $is_submit, $created_by, $userP
                           </div>
                           <!-- End Tab Pilih Aset -->
 
-
-                                  <!-- Tab Lengkapi Dokumen -->
-                                  <div class="tab-pane fade" id="dokumen" role="tabpanel">
-                                    <div class="alert alert-warning">
-                                      <i class="bi bi-exclamation-triangle me-2"></i>
-                                      Halaman ini akan menampilkan usulan yang sudah disubmit dan memerlukan dokumen pendukung.
-                                    </div>
-                                    <!-- Content akan diisi dari lengkapi_dokumen.php atau bisa di-embed di sini -->
+                          <!-- Tab Lengkapi Dokumen -->
+                          <div class="tab-pane fade" id="dokumen" role="tabpanel">
+                            
+                            <!-- Summary Boxes -->
+                            <div class="row mb-4">
+                              <div class="col-md-4">
+                                <div class="small-box text-bg-warning">
+                                  <div class="inner">
+                                    <h3><?= count(array_filter($lengkapi_data, fn($d) => $d['status'] === 'lengkapi_dokumen')) ?></h3>
+                                    <p>Lengkapi Data</p>
                                   </div>
-
-                                  <!-- Tab Summary -->
-                                  <div class="tab-pane fade" id="summary" role="tabpanel">
-                                    <div class="alert alert-info">
-                                      <i class="bi bi-info-circle me-2"></i>
-                                      Ringkasan semua usulan penghapusan aset
-                                    </div>
-                                    <!-- Content summary -->
-                                  </div>
+                                  <i class="bi bi-exclamation-triangle small-box-icon"></i>
                                 </div>
-                                <!-- End tab-content -->
                               </div>
-                              <!-- End card-body -->
-                          </div>
-                          <!-- End card -->
+                              <div class="col-md-4">
+                                <div class="small-box text-bg-success">
+                                  <div class="inner">
+                                    <h3><?= count(array_filter($lengkapi_data, fn($d) => $d['status'] === 'dokumen_lengkap')) ?></h3>
+                                    <p>Data Lengkap</p>
+                                  </div>
+                                  <i class="bi bi-check-circle small-box-icon"></i>
+                                </div>
+                              </div>
+                              <div class="col-md-4">
+                                <div class="small-box text-bg-info">
+                                  <div class="inner">
+                                    <h3><?= count($lengkapi_data) ?></h3>
+                                    <p>Total Usulan</p>
+                                  </div>
+                                  <i class="bi bi-file-earmark-text small-box-icon"></i>
+                                </div>
+                              </div>
+                            </div>
+                            <div class="row mb-1">
+                         
+                            <!-- End Summary Boxes -->                    
+                              <div class="d-flex justify-content-between align-items-center mb-2">
+                              <h5 class="mb-0 mt-0">Daftar Aset yang Dapat Diajukan</h5>
+                            </div>
+
+                            <?php if (empty($lengkapi_data)): ?>
+                              <div class="alert alert-warning">
+                                <i class="bi bi-info-circle me-2"></i>
+                                Belum ada usulan yang perlu dilengkapi data. 
+                                Silakan submit usulan dari tab "Daftar Aset Tetap".
+                              </div>
+                            <?php else: ?>
+
+                            <div class="table-responsive">
+                              <table id="lengkapiTable" class="display nowrap table table-striped table-sm w-100">
+                                <thead>
+                                  <tr>
+                                    <th>No</th>
+                                    <th>Nomor Aset</th>
+                                    <th>Nama Aset</th>
+                                    <th>Kategori Aset</th>
+                                    <th>Profit Center</th>
+                                    <th>Status</th>
+                                    <th>Tanggal Submit</th>
+                                    <th>Action</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  <?php foreach ($lengkapi_data as $index => $row): ?>
+                                  <tr>
+                                    <td><?= $index + 1 ?></td>
+                                    <td><?= htmlspecialchars($row['nomor_asset_utama']) ?></td>
+                                    <td><?= htmlspecialchars($row['nama_aset']) ?></td>
+                                    <td><?= htmlspecialchars($row['kategori_aset']) ?></td>
+                                    <td><?= htmlspecialchars($row['profit_center']) . (!empty($row['profit_center_text']) ? ' - ' . htmlspecialchars($row['profit_center_text']) : '') ?></td>
+                                    <td>
+                                      <?php if ($row['status'] === 'lengkapi_dokumen'): ?>
+                                        <span class="badge bg-warning text-dark">
+                                          <i class="bi bi-exclamation-triangle me-1"></i>Lengkapi Data
+                                        </span>
+                                      <?php elseif ($row['status'] === 'dokumen_lengkap'): ?>
+                                        <span class="badge bg-success">
+                                          <i class="bi bi-check-circle me-1"></i>Data Lengkap
+                                        </span>
+                                      <?php endif; ?>
+                                    </td>
+                                    <td><?= date('d/m/Y H:i', strtotime($row['created_at'])) ?></td>
+                                    <td>
+                                      <button class="btn btn-sm btn-primary" 
+                                              onclick="openFormLengkapiDokumen(<?= $row['id'] ?>)" 
+                                              title="Lengkapi dokumen">
+                                        <i class="bi bi-pencil-square"></i> Lengkapi
+                                      </button>
+                                      <?php if (!empty($row['foto_path'])): ?>
+                                      <button class="btn btn-sm btn-info" 
+                                              onclick="viewFoto('<?= htmlspecialchars($row['foto_path']) ?>', '<?= htmlspecialchars($row['nomor_asset_utama']) ?>', '<?= htmlspecialchars(addslashes($row['nama_aset'])) ?>')" 
+                                              title="Lihat foto aset">
+                                        <i class="bi bi-image"></i> Foto
+                                      </button>
+                                      <?php endif; ?>
+                                      <button class="btn btn-sm btn-danger" 
+                                              onclick="confirmDeleteUsulan(<?= $row['id'] ?>, '<?= htmlspecialchars(addslashes($row['nomor_asset_utama'])) ?>', '<?= htmlspecialchars(addslashes($row['nama_aset'])) ?>')"
+                                              title="Hapus usulan ini">
+                                        <i class="bi bi-trash"></i> Hapus
+                                      </button>
+                                    </td>
+                                  </tr>
+                                  <?php endforeach; ?>
+                                </tbody>
+                              </table>
+                            </div>
+                         <?php endif; ?>
                       </div>
-                    </div>
-                  </div>
-                </div>
-            <!--end::Row-->
-          </div>
+                    <!-- End Tab Lengkapi Dokumen -->
+                 </div> <!-- End tab-content -->
+               </div> <!-- End card-body -->
+             <!--end::Row-->
+           </div>
         </div>
         <!--end::App Content-->
       </main>
@@ -843,6 +1209,134 @@ function saveSelectedAssets($con, $selected_ids, $is_submit, $created_by, $userP
         </div>
       </div>
     </div>
+    <!-- End Modal Confirm Draft -->
+    
+    <!-- ============================================================ -->
+    <!-- MODAL: Konfirmasi Hapus Usulan -->
+    <!-- ============================================================ -->
+   <div class="modal fade" id="modalConfirmDeleteUsulan" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg">
+          <div class="modal-header bg-danger text-white">
+            <h5 class="modal-title">
+              <i class="bi bi-trash me-2"></i>Konfirmasi Hapus Usulan
+            </h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <div class="alert alert-warning mb-3">
+              <i class="bi bi-exclamation-triangle me-2"></i>
+              <strong>Peringatan!</strong> Tindakan ini tidak dapat dibatalkan.
+            </div>
+            <p class="mb-2">Anda akan menghapus usulan penghapusan untuk aset:</p>
+            <div class="p-3 bg-light rounded border">
+              <div class="mb-2">
+                <i class="bi bi-tag me-2"></i>
+                <strong id="deleteUsulanNomor">-</strong>
+              </div>
+              <div>
+                <i class="bi bi-file-earmark-text me-2"></i>
+                <span id="deleteUsulanNama" class="text-muted">-</span>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+              <i class="bi bi-x-circle me-1"></i> Batal
+            </button>
+            <form method="POST" style="display:inline;">
+              <input type="hidden" name="action" value="delete_usulan">
+              <input type="hidden" name="usulan_id" id="deleteUsulanId">
+              <button type="submit" class="btn btn-danger">
+                <i class="bi bi-trash me-1"></i> Ya, Hapus Usulan
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- ============================================================ -->
+    <!-- MODAL: Konfirmasi Cancel Draft -->
+    <!-- ============================================================ -->
+    <div class="modal fade" id="modalConfirmCancelDraft" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg">
+          <div class="modal-header bg-warning text-dark">
+            <h5 class="modal-title">
+              <i class="bi bi-x-circle me-2"></i>Konfirmasi Batalkan Draft
+            </h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <div class="alert alert-info mb-3">
+              <i class="bi bi-info-circle me-2"></i>
+              <strong>Perhatian!</strong> Draft usulan akan dihapus dari sistem.
+            </div>
+            <p class="mb-2">Anda akan membatalkan draft usulan penghapusan untuk aset:</p>
+            <div class="p-3 bg-light rounded border">
+              <div class="mb-2">
+                <i class="bi bi-tag me-2"></i>
+                <strong id="cancelDraftNomor">-</strong>
+              </div>
+              <div>
+                <i class="bi bi-file-earmark-text me-2"></i>
+                <span id="cancelDraftNama" class="text-muted">-</span>
+              </div>
+            </div>
+            <div class="mt-3 p-2 px-3" style="background:#fff3cd; border:1px solid #ffc107; border-radius:8px;">
+              <small style="color:#856404;">
+                <i class="bi bi-info-circle me-1"></i>
+                Checkbox akan kembali tidak tercentang dan data draft akan dihapus.
+              </small>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+              <i class="bi bi-x-circle me-1"></i> Batal
+            </button>
+            <form method="POST" style="display:inline;">
+              <input type="hidden" name="action" value="cancel_draft">
+              <input type="hidden" name="draft_id" id="cancelDraftId">
+              <button type="submit" class="btn btn-warning">
+                <i class="bi bi-x-circle me-1"></i> Ya, Batalkan Draft
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+</div>
+    
+    <!-- ============================================================ -->
+    <!-- MODAL: Sukses Dokumen Lengkap -->
+    <!-- ============================================================ -->
+    <div class="modal fade" id="modalSuksesDokumenLengkap" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg">
+          <div class="modal-body text-center p-5">
+            <div class="mb-4">
+              <div class="rounded-circle bg-success d-inline-flex align-items-center justify-content-center" 
+                   style="width: 80px; height: 80px;">
+                <i class="bi bi-check-circle text-white" style="font-size: 3rem;"></i>
+              </div>
+            </div>
+            <h4 class="mb-3 text-success fw-bold">Dokumen Berhasil Dilengkapi!</h4>
+            <p class="text-muted mb-4">
+              Data usulan penghapusan aset telah berhasil dilengkapi dan statusnya diubah menjadi 
+              <span class="badge bg-success">Dokumen Lengkap</span>
+            </p>
+            <div class="alert alert-info mb-4">
+              <i class="bi bi-info-circle me-2"></i>
+              Data akan masuk ke <strong>Halaman Approval SubReg</strong> untuk proses selanjutnya.
+            </div>
+            <button type="button" class="btn btn-success px-4" data-bs-dismiss="modal">
+              <i class="bi bi-check-circle me-1"></i> OK, Mengerti
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- ============================================================ -->
     <!-- MODAL: Konfirmasi Hapus Draft (single row)                   -->
@@ -882,6 +1376,13 @@ function saveSelectedAssets($con, $selected_ids, $is_submit, $created_by, $userP
             },
           });
         }
+
+        // Auto show modal sukses dokumen lengkap jika ada flag dari session
+        <?php if (isset($_SESSION['show_success_modal']) && $_SESSION['show_success_modal']): ?>
+          const modalSukses = new bootstrap.Modal(document.getElementById('modalSuksesDokumenLengkap'));
+          modalSukses.show();
+          <?php unset($_SESSION['show_success_modal']); ?>
+        <?php endif; ?>
       });
     </script>
     <!--end::OverlayScrollbars Configure-->
@@ -953,6 +1454,57 @@ function saveSelectedAssets($con, $selected_ids, $is_submit, $created_by, $userP
         });
       });
 
+// Initialize DataTable untuk tab Lengkapi Dokumen
+        $('#lengkapiTable').DataTable({
+            responsive: false,
+            autoWidth: false,
+            scrollX: true,
+            paging: true,
+            pageLength: 10,
+            searching: true,
+            ordering: true,
+            info: true,
+            language: {
+                url: 'https://cdn.datatables.net/plug-ins/1.13.7/i18n/id.json'
+            }
+        });
+
+// Auto-switch ke tab Lengkapi Dokumen jika ada hash #dokumen di URL
+        if (window.location.hash === '#dokumen') {
+            const lengkapiTab = new bootstrap.Tab(document.getElementById('lengkapi-dokumen-tab'));
+            lengkapiTab.show();
+        }
+
+// Update info text saat berpindah tab
+        document.getElementById('daftar-aset-tab').addEventListener('shown.bs.tab', function () {
+            document.getElementById('infoTextContent').textContent = 'Pilih aset yang akan diusulkan untuk penghapusan';
+        });
+
+        document.getElementById('lengkapi-dokumen-tab').addEventListener('shown.bs.tab', function () {
+            document.getElementById('infoTextContent').textContent = 'Lengkapi data pendukung untuk aset yang sudah diusulkan';
+        });
+
+// Function untuk konfirmasi hapus usulan
+      function confirmDeleteUsulan(usulanId, nomorAset, namaAset) {
+          document.getElementById('deleteUsulanId').value = usulanId;
+          document.getElementById('deleteUsulanNomor').textContent = nomorAset;
+          document.getElementById('deleteUsulanNama').textContent = namaAset || '-';
+          
+         
+          const modal = new bootstrap.Modal(document.getElementById('modalConfirmDeleteUsulan'));
+          modal.show();
+      }
+
+// Function untuk konfirmasi cancel draft
+      function confirmCancelDraft(draftId, nomorAset, namaAset) {
+          document.getElementById('cancelDraftId').value = draftId;
+          document.getElementById('cancelDraftNomor').textContent = nomorAset;
+          document.getElementById('cancelDraftNama').textContent = namaAset || '-';
+          
+          const modal = new bootstrap.Modal(document.getElementById('modalConfirmCancelDraft'));
+          modal.show();
+      }
+        
       function createSparklineChart(selector, data) {
         const options = {
           series: [{ data }],
@@ -1030,7 +1582,8 @@ function saveSelectedAssets($con, $selected_ids, $is_submit, $created_by, $userP
             });
         
         function updateSelectedCount() {
-            const count = $('.row-checkbox:checked').length;
+            // Hanya hitung checkbox yang TIDAK disabled (bukan yang sudah di-submit)
+            const count = $('.row-checkbox:checked:not(:disabled)').length;
             $('#selectionCount').text(count);
             
             if (count > 0) {
@@ -1046,12 +1599,14 @@ function saveSelectedAssets($con, $selected_ids, $is_submit, $created_by, $userP
             updateSelectedCount();
         }
         
+
         // =========================================================
         // saveData — buka modal yang sesuai
         // =========================================================
         function saveData(type) {
             const selectedIds = [];
-            $('.row-checkbox:checked').each(function() {
+            // Hanya ambil checkbox yang checked DAN tidak disabled
+            $('.row-checkbox:checked:not(:disabled)').each(function() {
                 selectedIds.push($(this).val());
             });
 
@@ -1073,11 +1628,29 @@ function saveSelectedAssets($con, $selected_ids, $is_submit, $created_by, $userP
             }
         }
 
+
+
         // =========================================================
         // Handler tombol "Submit Usulan" di modal konfirmasi submit
         // =========================================================
         $('#btnDoSubmit').on('click', function() {
-            document.getElementById('selectedItemsInput').value = JSON.stringify(window._selectedIds);
+            // Ambil data lengkap (termasuk mekanisme dan fisik) untuk setiap aset yang dicentang
+            const selectedAssets = [];
+            window._selectedIds.forEach(function(assetId) {
+                const row = $('input.row-checkbox[value="' + assetId + '"]').closest('tr');
+                const mekanisme = row.find('.mekanisme-dropdown').val() || '';
+                const fisik = row.find('.fisik-dropdown').val() || '';
+                const nomorAset = row.find('.mekanisme-dropdown').data('nomor-aset') || '';
+                
+                selectedAssets.push({
+                    id: assetId,
+                    nomor_aset: nomorAset,
+                    mekanisme: mekanisme,
+                    fisik: fisik
+                });
+            });
+            
+            document.getElementById('selectedItemsInput').value = JSON.stringify(selectedAssets);
             document.getElementById('actionType').value = 'submit_data';
 
             // Disable tombol + spinner
@@ -1090,14 +1663,369 @@ function saveSelectedAssets($con, $selected_ids, $is_submit, $created_by, $userP
         // Handler tombol "Simpan Draft" di modal konfirmasi draft
         // =========================================================
         $('#btnDoDraft').on('click', function() {
-            document.getElementById('selectedItemsInput').value = JSON.stringify(window._selectedIds);
+            // Ambil data lengkap (termasuk mekanisme dan fisik) untuk setiap aset yang dicentang
+            const selectedAssets = [];
+            window._selectedIds.forEach(function(assetId) {
+                const row = $('input.row-checkbox[value="' + assetId + '"]').closest('tr');
+                const mekanisme = row.find('.mekanisme-dropdown').val() || '';
+                const fisik = row.find('.fisik-dropdown').val() || '';
+                const nomorAset = row.find('.mekanisme-dropdown').data('nomor-aset') || '';
+                
+                selectedAssets.push({
+                    id: assetId,
+                    nomor_aset: nomorAset,
+                    mekanisme: mekanisme,
+                    fisik: fisik
+                });
+            });
+            
+            document.getElementById('selectedItemsInput').value = JSON.stringify(selectedAssets);
             document.getElementById('actionType').value = 'save_draft';
             $(this).prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span> Memproses...');
             document.getElementById('saveForm').submit();
         });
             document.getElementById('draftActionForm').submit();
         
+        // =========================================================
+        // Handler untuk dropdown Mekanisme Penghapusan dan Fisik Aset
+        // =========================================================
+        $(document).on('change', '.mekanisme-dropdown, .fisik-dropdown', function() {
+            const dropdown = $(this);
+            const assetId = dropdown.data('asset-id');
+            const nomorAset = dropdown.data('nomor-aset');
+            const fieldType = dropdown.hasClass('mekanisme-dropdown') ? 'mekanisme' : 'fisik';
+            const value = dropdown.val();
+            
+            // Auto-save ke database via AJAX
+            $.ajax({
+                url: window.location.href,
+                method: 'POST',
+                data: {
+                    action: 'update_dropdown_field',
+                    asset_id: assetId,
+                    nomor_aset: nomorAset,
+                    field_type: fieldType,
+                    value: value
+                },
+                success: function(response) {
+                    // Optional: tampilkan notifikasi sukses
+                    console.log('Auto-saved:', fieldType, value);
+                },
+                error: function() {
+                    alert('Gagal menyimpan perubahan');
+                    dropdown.val(dropdown.data('original-value') || '');
+                }
+            });
+        });
     </script>
+
+    <!-- MODAL: Form Lengkapi Dokumen -->
+    <div class="modal fade" id="modalFormLengkapiDokumen" tabindex="-1" aria-labelledby="modalFormLengkapiDokumenLabel" aria-hidden="true">
+      <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+          <div class="modal-header bg-primary text-white">
+            <h5 class="modal-title" id="modalFormLengkapiDokumenLabel">
+              <i class="bi bi-file-earmark-plus me-2"></i>Lengkapi Data Usulan Penghapusan Aset
+            </h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <form id="formLengkapiDokumen" method="POST" enctype="multipart/form-data">
+            <input type="hidden" name="action" value="lengkapi_dokumen_submit">
+            <input type="hidden" name="usulan_id" id="usulan_id">
+            
+            <div class="modal-body">
+              
+              <!-- Informasi Aset (Read-only) -->
+              <div class="card mb-3">
+                <div class="card-header bg-light">
+                  <h6 class="mb-0"><i class="bi bi-info-circle me-2"></i>Informasi Aset</h6>
+                </div>
+                <div class="card-body">
+                  <div class="row">
+                    <div class="col-md-6">
+                      <dl class="row mb-0">
+                        <dt class="col-sm-4">Nomor Aset:</dt>
+                        <dd class="col-sm-8" id="display_nomor_aset">-</dd>
+                        
+                        <dt class="col-sm-4">Nama Aset:</dt>
+                        <dd class="col-sm-8" id="display_nama_aset">-</dd>
+                        
+                        <dt class="col-sm-4">SubReg:</dt>
+                        <dd class="col-sm-8" id="display_subreg">-</dd>
+
+                        <dt class="col-sm-4">Profit Center:</dt>
+                        <dd class="col-sm-8" id="display_profit_center">-</dd>
+
+                        <dt class="col-sm-4">Kategori Aset:</dt>
+                        <dd class="col-sm-8" id="display_kategori_aset">-</dd>
+                      </dl>
+                    </div>
+                    <div class="col-md-6">
+                      <dl class="row mb-0">
+                        <dt class="col-sm-4">Umur Ekonomis:</dt>
+                        <dd class="col-sm-8" id="display_umur_ekonomis">-</dd>
+
+                        <dt class="col-sm-4">Sisa Umur:</dt>
+                        <dd class="col-sm-8" id="display_sisa_umur">-</dd>
+
+                        <dt class="col-sm-4">Tanggal Perolehan:</dt>
+                        <dd class="col-sm-8" id="display_tgl_perolehan">-</dd>
+                        
+                        <dt class="col-sm-4">Nilai Buku:</dt>
+                        <dd class="col-sm-8" id="display_nilai_buku">-</dd>
+                        
+                        <dt class="col-sm-4">Nilai Perolehan:</dt>
+                        <dd class="col-sm-8" id="display_nilai_perolehan">-</dd>
+                      </dl>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Form Input User -->
+              <div class="card">
+                <div class="card-header bg-light">
+                  <strong>Lengkapi Data Penghapusan</strong>
+                </div>
+                <div class="card-body">
+                  
+                  <!-- Row 1 -->
+                  <div class="row mb-3">
+                    <div class="col-md-4">
+                      <label class="form-label">Jumlah Aset <span class="text-danger">*</span></label>
+                      <input type="number" class="form-control" name="jumlah_aset" value="1" min="1" required>
+                      <small class="text-muted">Masukkan jumlah aset, minimal 1</small>
+                    </div>
+                    <div class="col-md-4">
+                      <label class="form-label">Mekanisme Penghapusan <span class="text-danger">*</span></label>
+                      <select class="form-select" name="mekanisme_penghapusan" required>
+                        <option value="">-- Pilih --</option>
+                        <option value="Jual Lelang">Jual Lelang</option>
+                        <option value="Hapus Administrasi">Hapus Administrasi</option>
+                      </select>
+                    </div>
+                    <div class="col-md-4">
+                      <label class="form-label">Fisik Aset <span class="text-danger">*</span></label>
+                      <select class="form-select" id="fisik_aset" name="fisik_aset" required onchange="toggleFotoUpload()">
+                        <option value="">-- Pilih --</option>
+                        <option value="Ada">Ada</option>
+                        <option value="Tidak Ada">Tidak Ada</option>
+                      </select>
+                    </div>
+                  </div>
+                    
+                  <div class="mb-3">
+                    <label for="justifikasi_alasan" class="form-label">Justifikasi & Alasan Penghapusan <span class="text-danger">*</span></label>
+                    <textarea class="form-control" id="justifikasi_alasan" name="justifikasi_alasan" rows="3" required 
+                      placeholder="Jelaskan alasan penghapusan aset..."></textarea>
+                  </div>
+
+                  <div class="mb-3">
+                    <label for="kajian_hukum" class="form-label">Kajian Hukum <span class="text-danger">*</span></label>
+                    <textarea class="form-control" id="kajian_hukum" name="kajian_hukum" rows="3" required 
+                      placeholder="Aspek hukum terkait penghapusan aset..."></textarea>
+                  </div>
+
+                  <div class="mb-3">
+                    <label for="kajian_ekonomis" class="form-label">Kajian Ekonomis <span class="text-danger">*</span></label>
+                    <textarea class="form-control" id="kajian_ekonomis" name="kajian_ekonomis" rows="3" required 
+                      placeholder="Analisis ekonomis penghapusan aset..."></textarea>
+                  </div>
+
+                  <div class="mb-3">
+                    <label for="kajian_risiko" class="form-label">Kajian Risiko <span class="text-danger">*</span></label>
+                    <textarea class="form-control" id="kajian_risiko" name="kajian_risiko" rows="3" required 
+                      placeholder="Identifikasi risiko terkait penghapusan..."></textarea>
+                  </div>
+
+              <!-- Row 6 - Upload Foto (conditional) -->
+                  <div class="mb-3" id="fotoUploadSection" style="display:none;">
+                    <label class="form-label">Foto Aset <span class="text-danger" id="fotoRequired">*</span></label>
+                    <input type="file" class="form-control" id="fotoInput" name="foto" accept="image/jpeg,image/jpg,image/png" 
+                           onchange="previewFoto(event)">
+                    <small class="text-muted">Format: JPG, JPEG, PNG. Maksimal 5MB.</small>
+                    
+                    <!-- Preview Foto -->
+                    <div id="fotoPreview" class="mt-3" style="display:none;">
+                      <img id="fotoPreviewImage" src="" style="max-width:300px; border:2px solid #ddd; border-radius:8px;">
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+
+            </div>
+            
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                <i class="bi bi-x-circle"></i> Batal
+              </button>
+              <button type="submit" class="btn btn-primary">
+                <i class="bi bi-save"></i> Simpan Data
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <script>
+    // Data usulan dalam format JSON untuk akses cepat
+    const usulanLengkapiData = <?= json_encode($lengkapi_data) ?>;
+
+    function openFormLengkapiDokumen(usulanId) {
+        console.log("Klik Lengkapi dengan ID:", usulanId); 
+        console.log("Data JSON:", usulanLengkapiData);
+
+        const usulan = usulanLengkapiData.find(u => u.id == usulanId);
+        
+        if (!usulan) {
+            alert('Data tidak ditemukan');
+            return;
+        }
+        
+        document.getElementById('usulan_id').value = usulanId;
+        
+        // Populate READ-ONLY fields (info aset)
+        document.getElementById('display_nomor_aset').textContent = usulan.nomor_asset_utama || '-';
+        document.getElementById('display_nama_aset').textContent = usulan.nama_aset || '-';
+        document.getElementById('display_subreg').textContent = usulan.subreg || '-';
+        document.getElementById('display_profit_center').textContent = usulan.profit_center + ' - ' + (usulan.profit_center_text || '');
+        document.getElementById('display_kategori_aset').textContent = usulan.kategori_aset || '-';
+        document.getElementById('display_umur_ekonomis').textContent = usulan.umur_ekonomis || '-';
+        document.getElementById('display_sisa_umur').textContent = usulan.sisa_umur_ekonomis || '-';
+        document.getElementById('display_tgl_perolehan').textContent = usulan.tgl_perolehan || '-';
+        
+        // Format currency untuk Nilai Buku dan Nilai Perolehan
+        const nilaiBuku = usulan.nilai_buku ? 'Rp ' + parseInt(usulan.nilai_buku).toLocaleString('id-ID') : '-';
+        const nilaiPerolehan = usulan.nilai_perolehan ? 'Rp ' + parseInt(usulan.nilai_perolehan).toLocaleString('id-ID') : '-';
+        
+        document.getElementById('display_nilai_buku').textContent = nilaiBuku;
+        document.getElementById('display_nilai_perolehan').textContent = nilaiPerolehan;
+        
+        // Reset form terlebih dahulu
+        document.getElementById('formLengkapiDokumen').reset();
+        document.getElementById('usulan_id').value = usulanId; // Set lagi setelah reset
+        
+        // PRE-FILL FORM dengan data yang sudah ada (jika ada)
+        if (usulan.jumlah_aset) {
+            document.querySelector('input[name="jumlah_aset"]').value = usulan.jumlah_aset;
+        }
+        if (usulan.mekanisme_penghapusan) {
+            document.querySelector('select[name="mekanisme_penghapusan"]').value = usulan.mekanisme_penghapusan;
+        }
+        if (usulan.fisik_aset) {
+            document.querySelector('select[name="fisik_aset"]').value = usulan.fisik_aset;
+            // Trigger toggleFotoUpload untuk show/hide foto section
+            toggleFotoUpload();
+        }
+        if (usulan.justifikasi_alasan) {
+            document.getElementById('justifikasi_alasan').value = usulan.justifikasi_alasan;
+        }
+        if (usulan.kajian_hukum) {
+            document.getElementById('kajian_hukum').value = usulan.kajian_hukum;
+        }
+        if (usulan.kajian_ekonomis) {
+            document.getElementById('kajian_ekonomis').value = usulan.kajian_ekonomis;
+        }
+        if (usulan.kajian_risiko) {
+            document.getElementById('kajian_risiko').value = usulan.kajian_risiko;
+        }
+        
+        // Tampilkan foto yang sudah ada (jika ada)
+        if (usulan.foto_path) {
+            document.getElementById('fotoPreviewImage').src = usulan.foto_path;
+            document.getElementById('fotoPreview').style.display = 'block';
+            document.getElementById('fotoUploadSection').style.display = 'block';
+        } else {
+            document.getElementById('fotoPreview').style.display = 'none';
+        }
+        
+        var modal = new bootstrap.Modal(document.getElementById('modalFormLengkapiDokumen'));
+        modal.show();
+    }
+
+    // Fungsi untuk toggle foto upload section berdasarkan pilihan Fisik Aset
+    function toggleFotoUpload() {
+        const fisikAset = document.getElementById('fisik_aset').value;
+        const fotoSection = document.getElementById('fotoUploadSection');
+        const fotoInput = document.getElementById('fotoInput');
+        
+        if (fisikAset === 'Ada') {
+            // Show foto section dan set required
+            fotoSection.style.display = 'block';
+            fotoInput.setAttribute('required', 'required');
+        } else if (fisikAset === 'Tidak Ada') {
+            // Hide foto section dan remove required
+            fotoSection.style.display = 'none';
+            fotoInput.removeAttribute('required');
+            fotoInput.value = ''; // Clear file input
+            document.getElementById('fotoPreview').style.display = 'none';
+        } else {
+            // Default: hide
+            fotoSection.style.display = 'none';
+            fotoInput.removeAttribute('required');
+        }
+    }
+
+    function previewFoto(event) {
+        const file = event.target.files[0];
+        if (file) {
+            // Validate size (5MB)
+            if (file.size > 5 * 1024 * 1024) {
+                alert('Ukuran file terlalu besar. Maksimal 5MB.');
+                event.target.value = '';
+                document.getElementById('fotoPreview').style.display = 'none';
+                return;
+            }
+            
+            // Preview
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                document.getElementById('fotoPreviewImage').src = e.target.result;
+                document.getElementById('fotoPreview').style.display = 'block';
+            }
+            reader.readAsDataURL(file);
+        } else {
+            document.getElementById('fotoPreview').style.display = 'none';
+        }
+    }
+
+    // Fungsi untuk melihat foto yang sudah diupload
+    function viewFoto(fotoPath, nomorAset, namaAset) {
+        let title = 'Foto Aset: ' + nomorAset;
+        if (namaAset) {
+            title += ' (' + namaAset + ')';
+        }
+        document.getElementById('modalFotoTitle').textContent = title;
+        document.getElementById('modalFotoImage').src = fotoPath;
+        
+        var modal = new bootstrap.Modal(document.getElementById('modalViewFoto'));
+        modal.show();
+    }
+
+    // MODAL: View Foto
+    </script>
+    
+    <div class="modal fade" id="modalViewFoto" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header bg-info text-white">
+            <h5 class="modal-title" id="modalFotoTitle">Foto Aset</h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body text-center">
+            <img id="modalFotoImage" src="" class="img-fluid" style="max-height: 500px; border-radius: 8px;">
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+              <i class="bi bi-x-circle"></i> Tutup
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!--end::Script-->
   </body>
   <!--end::Body-->
