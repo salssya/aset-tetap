@@ -402,9 +402,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
 // Upload Dokumen
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] === 'upload_dokumen') {
     $usulan_ids = $_POST['usulan_id'];
-    $tahun_dokumen = $_POST['tahun_dokumen'];
+    $tahun_dokumen = isset($_POST['tahun_dokumen']) && !empty($_POST['tahun_dokumen']) 
+                    ? intval($_POST['tahun_dokumen']) 
+                    : date('Y');
     $tipe_dokumen = $_POST['tipe_dokumen'];
     $nipp = $_SESSION['nipp'];
+    $type_user = isset($_SESSION['Type_User']) ? $_SESSION['Type_User'] : '';
     
     if (isset($_FILES['file_dokumen']) && $_FILES['file_dokumen']['error'] === UPLOAD_ERR_OK) {
         $file = $_FILES['file_dokumen'];
@@ -472,10 +475,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
 
                     // Insert dokumen untuk setiap aset, termasuk profit_center_text
                     $insert_query = "INSERT INTO dokumen_penghapusan 
-                                   (usulan_id, tahun_dokumen, tipe_dokumen, no_aset, subreg, profit_center, profit_center_text, nipp, file_name, file_path, file_size) 
-                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                                    (usulan_id, tahun_dokumen, tipe_dokumen, no_aset, subreg, profit_center, profit_center_text, type_user, nipp, file_name, file_path, file_size) 
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
                     $stmt_insert = $con->prepare($insert_query);
-                    $stmt_insert->bind_param("iissssssssi", 
+                    $stmt_insert->bind_param("iisssssssssi", 
                         $id, 
                         $tahun_dokumen, 
                         $tipe_dokumen, 
@@ -483,6 +486,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
                         $usulan['subreg'],
                         $usulan['profit_center'],
                         $profit_center_text,
+                        $type_user,
                         $nipp,
                         $new_filename,
                         $file_path,
@@ -1507,6 +1511,24 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                     <div class="invalid-feedback">Isi deskripsi dokumen terlebih dahulu.</div>
                                   </div>
 
+                                  <div class="mb-3">
+                                    <label class="form-label" style="font-weight: normal;">
+                                      Tahun Dokumen <span class="text-danger">*</span>
+                                    </label>
+                                    <select class="form-control" name="tahun_dokumen" id="inlineTahunDokumen" 
+                                            style="border: 1px solid #dee2e6; border-radius: 4px;" required>
+                                      <option value="">-- Pilih Tahun --</option>
+                                      <?php
+                                      $current_year = date('Y');
+                                      for ($y = $current_year; $y >= 2015; $y--) {
+                                          $selected = ($y == $current_year) ? 'selected' : '';
+                                          echo "<option value=\"$y\" $selected>$y</option>";
+                                      }
+                                      ?>
+                                    </select>
+                                    <div class="invalid-feedback">Pilih tahun dokumen.</div>
+                                  </div>
+
                                   <!-- Baris 2: Nomor Aset -->
                                   <div class="mb-3">
                                     <label class="form-label" style="font-weight: normal;">Nomor Aset</label>
@@ -1995,6 +2017,14 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                 valid = false;
                               } else {
                                 tipeInput.classList.remove('is-invalid');
+                              }
+
+                              const tahunInput = document.getElementById('inlineTahunDokumen');
+                              if (!tahunInput.value || tahunInput.value === '') {
+                                  tahunInput.classList.add('is-invalid');
+                                  valid = false;
+                              } else {
+                                  tahunInput.classList.remove('is-invalid');
                               }
 
                               // Cek file
@@ -3324,17 +3354,17 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
         const fotoInput = document.getElementById('fotoInput');
         
         if (fisikAset === 'Ada') {
-  
+            // Show foto section dan set required
             fotoSection.style.display = 'block';
             fotoInput.setAttribute('required', 'required');
         } else if (fisikAset === 'Tidak Ada') {
-        
+            // Hide foto section dan remove required
             fotoSection.style.display = 'none';
             fotoInput.removeAttribute('required');
-            fotoInput.value = ''; 
+            fotoInput.value = ''; // Clear file input
             document.getElementById('fotoPreview').style.display = 'none';
         } else {
-       
+            // Default: hide
             fotoSection.style.display = 'none';
             fotoInput.removeAttribute('required');
         }
@@ -3343,7 +3373,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
     function previewFoto(event) {
         const file = event.target.files[0];
         if (file) {
-
+            // Validate size (5MB)
             if (file.size > 5 * 1024 * 1024) {
                 alert('Ukuran file terlalu besar. Maksimal 5MB.');
                 event.target.value = '';
@@ -3397,6 +3427,8 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
         </div>
       </div>
     </div>
-  </body>
 
+    <!--end::Script-->
+  </body>
+  <!--end::Body-->
 </html>
