@@ -4,26 +4,39 @@ $username   = "root";
 $password   = "";
 $dbname     = "asetreg3_db";
 
-// Create connection
 $con = mysqli_connect($servername, $username, $password, $dbname);
 session_start();
 
-// Cek login
 if (!isset($_SESSION["nipp"]) || !isset($_SESSION["name"])) {
     header("Location: ../login/login_view.php");
     exit();
 }
 
-// Ambil profit center dari session user
 $userProfitCenter = isset($_SESSION['Cabang']) ? $_SESSION['Cabang'] : '';
+$userType = isset($_SESSION['Type_User']) ? $_SESSION['Type_User'] : '';
 
-// Query hanya untuk profit center user
-$query = "SELECT * FROM import_dat 
-          WHERE profit_center = ? 
-          ORDER BY nomor_asset_utama ASC";
+$whereClause = "WHERE nilai_perolehan_sd != 0";
+if (strpos($userType, 'Approval SubReg') !== false || strpos($userType, 'User Entry Sub Regional') !== false) {
+    $whereClause .= " AND (profit_center = ? OR subreg LIKE ?)";
+    $isSubRegional = true;
+} elseif (strpos($userType, 'Cabang') !== false) {
+    $whereClause .= " AND profit_center = ?";
+    $isCabang = true;
+} else {
+    $isRegional = true;
+}
+
+$query = "SELECT * FROM import_dat " . $whereClause . " ORDER BY nomor_asset_utama ASC";
 
 $stmt = $con->prepare($query);
-$stmt->bind_param("s", $userProfitCenter);
+
+if (isset($isSubRegional)) {
+    $subreg_pattern = $userProfitCenter . '%';
+    $stmt->bind_param("ss", $userProfitCenter, $subreg_pattern);
+} elseif (isset($isCabang)) {
+    $stmt->bind_param("s", $userProfitCenter);
+}
+
 $stmt->execute();
 $result = $stmt->get_result();
 
@@ -33,12 +46,26 @@ while ($row = $result->fetch_assoc()) {
 }
 $stmt->close();
 
-// Query untuk mendapatkan data draft
-$query_draft = "SELECT * FROM usulan_penghapusan 
-                WHERE profit_center = ? AND status = 'draft' 
-                ORDER BY created_at DESC";
+// Query untuk mendapatkan data draft dengan filter type user
+$draftWhereClause = "WHERE status = 'draft' AND created_by = ?";
+if (isset($isSubRegional) && $isSubRegional) {
+    $draftWhereClause .= " AND (profit_center = ? OR subreg LIKE ?)";
+} elseif (isset($isCabang) && $isCabang) {
+    $draftWhereClause .= " AND profit_center = ?";
+}
+
+$query_draft = "SELECT * FROM usulan_penghapusan " . $draftWhereClause . " ORDER BY created_at DESC";
 $stmt_draft = $con->prepare($query_draft);
-$stmt_draft->bind_param("s", $userProfitCenter);
+
+if (isset($isSubRegional) && $isSubRegional) {
+    $subreg_pattern = $userProfitCenter . '%';
+    $stmt_draft->bind_param("sss", $_SESSION['nipp'], $userProfitCenter, $subreg_pattern);
+} elseif (isset($isCabang) && $isCabang) {
+    $stmt_draft->bind_param("ss", $_SESSION['nipp'], $userProfitCenter);
+} else {
+    $stmt_draft->bind_param("s", $_SESSION['nipp']);
+}
+
 $stmt_draft->execute();
 $result_draft = $stmt_draft->get_result();
 
@@ -50,8 +77,15 @@ while ($row = $result_draft->fetch_assoc()) {
 }
 $stmt_draft->close();
 
-//Query untuk data yang perlu dilengkapi dokumen (untuk tab "Lengkapi Dokumen")
+//Query untuk tab "Lengkapi Data" dengan filter type user
 $userNipp = $_SESSION['nipp'];
+$lengkapiWhereClause = "WHERE up.created_by = ? AND up.status IN ('lengkapi_dokumen', 'dokumen_lengkap')";
+if (isset($isSubRegional) && $isSubRegional) {
+    $lengkapiWhereClause .= " AND (up.profit_center = ? OR up.subreg LIKE ?)";
+} elseif (isset($isCabang) && $isCabang) {
+    $lengkapiWhereClause .= " AND up.profit_center = ?";
+}
+
 $query_lengkapi = "SELECT up.*, 
                    id.keterangan_asset as nama_aset, 
                    id.asset_class_name as kategori_aset,
@@ -64,25 +98,116 @@ $query_lengkapi = "SELECT up.*,
                    id.nilai_perolehan_sd as nilai_perolehan
                    FROM usulan_penghapusan up 
                    LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama 
-                   WHERE up.created_by = ? 
-                   AND up.status IN ('lengkapi_dokumen', 'dokumen_lengkap') 
+                   " . $lengkapiWhereClause . "
                    ORDER BY up.created_at DESC";
+
 $stmt_lengkapi = $con->prepare($query_lengkapi);
-$stmt_lengkapi->bind_param("s", $userNipp);
+
+if (isset($isSubRegional) && $isSubRegional) {
+    $subreg_pattern = $userProfitCenter . '%';
+    $stmt_lengkapi->bind_param("sss", $userNipp, $userProfitCenter, $subreg_pattern);
+} elseif (isset($isCabang) && $isCabang) {
+    $stmt_lengkapi->bind_param("ss", $userNipp, $userProfitCenter);
+} else {
+    $stmt_lengkapi->bind_param("s", $userNipp);
+}
+
 $stmt_lengkapi->execute();
 $result_lengkapi = $stmt_lengkapi->get_result();
 
 $lengkapi_data = [];
-$lengkapi_asset_numbers = []; // Array untuk auto-centang checkbox
+$lengkapi_asset_numbers = []; 
 while ($row = $result_lengkapi->fetch_assoc()) {
-    // Hilangkan kode "AUC-" dari nama_aset dan kategori_aset
     $row['nama_aset'] = str_replace('AUC-', '', $row['nama_aset']);
     $row['kategori_aset'] = str_replace('AUC-', '', $row['kategori_aset']);
     
     $lengkapi_data[] = $row;
-    $lengkapi_asset_numbers[] = $row['nomor_asset_utama']; // Simpan nomor aset
+    $lengkapi_asset_numbers[] = $row['nomor_asset_utama']; 
 }
 $stmt_lengkapi->close();
+
+// Query aset yang sudah submitted ke approval
+$submittedWhereClause = "WHERE up.created_by = ? AND up.status = 'submitted'";
+$query_submitted = "SELECT up.nomor_asset_utama FROM usulan_penghapusan up " . $submittedWhereClause;
+$stmt_submitted = $con->prepare($query_submitted);
+$stmt_submitted->bind_param("s", $userNipp);
+$stmt_submitted->execute();
+$result_submitted = $stmt_submitted->get_result();
+
+$submitted_asset_numbers = [];
+while ($row = $result_submitted->fetch_assoc()) {
+    $submitted_asset_numbers[] = $row['nomor_asset_utama'];
+}
+$stmt_submitted->close();
+
+// Query untuk data Upload Dokumen (status = dokumen_lengkap)
+$uploadWhereClause = "WHERE up.created_by = ? AND up.status = 'dokumen_lengkap'";
+if (isset($isSubRegional) && $isSubRegional) {
+    $uploadWhereClause .= " AND (up.profit_center = ? OR up.subreg LIKE ?)";
+} elseif (isset($isCabang) && $isCabang) {
+    $uploadWhereClause .= " AND up.profit_center = ?";
+}
+
+$query_upload = "SELECT up.*, 
+                 id.keterangan_asset as nama_aset,
+                 id.profit_center_text,
+                 id.subreg,
+                 (SELECT COUNT(*) FROM dokumen_penghapusan WHERE usulan_id = up.id) as jumlah_dokumen
+                 FROM usulan_penghapusan up 
+                 LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama 
+                 " . $uploadWhereClause . "
+                 ORDER BY up.updated_at DESC";
+
+$stmt_upload = $con->prepare($query_upload);
+
+if (isset($isSubRegional) && $isSubRegional) {
+    $subreg_pattern = $userProfitCenter . '%';
+    $stmt_upload->bind_param("sss", $userNipp, $userProfitCenter, $subreg_pattern);
+} elseif (isset($isCabang) && $isCabang) {
+    $stmt_upload->bind_param("ss", $userNipp, $userProfitCenter);
+} else {
+    $stmt_upload->bind_param("s", $userNipp);
+}
+
+$stmt_upload->execute();
+$result_upload = $stmt_upload->get_result();
+
+$upload_data = [];
+while ($row = $result_upload->fetch_assoc()) {
+    $row['nama_aset'] = str_replace('AUC-', '', $row['nama_aset']);
+    $upload_data[] = $row;
+}
+$stmt_upload->close();
+
+// Query untuk ambil semua dokumen penghapusan (untuk submit approval)
+$query_all_dokumen = "SELECT dp.id_dokumen, dp.usulan_id 
+                      FROM dokumen_penghapusan dp 
+                      JOIN usulan_penghapusan up ON dp.usulan_id = up.id 
+                      WHERE up.created_by = ?";
+
+$stmt_all_dok = $con->prepare($query_all_dokumen);
+$stmt_all_dok->bind_param("s", $userNipp);
+$stmt_all_dok->execute();
+$result_all_dok = $stmt_all_dok->get_result();
+
+$semua_dokumen = [];
+while ($row = $result_all_dok->fetch_assoc()) {
+    $semua_dokumen[] = $row;
+}
+$stmt_all_dok->close();
+
+
+$usulan_with_docs = [];
+$q_docs = $con->prepare("SELECT DISTINCT usulan_id FROM dokumen_penghapusan WHERE usulan_id IN 
+                         (SELECT id FROM usulan_penghapusan WHERE created_by = ? AND status IN ('dokumen_lengkap', 'lengkapi_dokumen'))");
+$q_docs->bind_param("s", $userNipp);
+$q_docs->execute();
+$r_docs = $q_docs->get_result();
+while ($row_doc = $r_docs->fetch_assoc()) {
+    $usulan_with_docs[] = $row_doc['usulan_id'];
+}
+$q_docs->close();
+
 // Handle save to database dengan status draft/submit
 $pesan = "";
 $tipe_pesan = "";
@@ -96,19 +221,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
         $tipe_pesan = "warning";
     } else {
         $selected_data = json_decode($_POST['selected_items'], true);
-        
-        // Validasi bahwa selected_data adalah array dan tidak kosong
+
         if (is_array($selected_data) && count($selected_data) > 0) {
             $saved_count = saveSelectedAssets($con, $selected_data, $is_submit, $_SESSION['nipp'], $userProfitCenter);
 
             if ($saved_count > 0) {
                 if ($is_submit) {
-                    // Redirect ke tab Lengkapi Dokumen di halaman yang sama
+                  
                     $_SESSION['success_message'] = "✅ Berhasil mengusulkan " . $saved_count . " aset untuk penghapusan";
                     header("Location: " . $_SERVER['PHP_SELF'] . "#dokumen");
                     exit();
                 } else {
-                    // Untuk draft, reload halaman dengan pesan sukses
+
                     $_SESSION['success_message'] = "✅ Berhasil menyimpan " . $saved_count . " aset sebagai draft";
                     header("Location: " . $_SERVER['PHP_SELF']);
                     exit();
@@ -124,21 +248,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
     }
 }
 
-// Tampilkan pesan sukses dari session jika ada
 if (isset($_SESSION['success_message'])) {
     $pesan = $_SESSION['success_message'];
     $tipe_pesan = "success";
     unset($_SESSION['success_message']);
 }
 
-// Tampilkan pesan warning dari session jika ada
 if (isset($_SESSION['warning_message'])) {
     $pesan = $_SESSION['warning_message'];
     $tipe_pesan = "warning";
     unset($_SESSION['warning_message']);
 }
 
-// Handle form lengkapi dokumen submit
+// Handle form lengkapi data
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] === 'lengkapi_dokumen_submit') {
     $usulan_id = intval($_POST['usulan_id']);
     $jumlah_aset = intval($_POST['jumlah_aset']);
@@ -154,18 +276,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
     if (isset($_FILES['foto']) && $_FILES['foto']['error'] === UPLOAD_ERR_OK) {
         $file = $_FILES['foto'];
         $upload_dir = '../../uploads/foto_aset/';
-        
-        // Create directory if not exists
+
         if (!file_exists($upload_dir)) {
             mkdir($upload_dir, 0777, true);
         }
-        
-        // Validate file size (max 5MB)
+      
         if ($file['size'] > 5 * 1024 * 1024) {
             $pesan = "Ukuran foto terlalu besar. Maksimal 5MB.";
             $tipe_pesan = "danger";
         } else {
-            // Validate file type
+       
             $allowed_types = ['image/jpeg', 'image/jpg', 'image/png'];
             $finfo = finfo_open(FILEINFO_MIME_TYPE);
             $mime_type = finfo_file($finfo, $file['tmp_name']);
@@ -244,7 +364,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && $_POST['action'] === 'delete_draft')
     exit();
 }
 
-// Handle cancel draft dari tombol di tabel (sama dengan delete_draft tapi dengan pesan berbeda)
+// Handle cancel draft 
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] === 'cancel_draft') {
     $draft_id = intval($_POST['draft_id']);
     $del = $con->prepare("DELETE FROM usulan_penghapusan WHERE id = ? AND status = 'draft' AND created_by = ?");
@@ -259,7 +379,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
     exit();
 }
 
-// Handle hapus usulan dari tab Lengkapi Dokumen
+// Handle hapus usulan dari tab Lengkapi Data
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] === 'delete_usulan') {
     $usulan_id = intval($_POST['usulan_id']);
     $del = $con->prepare("DELETE FROM usulan_penghapusan 
@@ -279,21 +399,262 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
     exit();
 }
 
+// Upload Dokumen
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] === 'upload_dokumen') {
+    $usulan_ids = $_POST['usulan_id'];
+    $tahun_dokumen = $_POST['tahun_dokumen'];
+    $tipe_dokumen = $_POST['tipe_dokumen'];
+    $nipp = $_SESSION['nipp'];
+    
+    if (isset($_FILES['file_dokumen']) && $_FILES['file_dokumen']['error'] === UPLOAD_ERR_OK) {
+        $file = $_FILES['file_dokumen'];
+        $upload_dir = '../../uploads/dokumen_penghapusan/';
+        
+        if (!file_exists($upload_dir)) {
+            mkdir($upload_dir, 0777, true);
+        }
+        
+        $allowed_ext = ['pdf'];
+        $file_ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+        
+        if (!in_array($file_ext, $allowed_ext)) {
+            $_SESSION['warning_message'] = "Format file harus PDF!";
+            header("Location: " . $_SERVER['PHP_SELF'] . "#upload");
+            exit();
+        }
+        
+        if ($file['size'] > 5 * 1024 * 1024) {
+            $_SESSION['warning_message'] = "Ukuran file maksimal 5MB!";
+            header("Location: " . $_SERVER['PHP_SELF'] . "#upload");
+            exit();
+        }
+        
+        // Generate filename
+        $new_filename = 'Dokumen_' . date('YmdHis') . '_' . uniqid() . '.pdf';
+        $file_path = $upload_dir . $new_filename;
+        
+        if (move_uploaded_file($file['tmp_name'], $file_path)) {
+            // Split usulan IDs jika multiple
+            $ids = explode(',', $usulan_ids);
+            $success_count = 0;
+            
+            foreach ($ids as $id) {
+                $id = trim($id);
+                if (empty($id)) continue;
+
+                // Get usulan data
+                $query = "SELECT nomor_asset_utama, profit_center, subreg FROM usulan_penghapusan WHERE id = ?";
+                $stmt = $con->prepare($query);
+                $stmt->bind_param("i", $id);
+                $stmt->execute();
+                $result = $stmt->get_result();
+
+                if ($result->num_rows > 0) {
+                    $usulan = $result->fetch_assoc();
+
+                    // Try to get profit_center_text (cabang) from import_dat using nomor_asset_utama
+                    $profit_center_text = null;
+                    if (!empty($usulan['nomor_asset_utama'])) {
+                        $qimp = $con->prepare("SELECT profit_center_text, subreg FROM import_dat WHERE nomor_asset_utama = ? LIMIT 1");
+                        $qimp->bind_param("s", $usulan['nomor_asset_utama']);
+                        $qimp->execute();
+                        $rimp = $qimp->get_result();
+                        if ($rimp && $rimp->num_rows > 0) {
+                            $rowimp = $rimp->fetch_assoc();
+                            $profit_center_text = $rowimp['profit_center_text'];
+                            // If usulan doesn't have subreg, use one from import_dat
+                            if (empty($usulan['subreg'])) {
+                                $usulan['subreg'] = $rowimp['subreg'];
+                            }
+                        }
+                        $qimp->close();
+                    }
+
+                    // Insert dokumen untuk setiap aset, termasuk profit_center_text
+                    $insert_query = "INSERT INTO dokumen_penghapusan 
+                                   (usulan_id, tahun_dokumen, tipe_dokumen, no_aset, subreg, profit_center, profit_center_text, nipp, file_name, file_path, file_size) 
+                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                    $stmt_insert = $con->prepare($insert_query);
+                    $stmt_insert->bind_param("iissssssssi", 
+                        $id, 
+                        $tahun_dokumen, 
+                        $tipe_dokumen, 
+                        $usulan['nomor_asset_utama'],
+                        $usulan['subreg'],
+                        $usulan['profit_center'],
+                        $profit_center_text,
+                        $nipp,
+                        $new_filename,
+                        $file_path,
+                        $file['size']
+                    );
+
+                    if ($stmt_insert->execute()) {
+                        $success_count++;
+                    }
+                    $stmt_insert->close();
+                }
+                $stmt->close();
+            }
+            
+            if ($success_count > 0) {
+                $_SESSION['success_message'] = "✅ Berhasil upload dokumen untuk " . $success_count . " aset!";
+            } else {
+                $_SESSION['warning_message'] = "Gagal menyimpan dokumen ke database!";
+            }
+        } else {
+            $_SESSION['warning_message'] = "Gagal upload file!";
+        }
+    }
+    
+    header("Location: " . $_SERVER['PHP_SELF'] . "#upload");
+    exit();
+}
+// ========================================================
+// HANDLER: Delete Dokumen
+// ========================================================
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] === 'delete_dokumen') {
+    $dokumen_id = intval($_POST['dokumen_id']);
+    $user_nipp = $_SESSION['nipp'];
+    
+    // Get file path dan cek ownership
+    $q = $con->prepare("SELECT dp.file_path, dp.usulan_id 
+                        FROM dokumen_penghapusan dp 
+                        JOIN usulan_penghapusan up ON dp.usulan_id = up.id 
+                        WHERE dp.id_dokumen = ? AND up.created_by = ?");
+    $q->bind_param("is", $dokumen_id, $user_nipp);
+    $q->execute();
+    $res = $q->get_result();
+    
+    if ($res->num_rows > 0) {
+        $dok = $res->fetch_assoc();
+        $file_path = $dok['file_path'];
+        
+        // Delete dari database
+        $del = $con->prepare("DELETE FROM dokumen_penghapusan WHERE id_dokumen = ?");
+        $del->bind_param("i", $dokumen_id);
+        
+        if ($del->execute()) {
+            // Delete file dari server
+            if (file_exists($file_path)) {
+                unlink($file_path);
+            }
+            $_SESSION['success_message'] = "✅ Dokumen berhasil dihapus.";
+        } else {
+            $_SESSION['error_message'] = "❌ Gagal menghapus dokumen.";
+        }
+        $del->close();
+    } else {
+        $_SESSION['error_message'] = "❌ Dokumen tidak ditemukan atau Anda tidak memiliki akses.";
+    }
+    $q->close();
+    
+    header("Location: " . $_SERVER['PHP_SELF'] . "#upload");
+    exit();
+}
+
+// ========================================================
+// HANDLER: Submit to Approval (SubReg)
+// ========================================================
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] === 'submit_to_approval') {
+    $usulan_id = intval($_POST['usulan_id']);
+    $user_nipp = $_SESSION['nipp'];
+    
+    // Cek apakah ada dokumen yang sudah diupload
+    $check_dok = $con->prepare("SELECT COUNT(*) as jml FROM dokumen_penghapusan WHERE usulan_id = ?");
+    $check_dok->bind_param("i", $usulan_id);
+    $check_dok->execute();
+    $res_dok = $check_dok->get_result()->fetch_assoc();
+    $check_dok->close();
+    
+    if ($res_dok['jml'] == 0) {
+        $_SESSION['error_message'] = "❌ Minimal upload 1 dokumen sebelum submit ke approval.";
+        header("Location: " . $_SERVER['PHP_SELF'] . "#upload");
+        exit();
+    }
+    
+    // Update status usulan
+    $upd = $con->prepare("UPDATE usulan_penghapusan 
+                          SET status = 'submitted', 
+                              submitted_to_approval_at = NOW(),
+                              updated_at = NOW()
+                          WHERE id = ? 
+                          AND created_by = ? 
+                          AND status = 'dokumen_lengkap'");
+    $upd->bind_param("is", $usulan_id, $user_nipp);
+    
+    if ($upd->execute() && $upd->affected_rows > 0) {
+        $_SESSION['success_message'] = "✅ Usulan berhasil di-submit ke Approval SubReg!";
+        $upd->close();
+        
+        // Redirect ke halaman approval subreg (opsional)
+        // header("Location: ../approval_subreg/approval_subreg.php");
+        header("Location: " . $_SERVER['PHP_SELF'] . "#summary");
+        exit();
+    } else {
+        $_SESSION['error_message'] = "❌ Gagal submit usulan. Pastikan status usulan adalah 'dokumen_lengkap'.";
+        $upd->close();
+        header("Location: " . $_SERVER['PHP_SELF'] . "#upload");
+        exit();
+    }
+}
+
+//  Detail Aset by nomor_asset_utama
+if (isset($_GET['action']) && $_GET['action'] === 'get_detail_aset' && isset($_GET['no_aset'])) {
+    header('Content-Type: application/json');
+    $no_aset = trim($_GET['no_aset']);
+
+    // Ambil data dari import_dat
+    $stmt_da = $con->prepare(
+        "SELECT id.nomor_asset_utama, id.keterangan_asset, id.profit_center,
+                id.subreg, id.profit_center_text,
+                up.status AS status_penghapusan
+         FROM import_dat id
+         LEFT JOIN usulan_penghapusan up
+               ON id.nomor_asset_utama = up.nomor_asset_utama
+              AND up.created_by = ?
+         WHERE id.nomor_asset_utama = ?
+         LIMIT 10"
+    );
+    $stmt_da->bind_param("ss", $_SESSION['nipp'], $no_aset);
+    $stmt_da->execute();
+    $res_da = $stmt_da->get_result();
+    $rows_da = [];
+    while ($r = $res_da->fetch_assoc()) {
+     
+        $status_map = [
+            'draft'           => 'Draft',
+            'lengkapi_dokumen'=> 'Lengkapi Data',
+            'dokumen_lengkap' => 'Siap Upload',
+            'submitted'       => 'Submitted',
+            'approved_subreg' => 'Approved SubReg',
+            'approved'        => 'Approved',
+            'rejected'        => 'Rejected',
+        ];
+        $r['status_penghapusan'] = isset($r['status_penghapusan']) && $r['status_penghapusan']
+            ? ($status_map[$r['status_penghapusan']] ?? ucfirst($r['status_penghapusan']))
+            : '';
+        $rows_da[] = $r;
+    }
+    $stmt_da->close();
+
+    echo json_encode(['status' => 'success', 'data' => $rows_da]);
+    exit();
+}
+
 // Handle update dropdown field (mekanisme penghapusan / fisik aset)
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] === 'update_dropdown_field') {
     $asset_id = intval($_POST['asset_id']);
-    $nomor_aset = $_POST['nomor_aset'];
-    $field_type = $_POST['field_type']; // 'mekanisme' atau 'fisik'
+    $no_aset = $_POST['no_aset'];
+    $field_type = $_POST['field_type']; 
     $value = $_POST['value'];
     
-    // Cek apakah sudah ada record di usulan_penghapusan untuk aset ini
     $check = $con->prepare("SELECT id FROM usulan_penghapusan WHERE nomor_asset_utama = ? AND created_by = ?");
-    $check->bind_param("ss", $nomor_aset, $_SESSION['nipp']);
+    $check->bind_param("ss", $no_aset, $_SESSION['nipp']);
     $check->execute();
     $result = $check->get_result();
     
     if ($result->num_rows > 0) {
-        // Update existing record
         $row = $result->fetch_assoc();
         $usulan_id = $row['id'];
         
@@ -312,14 +673,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         }
         $upd->close();
     } else {
-        // Create new draft record
+
         $userProfitCenter = isset($_SESSION['Cabang']) ? $_SESSION['Cabang'] : '';
         $ins = $con->prepare("INSERT INTO usulan_penghapusan (nomor_asset_utama, profit_center, status, created_by, created_at, updated_at, mekanisme_penghapusan, fisik_aset) VALUES (?, ?, 'draft', ?, NOW(), NOW(), ?, ?)");
         
         $mekanisme_val = ($field_type === 'mekanisme') ? $value : '';
         $fisik_val = ($field_type === 'fisik') ? $value : '';
         
-        $ins->bind_param("sssss", $nomor_aset, $userProfitCenter, $_SESSION['nipp'], $mekanisme_val, $fisik_val);
+        $ins->bind_param("sssss", $no_aset, $userProfitCenter, $_SESSION['nipp'], $mekanisme_val, $fisik_val);
         
         if ($ins->execute()) {
             echo json_encode(['success' => true, 'message' => 'Created']);
@@ -348,7 +709,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && $_POST['action'] === 'submit_from_dr
         $upd->close();
     }
     if ($submitted > 0) {
-        header("Location: ../usulan_penghapusan_aset/lengkapi_dokumen.php");
+        header("Location: ../usulan_penghapusan_aset/usulan_penghapusan_aset.php");
         exit();
     } else {
         $pesan = "⚠️ Tidak ada draft yang berhasil di-submit.";
@@ -372,7 +733,6 @@ $dq->close();
 // Function untuk simpan aset
 function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $userProfitCenter) {
     $saved_count = 0;
-    // Status: draft (simpan draft) atau lengkapi_dokumen (submit ke lengkapi dokumen)
     $status = $is_submit ? 'lengkapi_dokumen' : 'draft';
 
     $stmt = $con->prepare("INSERT INTO usulan_penghapusan (
@@ -451,8 +811,8 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                 $row['tgl_perolehan'],
                 $row['nilai_buku_sd'],          
                 $row['nilai_perolehan_sd'],
-                $mekanisme_pilihan,  // Dari dropdown
-                $fisik_pilihan,      // Dari dropdown     
+                $mekanisme_pilihan,  
+                $fisik_pilihan,        
                 $status,
                 $created_by
             );
@@ -569,6 +929,15 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
       }
       #myTable tbody td {
         border-bottom: 1px solid #dee2e6;
+      }
+      .cursor-pointer {
+        cursor: pointer;
+      }
+      .is-submitted {
+        accent-color: #198754;
+      }
+      tr:has(.is-submitted) {
+        background-color: #f0fff4 !important; 
       }
     </style>
     <!--end::Custom Styles-->
@@ -697,31 +1066,53 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
             <?php  
             $userNipp = isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : '';
             $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '" . mysqli_real_escape_string($con, $userNipp) . "' ORDER BY menus.urutan_menu ASC";
-            $result = mysqli_query($con, $query) or die(mysqli_error($con));
+            $result_menu = mysqli_query($con, $query) or die(mysqli_error($con));
             $iconMap = [
-                'Dasboard'               => 'bi bi-grid-fill',
-                'Usulan Penghapusan'     => 'bi bi-clipboard-plus-fill',
-                'Approval SubReg'        => 'bi bi-check-circle',
-                'Approval Regional'      => 'bi bi-check2-square',
-                'Persetujuan Penghapusan'=> 'bi bi-clipboard-check-fill',
-                'Pelaksanaan Penghapusan'=> 'bi bi-tools',
-                'Manajemen Menu'         => 'bi bi-list-ul',
-                'Import DAT'             => 'bi bi-file-earmark-arrow-up-fill',
-                'Daftar Aset Tetap'      => 'bi bi-card-list',
-                'Manajemen User'         => 'bi bi-people-fill'
+                'Dasboard'                  => 'bi bi-grid-fill',
+                'Usulan Penghapusan'        => 'bi bi-clipboard-plus-fill',
+                'Daftar Usulan Penghapusan' => 'bi bi-list-check',
+                'Approval SubReg'           => 'bi bi-check-circle',
+                'Approval Regional'         => 'bi bi-check2-square',
+                'Persetujuan Penghapusan'   => 'bi bi-clipboard-check-fill',
+                'Pelaksanaan Penghapusan'   => 'bi bi-tools',
+                'Manajemen Menu'            => 'bi bi-list-ul',
+                'Import DAT'                => 'bi bi-file-earmark-arrow-up-fill',
+                'Daftar Aset Tetap'         => 'bi bi-card-list',
+                'Manajemen User'            => 'bi bi-people-fill'
             ];
-  
-            while ($row = mysqli_fetch_assoc($result)) {
-                $namaMenu = trim($row['nama_menu']); 
-                $icon = $iconMap[$namaMenu] ?? 'bi bi-circle';
+            
+            $menuRows = [];
+            while ($row = mysqli_fetch_assoc($result_menu)) {
+                $menuRows[] = $row;
+            }
+            
+            $hasDaftarUsulan = false;
+            $daftarRow = null;
+            foreach ($menuRows as $row) {
+                if (trim($row['nama_menu']) === 'Daftar Usulan Penghapusan') {
+                    $hasDaftarUsulan = true;
+                    $daftarRow = $row;
+                    break;
+                }
+            }
+            
+            $currentPage = basename($_SERVER['PHP_SELF']);
+            
+            foreach ($menuRows as $row) {
+                $namaMenu = trim($row['nama_menu']);
                 
-                $currentPage = basename($_SERVER['PHP_SELF']);
-                $menuFile = $row['menu'].'.php'; 
+                if ($namaMenu === 'Daftar Usulan Penghapusan') {
+                    continue;
+                }
+                
+                $icon = $iconMap[$namaMenu] ?? 'bi bi-circle';
+                $menuFile = $row['menu'].'.php';
                 $isActive = ($currentPage === $menuFile) ? 'active' : '';
 
-              if ($namaMenu === 'Manajemen Menu') {
-               echo '<li class="nav-header"></li>';
-              }
+                if ($namaMenu === 'Manajemen Menu') {
+                    echo '<li class="nav-header"></li>';
+                }
+                
                 echo '
                 <li class="nav-item">
                     <a href="../'.$row['menu'].'/'.$row['menu'].'.php" class="nav-link '.$isActive.'">
@@ -729,6 +1120,20 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                         <p>'.$row['nama_menu'].'</p>
                     </a>
                 </li>';
+                
+                if ($namaMenu === 'Usulan Penghapusan' && $hasDaftarUsulan && $daftarRow) {
+                    $daftarIcon = $iconMap['Daftar Usulan Penghapusan'] ?? 'bi bi-circle';
+                    $daftarFile = $daftarRow['menu'].'.php';
+                    $isDaftarActive = ($currentPage === $daftarFile) ? 'active' : '';
+                    
+                    echo '
+                <li class="nav-item">
+                    <a href="../'.$daftarRow['menu'].'/'.$daftarRow['menu'].'.php" class="nav-link '.$isDaftarActive.'">
+                        <i class="nav-icon '.$daftarIcon.'"></i>
+                        <p>Daftar Usulan Penghapusan</p>
+                    </a>
+                </li>';
+                }
             }
             ?>
             </ul>
@@ -797,6 +1202,16 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                           
                         </button>
                       </li>
+                      <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="upload-dokumen-tab" data-bs-toggle="tab" data-bs-target="#upload" type="button" role="tab" aria-controls="upload" aria-selected="false">
+                          <i class="bi bi-cloud-upload me-2"></i>Upload Dokumen
+                        </button>
+                      </li>
+                      <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="summary-tab" data-bs-toggle="tab" data-bs-target="#summary" type="button" role="tab" aria-controls="summary" aria-selected="false">
+                          <i class="bi bi-clipboard-data me-2"></i>Summary
+                        </button>
+                      </li>
                     </ul>
 
                     <div class="tab-content" id="usulanTabsContent">
@@ -840,6 +1255,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                               FROM import_dat id 
                                               LEFT JOIN usulan_penghapusan up ON id.nomor_asset_utama = up.nomor_asset_utama 
                                               WHERE id.profit_center = ?
+                                              AND id.nilai_perolehan_sd != 0
                                               ORDER BY id.nomor_asset_utama ASC";
                                     $stmt = $con->prepare($query);
                                     $stmt->bind_param("s", $userProfitCenter);
@@ -852,25 +1268,23 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                       echo '<tr><td colspan="14" class="text-center">Tidak ada data aset</td></tr>';
                                     } else {
                                      while ($row = $result->fetch_assoc()) {
-                                        // Auto-check jika aset ini ada di draft ATAU sudah di-submit
-                                        $isInDraft = in_array($row['nomor_asset_utama'], $draft_asset_numbers);
-                                        $isSubmitted = in_array($row['nomor_asset_utama'], $lengkapi_asset_numbers);
-                                        $checkedAttr = ($isInDraft || $isSubmitted) ? ' checked' : '';
-                                        $disabledAttr = $isSubmitted ? ' disabled title="Aset sudah di-submit"' : '';
-                                        
-                                        // Format nilai currency (Rupiah)
+                                        $isInDraft        = in_array($row['nomor_asset_utama'], $draft_asset_numbers);
+                                        $isLengkapi       = in_array($row['nomor_asset_utama'], $lengkapi_asset_numbers);
+                                        $isSubmitted      = in_array($row['nomor_asset_utama'], $submitted_asset_numbers);
+                                        $checkedAttr      = ($isInDraft || $isLengkapi || $isSubmitted) ? ' checked' : '';
+                                        $disabledAttr     = ($isLengkapi || $isSubmitted) ? ' disabled title="Aset sudah di-submit"' : '';
+                                        $draftClass       = $isInDraft ? ' is-draft' : '';
+                                        $submittedClass   = $isSubmitted ? ' is-submitted' : '';
+
                                         $nilai_buku = isset($row['nilai_buku_sd']) ? 'Rp ' . number_format($row['nilai_buku_sd'], 0, ',', '.') : '-';
                                         $nilai_perolehan = isset($row['nilai_perolehan_sd']) ? 'Rp ' . number_format($row['nilai_perolehan_sd'], 0, ',', '.') : '-';
                                         
-                                        // Hilangkan kode "AUC-" dari asset_class_name dan keterangan_asset
                                         $kategori_aset = str_replace('AUC-', '', $row['asset_class_name']);
                                         $nama_aset = str_replace('AUC-', '', $row['keterangan_asset']);
                                         
-                                        // Tampilkan mekanisme dan fisik aset jika sudah ada usulan
                                         $mekanisme = !empty($row['mekanisme_penghapusan']) ? htmlspecialchars($row['mekanisme_penghapusan']) : '-';
                                         $fisik = !empty($row['fisik_aset']) ? htmlspecialchars($row['fisik_aset']) : '-';
                                         
-                                        // Tombol hapus draft (hanya tampil jika status = 'draft')
                                         $hapusDraftBtn = '';
                                         if ($isInDraft && !empty($row['draft_id']) && $row['draft_status'] === 'draft') {
                                             $hapusDraftBtn = '<button type="button" class="btn btn-sm btn-outline-danger" 
@@ -899,7 +1313,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                         echo '<tr>
                                           <td style="text-align:center;">'.$hapusDraftBtn.'</td>
                                           <td style="text-align:center;">
-                                            <input type="checkbox" class="row-checkbox form-check-input" value="'.htmlspecialchars($row['id']).'"'.$checkedAttr.$disabledAttr.'>
+                                            <input type="checkbox" class="row-checkbox form-check-input'.$draftClass.$submittedClass.'" value="'.htmlspecialchars($row['id']).'"'.$checkedAttr.$disabledAttr.'>
                                           </td>
                                           <td>'.$mekanismeDropdown.'</td>
                                           <td>'.$fisikDropdown.'</td>
@@ -921,8 +1335,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                 </tbody>
                               </table>
                             </div>
-                            <!-- End Table -->
-                            <!-- Tombol hanya di tab aset -->
+ 
                              <!-- Action Buttons -->
                                         <form id="saveForm" method="POST">
                                         <input type="hidden" id="selectedItemsInput" name="selected_items">
@@ -948,13 +1361,14 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                           </div>
                           <!-- End Tab Pilih Aset -->
 
-                          <!-- Tab Lengkapi Dokumen -->
+                          <!-- Tab Lengkapi Data -->
                           <div class="tab-pane fade" id="dokumen" role="tabpanel">
+                            
                             
                             <!-- Summary Boxes -->
                             <div class="row mb-4">
                               <div class="col-md-4">
-                                <div class="small-box text-bg-warning">
+                                <div class="small-box" style="background: linear-gradient(135deg, #FFC107 0%, #FFB300 100%); color: white;">
                                   <div class="inner">
                                     <h3><?= count(array_filter($lengkapi_data, fn($d) => $d['status'] === 'lengkapi_dokumen')) ?></h3>
                                     <p>Lengkapi Data</p>
@@ -963,16 +1377,16 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                 </div>
                               </div>
                               <div class="col-md-4">
-                                <div class="small-box text-bg-success">
+                                <div class="small-box" style="background: linear-gradient(135deg, #28A745 0%, #218838 100%); color: white;">
                                   <div class="inner">
                                     <h3><?= count(array_filter($lengkapi_data, fn($d) => $d['status'] === 'dokumen_lengkap')) ?></h3>
                                     <p>Data Lengkap</p>
                                   </div>
-                                  <i class="bi bi-check-circle small-box-icon"></i>
+                                    <i class="bi bi-check-circle small-box-icon"></i>
                                 </div>
                               </div>
                               <div class="col-md-4">
-                                <div class="small-box text-bg-info">
+                                <div class="small-box" style="background: linear-gradient(135deg, #17A2B8 0%, #138496 100%); color: white;">
                                   <div class="inner">
                                     <h3><?= count($lengkapi_data) ?></h3>
                                     <p>Total Usulan</p>
@@ -981,11 +1395,10 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                 </div>
                               </div>
                             </div>
-                            <div class="row mb-1">
-                         
-                            <!-- End Summary Boxes -->                    
+                            <!-- End Summary Boxes -->      
+
                               <div class="d-flex justify-content-between align-items-center mb-2">
-                              <h5 class="mb-0 mt-0">Daftar Aset yang Dapat Diajukan</h5>
+                              <h5 class="mb-0 mt-0">Daftar Usulan Aset yang Dapat Diajukan</h5>
                             </div>
 
                             <?php if (empty($lengkapi_data)): ?>
@@ -1020,12 +1433,12 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                     <td><?= htmlspecialchars($row['profit_center']) . (!empty($row['profit_center_text']) ? ' - ' . htmlspecialchars($row['profit_center_text']) : '') ?></td>
                                     <td>
                                       <?php if ($row['status'] === 'lengkapi_dokumen'): ?>
-                                        <span class="badge bg-warning text-dark">
+                                        <span class="badge" style="background: #FFC107; color: white;">
                                           <i class="bi bi-exclamation-triangle me-1"></i>Lengkapi Data
                                         </span>
                                       <?php elseif ($row['status'] === 'dokumen_lengkap'): ?>
-                                        <span class="badge bg-success">
-                                          <i class="bi bi-check-circle me-1"></i>Data Lengkap
+                                        <span class="badge" style="background: #218838; color: white;">
+                                          <i class="bi bi-check-circle-fill text-succes me-1"></i>Data Lengkap
                                         </span>
                                       <?php endif; ?>
                                     </td>
@@ -1054,10 +1467,851 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                 </tbody>
                               </table>
                             </div>
-                         <?php endif; ?>
+                            <?php endif; ?>
+                          </div>
+        
+                    <!-- Tab 3: Upload Dokumen -->
+                     <div class="tab-pane fade" id="upload" role="tabpanel">
+
+                            <?php
+                            // Tampilkan pesan error/success dari session untuk tab upload
+                            if (isset($_SESSION['error_message'])) {
+                                echo '<div class="alert alert-danger alert-dismissible fade show"><i class="bi bi-x-circle me-2"></i>' . htmlspecialchars($_SESSION['error_message']) . '<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>';
+                                unset($_SESSION['error_message']);
+                            }
+                            ?>
+                            <div class="card mb-0" style="border: 1px solid #dee2e6; border-radius: 4px;">
+                              <div class="card-header" style="background: #fff; border-bottom: 1px solid #dee2e6; padding: 12px 20px;">
+                                <strong style="font-size: 1rem;">Form Upload Dokumen</strong>
+                              </div>
+                              <div class="card-body" style="padding: 20px;">
+
+                                <?php if (empty($upload_data)): ?>
+                                  <div class="alert alert-warning mb-0">
+                                    <i class="bi bi-info-circle me-2"></i>
+                                    <strong>Belum ada usulan yang siap untuk upload dokumen.</strong><br>
+                                    Silakan lengkapi data aset terlebih dahulu di tab <strong>"Lengkapi Data Aset"</strong>.
+                                  </div>
+                                <?php else: ?>
+
+                                <form method="POST" enctype="multipart/form-data" id="formUploadInline" novalidate>
+                                  <input type="hidden" name="action" value="upload_dokumen">
+                                  <input type="hidden" name="usulan_id" id="inlineUsulanId" value="">
+
+                                  <!-- Baris 1: Deskripsi Dokumen -->
+                                  <div class="mb-3">
+                                    <label class="form-label" style="font-weight: normal;">Deskripsi Dokumen</label>
+                                    <input type="text" class="form-control" name="tipe_dokumen" id="inlineTipeDokumen"
+                                           style="border: 1px solid #dee2e6; border-radius: 4px;"
+                                           maxlength="100" required>
+                                    <div class="invalid-feedback">Isi deskripsi dokumen terlebih dahulu.</div>
+                                  </div>
+
+                                  <!-- Baris 2: Nomor Aset -->
+                                  <div class="mb-3">
+                                    <label class="form-label" style="font-weight: normal;">Nomor Aset</label>
+                                    <div class="input-group">
+                                      <input type="text" class="form-control" id="inlineNomorAset"
+                                             placeholder="Masukkan nomor aset atau pilih"
+                                             style="border: 1px solid #dee2e6; border-radius: 4px 0 0 4px;"
+                                             readonly>
+                                      <button type="button" class="btn btn-outline-primary" id="btnPilihNomorAset"
+                                              style="border-radius: 0 4px 4px 0; border-color: #dee2e6;"
+                                              onclick="openAsetPickerUpload()">
+                                        <i class="bi bi-search me-1"></i> Pilih Nomor Aset
+                                      </button>
+                                      
+                                    </div>
+                                    <div class="invalid-feedback" id="inlineNomorAsetError" style="display:none;">Pilih nomor aset terlebih dahulu.</div>
+                                  </div>
+
+                                  <!-- Baris 3: Choose File -->
+                                  <div class="mb-1">
+                                    <input type="file" class="form-control" name="file_dokumen" id="inlineFileDokumen"
+                                           accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                                           style="border: 1px solid #dee2e6; border-radius: 4px;"
+                                           required>
+                                    <div class="invalid-feedback">Pilih file yang akan diupload.</div>
+                                  </div>
+                                  <div class="mb-3" style="font-size: 0.85rem; color: #6c757d;">
+                                    Format yang didukung: <strong>.pdf</strong>. Maksimal 5MB.
+                                  </div>
+
+                                  <!-- Tombol Upload -->
+                                  <button type="submit" class="btn btn-primary" id="btnUploadInline"
+                                          style="background: #0d6efd; border: none; padding: 8px 20px; border-radius: 4px;">
+                                    <i class="bi bi-cloud-upload me-1"></i> Upload
+                                  </button>
+                                </form>
+                                <?php endif; ?>
+
+                              </div>
+                            </div>
+
+                            <?php if (!empty($upload_data)): ?>
+
+                     <!-- TABEL PREVIEW DOKUMEN-->
+                            <?php
+                            
+                            $semua_dokumen = [];
+                            foreach ($upload_data as $usulan) {
+                                $q_dok = $con->prepare(
+                                    "SELECT dp.id_dokumen, dp.tahun_dokumen, dp.profit_center, dp.subreg,
+                                            dp.tipe_dokumen, dp.profit_center_text, dp.file_path, dp.file_name,
+                                            up.nomor_asset_utama, up.id as usulan_id
+                                     FROM dokumen_penghapusan dp
+                                     JOIN usulan_penghapusan up ON dp.usulan_id = up.id
+                                     WHERE dp.usulan_id = ?
+                                     ORDER BY dp.id_dokumen DESC"
+                                );
+                                $q_dok->bind_param("i", $usulan['id']);
+                                $q_dok->execute();
+                                $r_dok = $q_dok->get_result();
+                                while ($d = $r_dok->fetch_assoc()) {
+                                    $semua_dokumen[] = $d;
+                                }
+                                $q_dok->close();
+                            }
+                            ?>
+                            <div class="card mt-3" style="border: none;">
+                              <div class="card-header" style="background: #5a6268; color: white; padding: 10px 16px; border-radius: 4px 4px 0 0;">
+                                <strong>Preview Dokumen</strong>
+                              </div>
+                              <div class="card-body p-0">
+                                <div class="table-responsive">
+                                  <table id="uploadTable" class="table table-bordered table-hover mb-0" style="font-size: 0.9rem;">
+                                    <thead style="background: #f8f9fa;">
+                                      <tr>
+                                        <th style="width: 50px;">ID</th>
+                                        <th style="width: 70px;">Tahun</th>
+                                        <th>Profit Center</th>
+                                        <th>Subreg</th>
+                                        <th>Deskripsi Dokumen</th>
+                                        <th>Cabang</th>
+                                        <th style="width: 220px;">Aksi</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      <?php if (empty($semua_dokumen)): ?>
+                                        <tr>
+                                          <td colspan="7" class="text-center text-muted py-3">
+                                            Belum ada dokumen yang diupload
+                                          </td>
+                                        </tr>
+                                      <?php else: ?>
+                                        <?php foreach ($semua_dokumen as $dok): ?>
+                                        <tr>
+                                          <td><?= $dok['id_dokumen'] ?></td>
+                                          <td><?= htmlspecialchars($dok['tahun_dokumen'] ?? date('Y')) ?></td>
+                                          <td><?= htmlspecialchars($dok['profit_center'] ?? '') ?></td>
+                                          <td><?= htmlspecialchars($dok['subreg'] ?? '') ?></td>
+                                          <td><?= htmlspecialchars($dok['tipe_dokumen'] ?? '') ?></td>
+                                          <td><?= htmlspecialchars($dok['profit_center_text'] ?? '') ?></td>
+                                          <td style="white-space: nowrap;">
+                                            <!-- Lihat Dokumen -->
+                                            <a href="<?= htmlspecialchars($dok['file_path'] ?? '#') ?>"
+                                               target="_blank"
+                                               class="btn btn-sm btn-outline-secondary"
+                                               style="margin-right: 4px; font-size: 0.8rem; padding: 2px 8px;">
+                                              Lihat Dokumen
+                                            </a>
+                                            <!-- Detail Aset -->
+                                            <button type="button"
+                                                    class="btn btn-sm btn-outline-info"
+                                                    style="margin-right: 4px; font-size: 0.8rem; padding: 2px 8px;"
+                                                    onclick="showDetailAset('<?= htmlspecialchars(addslashes($dok['nomor_asset_utama'])) ?>')">
+                                              Detail Aset
+                                            </button>
+                                            <!-- Hapus -->
+                                            <button type="button"
+                                                    class="btn btn-sm btn-outline-danger"
+                                                    style="font-size: 0.8rem; padding: 2px 8px;"
+                                                    onclick="confirmDeleteDokumen(<?= $dok['id_dokumen'] ?>, '<?= htmlspecialchars(addslashes($dok['tipe_dokumen'])) ?>')">
+                                              Hapus
+                                            </button>
+                                          </td>
+                                        </tr>
+                                        <?php endforeach; ?>
+                                      <?php endif; ?>
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            </div>
+                            
+                             
+                            <?php endif; ?>
+                          </div>
+                          <!-- End Tab Upload Dokumen -->
+                           <!-- Modal: Aset Picker untuk tab Upload -->
+                            <div class="modal fade" id="modalAsetPickerUpload" tabindex="-1" aria-hidden="true">
+                              <div class="modal-dialog modal-xl modal-dialog-centered">
+                                <div class="modal-content">
+                                  <div class="modal-header bg-primary text-white">
+                                    <h5 class="modal-title">
+                                      <i class="bi bi-search me-2"></i>Pilih Nomor Aset
+                                    </h5>
+                                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                                  </div>
+                                  <div class="modal-body">
+                                    <!-- Info Alert -->
+                                    <div class="alert alert-info d-flex align-items-center mb-3">
+                                      <i class="bi bi-info-circle me-2"></i>
+                                      <div>
+                                        <strong>Multiple Select:</strong> Centang beberapa aset jika 1 dokumen berlaku untuk beberapa aset sekaligus
+                                      </div>
+                                    </div>
+                                    
+                                    <!-- Selection Counter -->
+                                    <div id="selectedAssetCount" class="alert alert-success" style="display:none;">
+                                      <i class="bi bi-check-circle me-2"></i>
+                                      <strong><span id="countNumber">0</span> aset dipilih</strong>
+                                    </div>
+                                    
+                                    <!-- Table -->
+                                    <div class="table-responsive">
+                                      <table class="table table-bordered table-hover table-sm" id="asetPickerUploadTable">
+                                        <thead class="table-light">
+                                          <tr>
+                                            <th style="width: 50px;">
+                                              <input type="checkbox" id="selectAllAssets" class="form-check-input">
+                                            </th>
+                                            <th>Nomor Aset</th>
+                                            <th>Mekanisme Penghapusan</th>
+                                            <th>Nama Aset</th>
+                                            <th>Kategori</th>
+                                            <th>Profit Center</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          <?php foreach ($upload_data as $ua): ?>
+                                          <tr <?= in_array($ua['id'], $usulan_with_docs) ? 'style="background-color: #e8f5e9; opacity: 0.8;"' : '' ?>>
+                                            <td class="text-center">
+                                              <input type="checkbox" 
+                                                    class="form-check-input asset-checkbox" 
+                                                    value="<?= $ua['id'] ?>"
+                                                    data-nomor="<?= htmlspecialchars($ua['nomor_asset_utama']) ?>"
+                                                    data-nama="<?= htmlspecialchars(str_replace('AUC-', '', $ua['nama_aset'] ?? '-')) ?>"
+                                                    data-has-doc="<?= in_array($ua['id'], $usulan_with_docs) ? 'true' : 'false' ?>"
+                                                    <?= in_array($ua['id'], $usulan_with_docs) ? 'disabled' : '' ?>>
+                                           
+                                            </td>
+                                            <td><?= htmlspecialchars($ua['nomor_asset_utama']) ?></td>
+                                            <td>
+                                              <?= !empty($ua['mekanisme_penghapusan']) ? htmlspecialchars($ua['mekanisme_penghapusan']) : '-' ?> 
+                                            </td>
+                                            </td>
+                                            <td><?= htmlspecialchars(str_replace('AUC-', '', $ua['nama_aset'] ?? '-')) ?></td>
+                                            <td><?= htmlspecialchars($ua['kategori_aset'] ?? '-') ?></td>
+                                             <td><?= htmlspecialchars($row['profit_center']) . (!empty($row['profit_center_text']) ? ' - ' . htmlspecialchars($row['profit_center_text']) : '') ?></td>
+                                          </tr>                                       
+                                          <?php endforeach; ?>
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </div>
+                                  <div class="modal-footer">
+                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                                      <i class="bi bi-x-circle me-1"></i> Batal
+                                    </button>
+                                    <button type="button" class="btn btn-primary" id="btnConfirmSelectAssets">
+                                      <i class="bi bi-check-circle me-1"></i> Konfirmasi Pilihan
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          <script>
+                          
+                          (function() {
+                            // Array global untuk aset yang dipilih
+                            var _selectedAsets = [];
+
+                            function updateAsetCounter() {
+                              _selectedAsets = [];
+                              document.querySelectorAll('.asset-checkbox:not([disabled]):checked').forEach(function(cb) {
+                                _selectedAsets.push({
+                                  id   : cb.value,
+                                  nomor: cb.getAttribute('data-nomor'),
+                                  nama : cb.getAttribute('data-nama')
+                                });
+                              });
+                              var count = _selectedAsets.length;
+                              document.getElementById('countNumber').textContent = count;
+                              var counter = document.getElementById('selectedAssetCount');
+                              if (count > 0) {
+                                counter.style.display = 'block';
+                              } else {
+                                counter.style.display = 'none';
+                              }
+                              // Sinkron Select All (hanya untuk yang tidak disabled)
+                              var all  = document.querySelectorAll('.asset-checkbox:not([disabled])').length;
+                              var chk  = document.querySelectorAll('.asset-checkbox:not([disabled]):checked').length;
+                              var sa   = document.getElementById('selectAllAssets');
+                              if (sa) sa.checked = (all > 0 && all === chk);
+                            }
+
+                            // Delegasi event untuk checkbox individual (tahan terhadap re-render)
+                            document.addEventListener('change', function(e) {
+                              if (e.target && e.target.classList.contains('asset-checkbox')) {
+                                updateAsetCounter();
+                              }
+                              if (e.target && e.target.id === 'selectAllAssets') {
+                                var isChecked = e.target.checked;
+                                // Hanya check/uncheck checkbox yang tidak disabled
+                                document.querySelectorAll('.asset-checkbox:not([disabled])').forEach(function(cb) {
+                                  cb.checked = isChecked;
+                                });
+                                updateAsetCounter();
+                              }
+                            });
+
+                            // Reset saat modal dibuka
+                            document.addEventListener('show.bs.modal', function(e) {
+                              if (e.target && e.target.id === 'modalAsetPickerUpload') {
+                                document.querySelectorAll('.asset-checkbox').forEach(function(cb) {
+                                  // Auto-check jika aset sudah memiliki dokumen
+                                  cb.checked = (cb.getAttribute('data-has-doc') === 'true');
+                                });
+                                var sa = document.getElementById('selectAllAssets');
+                                if (sa) {
+                                  // Set selectAll berdasarkan apakah semua yang enabled sudah checked
+                                  var all_enabled = document.querySelectorAll('.asset-checkbox:not([disabled])').length;
+                                  var checked_enabled = document.querySelectorAll('.asset-checkbox:not([disabled]):checked').length;
+                                  sa.checked = (all_enabled > 0 && all_enabled === checked_enabled);
+                                }
+                                updateAsetCounter();
+                              }
+                            });
+
+                            // Tombol Konfirmasi Pilihan
+                            document.addEventListener('click', function(e) {
+                              if (e.target && (e.target.id === 'btnConfirmSelectAssets' || e.target.closest('#btnConfirmSelectAssets'))) {
+                                if (_selectedAsets.length === 0) {
+                                  alert('Silakan pilih minimal 1 aset terlebih dahulu!');
+                                  return;
+                                }
+                                // Set usulan IDs comma-separated
+                                var usulanIds = _selectedAsets.map(function(a){ return a.id; }).join(',');
+                                document.getElementById('inlineUsulanId').value = usulanIds;
+                                // Set display text
+                                var displayText = '';
+                                if (_selectedAsets.length === 1) {
+                                  displayText = _selectedAsets[0].nomor + ' - ' + _selectedAsets[0].nama;
+                                } else {
+                                  var preview = _selectedAsets.slice(0, 3).map(function(a){ return a.nomor; }).join(', ');
+                                  displayText = _selectedAsets.length + ' aset dipilih (' + preview + (_selectedAsets.length > 3 ? '...' : '') + ')';
+                                }
+                                document.getElementById('inlineNomorAset').value = displayText;
+                                // Clear validation state
+                                document.getElementById('inlineNomorAset').classList.remove('is-invalid');
+                                document.getElementById('inlineNomorAsetError').style.display = 'none';
+                                // Tutup modal
+                                var modalEl = document.getElementById('modalAsetPickerUpload');
+                                var bsModal = bootstrap.Modal.getInstance(modalEl);
+                                if (bsModal) bsModal.hide();
+                              }
+                            });
+                          })();
+                          </script>
+
+                          <!-- Modal: Detail Data Aset dengan Mekanisme Penghapusan -->
+                          <div class="modal fade" id="modalDetailAset" tabindex="-1" aria-hidden="true">
+                            <div class="modal-dialog modal-xl modal-dialog-centered">
+                              <div class="modal-content" style="border-radius: 6px; overflow: hidden;">
+                                <!-- Header -->
+                                <div class="modal-header" style="background: #fff; border-bottom: 2px solid #0d6efd; padding: 14px 20px;">
+                                  <div>
+                                    <div class="d-flex align-items-center mb-1">
+                                      <i class="bi bi-table me-2" style="color: #0d6efd; font-size: 1.1rem;"></i>
+                                      <h5 class="modal-title mb-0 fw-bold" style="color: #0d6efd;">Detail Data Aset</h5>
+                                    </div>
+                                    <div style="font-size: 0.875rem; color: #555;">
+                                      Profit Center: <strong id="detailAsetPC">-</strong>
+                                      &nbsp;|&nbsp; Subreg: <strong id="detailAsetSubreg">-</strong>
+                                    </div>
+                                  </div>
+                                  <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                </div>
+                                <!-- Body — tabel data aset -->
+                                <div class="modal-body p-0">
+                                  <div class="table-responsive">
+                                    <table class="table mb-0" style="border-collapse: collapse;">
+                                      <thead class="table-light">
+                                          <tr>
+                                              <th style="width: 50px;">No</th>
+                                              <th style="width: 180px;">Nomor Aset</th>
+                                              <th>Nama Aset</th>
+                                              <th style="width: 150px;">Subreg</th>
+                                              <th style="width: 200px;">Cabang</th>
+                                          </tr>
+                                      </thead>
+                                      <tbody id="detailAsetTbody">
+                                        <tr>
+                                          <td colspan="5" class="text-center py-3 text-muted">Memuat data...</td>
+                                        </tr>
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                                <!-- Footer -->
+                                <div class="modal-footer" style="background: #f8f9fa; border-top: 1px solid #dee2e6; padding: 10px 20px; justify-content: space-between;">
+                                  <span id="detailAsetTotal" style="font-size: 0.875rem; color: #555;"></span>
+                                  <button type="button" class="btn btn-secondary btn-sm px-4"
+                                          data-bs-dismiss="modal"
+                                          style="background: #6c757d; border: none; border-radius: 4px;">
+                                    Tutup
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                          <!-- End Modal Detail Aset -->
+
+                          <!-- JavaScript for Upload Tab -->
+                          <script>
+                          // Initialize DataTable for preview dokumen
+                          $(document).ready(function() {
+                            if ($('#uploadTable').length) {
+                              $('#uploadTable').DataTable({
+                                responsive: false,
+                                autoWidth: false,
+                                paging: true,
+                                pageLength: 10,
+                                searching: true,
+                                ordering: true,
+                                info: true,
+                                language: {
+                                  url: 'https://cdn.datatables.net/plug-ins/1.13.7/i18n/id.json'
+                                },
+                                columnDefs: [
+                                  { orderable: false, targets: [6] }
+                                ]
+                              });
+                            }
+
+                            // asetPickerUploadTable: sengaja TIDAK pakai DataTable
+                            // agar checkbox event tetap bekerja
+                          });
+
+                          /** Buka modal picker aset */
+                          function openAsetPickerUpload() {
+                            const modal = new bootstrap.Modal(document.getElementById('modalAsetPickerUpload'));
+                            modal.show();
+                          }
+
+                          /** Pilih aset dari modal picker */
+                          function pilihAsetDariModal(usulanId, nomorAset) {
+                            document.getElementById('inlineUsulanId').value = usulanId;
+                            document.getElementById('inlineNomorAset').value = nomorAset;
+                            // Tutup modal
+                            bootstrap.Modal.getInstance(document.getElementById('modalAsetPickerUpload')).hide();
+                            // Focus ke deskripsi
+                            setTimeout(function() {
+                              document.getElementById('inlineTipeDokumen').focus();
+                            }, 300);
+                          }
+
+                          /** Fungsi Detail Aset — buka modal dengan data dari DB */
+                          function showDetailAset(nomorAset) {
+                            const tbody = document.getElementById('detailAsetTbody');
+                            const pcEl = document.getElementById('detailAsetPC');
+                            const subEl = document.getElementById('detailAsetSubreg');
+                            const totalEl = document.getElementById('detailAsetTotal');
+
+                            tbody.innerHTML = '<tr><td colspan="5" class="text-center py-3 text-muted">Memuat data...</td></tr>';
+                            pcEl.textContent  = '-';
+                            subEl.textContent = '-';
+                            totalEl.textContent = '';
+
+                            const modal = new bootstrap.Modal(document.getElementById('modalDetailAset'));
+                            modal.show();
+
+                            // Fetch data aset via AJAX
+                            fetch(location.pathname + '?action=get_detail_aset&no_aset=' + encodeURIComponent(nomorAset), {
+                              credentials: 'same-origin'
+                            })
+                            .then(function(res) { return res.json(); })
+                            .then(function(json) {
+                              if (json.status === 'success' && json.data && json.data.length > 0) {
+                                const row = json.data[0];
+                                pcEl.textContent  = row.profit_center || '-';
+                                subEl.textContent = row.subreg || '-';
+                                totalEl.textContent = 'Total: ' + json.data.length + ' aset dimuat';
+                                tbody.innerHTML = '';
+                                json.data.forEach(function(r, i) {
+                                  const tr = document.createElement('tr');
+                                  tr.style.background = (i % 2 === 0) ? '#f8f9fa' : '#fff';
+                                  tr.innerHTML =
+                                    '<td style="padding: 10px 16px; color: #555;">' + (i + 1) + '</td>' +
+                                    '<td style="padding: 10px 16px; font-weight: 500;">' + escHtml(r.nomor_asset_utama || '') + '</td>' +
+                                    '<td style="padding: 10px 16px; color: #0d6efd;">' + escHtml(r.keterangan_asset || r.nama_aset || '-') + '</td>' +
+                                    '<td style="padding: 10px 16px;">' + escHtml(r.subreg || '-') + '</td>' +
+                                    '<td style="padding: 10px 16px;"><strong>' + escHtml(r.profit_center_text || '-') + '</strong></td>';
+                                  tbody.appendChild(tr);
+                                });
+                              } else {
+                                pcEl.textContent = '-';
+                                subEl.textContent = '-';
+                                totalEl.textContent = 'Total: 0 aset dimuat';
+                                tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">Data aset tidak ditemukan</td></tr>';
+                              }
+                            })
+                            .catch(function(err) {
+                              tbody.innerHTML = '<tr><td colspan="5" class="text-center text-danger py-3">Gagal memuat data: ' + err.message + '</td></tr>';
+                            });
+                          }
+
+                          function escHtml(str) {
+                            const d = document.createElement('div');
+                            d.appendChild(document.createTextNode(str));
+                            return d.innerHTML;
+                          }
+
+                          /** Validasi form sebelum submit */
+                          document.addEventListener('DOMContentLoaded', function() {
+                            const form = document.getElementById('formUploadInline');
+                            if (!form) return;
+                            form.addEventListener('submit', function(e) {
+                              let valid = true;
+
+                              // Cek usulan_id (nomor aset sudah dipilih)
+                              const usulanId   = document.getElementById('inlineUsulanId').value;
+                              const nomorInput = document.getElementById('inlineNomorAset');
+                              const nomorErr   = document.getElementById('inlineNomorAsetError');
+                              if (!usulanId || usulanId === '0' || usulanId === '') {
+                                nomorInput.classList.add('is-invalid');
+                                nomorErr.style.display = 'block';
+                                valid = false;
+                              } else {
+                                nomorInput.classList.remove('is-invalid');
+                                nomorErr.style.display = 'none';
+                              }
+
+                              // Cek deskripsi dokumen
+                              const tipeInput = document.getElementById('inlineTipeDokumen');
+                              if (!tipeInput.value.trim()) {
+                                tipeInput.classList.add('is-invalid');
+                                valid = false;
+                              } else {
+                                tipeInput.classList.remove('is-invalid');
+                              }
+
+                              // Cek file
+                              const fileInput = document.getElementById('inlineFileDokumen');
+                              if (!fileInput.files || fileInput.files.length === 0) {
+                                fileInput.classList.add('is-invalid');
+                                valid = false;
+                              } else {
+                                fileInput.classList.remove('is-invalid');
+                              }
+
+                              if (!valid) {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                              } else {
+                                const btn = document.getElementById('btnUploadInline');
+                                btn.disabled = true;
+                                btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Mengupload...';
+                              }
+                            });
+                          });
+                          </script>
+                          <!-- End Tab Upload Dokumen -->
+
+                    <!-- ============================================= -->
+                    <!-- Tab 4: Summary -->
+                    <!-- ============================================= -->
+                    <div class="tab-pane fade" id="summary" role="tabpanel"> 
+                      
+                      <!-- Submit Section - Muncul ketika ada dokumen -->
+                      <?php 
+                      $usulan_dengan_dok = [];
+                      foreach ($upload_data as $usulan) {
+                          $q_dok_count = $con->prepare("SELECT COUNT(*) as jml FROM dokumen_penghapusan WHERE usulan_id = ?");
+                          $q_dok_count->bind_param("i", $usulan['id']);
+                          $q_dok_count->execute();
+                          $res_dok_count = $q_dok_count->get_result()->fetch_assoc();
+                          $q_dok_count->close();
+                          
+                          if ($res_dok_count['jml'] > 0) {
+                              $usulan_dengan_dok[] = $usulan;
+                          }
+                      }
+                      ?>
+                      
+                      <?php if (!empty($usulan_dengan_dok)): ?>
+                      <div class="card" style="border: 2px solid #28a745; box-shadow: 0 0 15px rgba(40, 167, 69, 0.2);">
+                        <div class="card-header" style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white; padding: 15px 20px;">
+                          <div class="d-flex align-items-center justify-content-between">
+                            <div>
+                              <h5 class="mb-0"><i class="bi bi-send-check me-2"></i>Submit Usulan ke Approval SubReg</h5>
+                              <small style="opacity: 0.9;">Pilih aset yang siap untuk disubmit ke tahap approval</small>
+                            </div>
+                            <div class="badge bg-white text-success p-2" style="font-size: 0.9rem;">
+                              <?= count($usulan_dengan_dok) ?> aset siap submit
+                            </div>
+                          </div>
+                        </div>
+                        <div class="card-body">
+                          <div class="d-flex gap-2 flex-wrap">
+                            <div class="dropdown">
+                              <button class="btn btn-success btn-lg dropdown-toggle" type="button" id="dropdownSubmitApproval" 
+                                      data-bs-toggle="dropdown" aria-expanded="false"
+                                      style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%); border: none; box-shadow: 0 4px 12px rgba(40, 167, 69, 0.3);">
+                                <i class="bi bi-send-check me-2"></i>Pilih Aset untuk Submit
+                              </button>
+                              <ul class="dropdown-menu dropdown-menu-lg" aria-labelledby="dropdownSubmitApproval" style="min-width: 400px;">
+                                <li class="p-3 border-bottom">
+                                  <small class="text-muted d-block mb-2"><strong>Aset Siap Submit:</strong></small>
+                                </li>
+                                <?php foreach ($usulan_dengan_dok as $usulan):
+                                  $q_dok_jml = $con->prepare("SELECT COUNT(*) as jml FROM dokumen_penghapusan WHERE usulan_id = ?");
+                                  $q_dok_jml->bind_param("i", $usulan['id']);
+                                  $q_dok_jml->execute();
+                                  $res_dok_jml = $q_dok_jml->get_result()->fetch_assoc();
+                                  $q_dok_jml->close();
+                                ?>
+                                <li>
+                                  <a class="dropdown-item cursor-pointer p-3 border-bottom" 
+                                     onclick="confirmSubmitApproval(<?= $usulan['id'] ?>, '<?= htmlspecialchars(addslashes($usulan['nomor_asset_utama'])) ?>', <?= $res_dok_jml['jml'] ?>)"
+                                     style="transition: all 0.2s;">
+                                    <div class="d-flex justify-content-between align-items-start">
+                                      <div>
+                                        <div style="font-weight: 600; color: #0d6efd;">
+                                          <i class="bi bi-check-circle me-2" style="color: #28a745;"></i>
+                                          <?= htmlspecialchars($usulan['nomor_asset_utama']) ?>
+                                        </div>
+                                        <small class="text-muted d-block mt-1">
+                                          <?= htmlspecialchars(str_replace('AUC-', '', $usulan['nama_aset'] ?? '-')) ?>
+                                        </small>
+                                      </div>
+                                      <span class="badge bg-info"><?= $res_dok_jml['jml'] ?> file(s)</span>
+                                    </div>
+                                  </a>
+                                </li>
+                                <?php endforeach; ?>
+                              </ul>
+                            </div>
+                          </div>
+                          <div class="mt-3 p-3" style="background: #f8f9fa; border-radius: 8px; border-left: 4px solid #20c997;">
+                            <small style="color: #495057;">
+                              <i class="bi bi-lightbulb me-2" style="color: #ffc107;"></i>
+                              <strong>Catatan:</strong> Setelah submit, usulan akan masuk ke halaman "Daftar Usulan Penghapusan" dengan status <strong>Pending</strong> menunggu persetujuan SubReg dan Regional.
+                            </small>
+                          </div>
+                        </div>
                       </div>
-                    <!-- End Tab Lengkapi Dokumen -->
-                 </div> <!-- End tab-content -->
+                      <?php else: ?>
+                      <div class="alert alert-warning" style="border-left: 4px solid #ffc107;">
+                        <i class="bi bi-exclamation-triangle me-2" style="color: #ff9800;"></i>
+                        <strong>Belum ada aset siap submit:</strong> Silakan upload dokumen pendukung terlebih dahulu di tab "Upload Dokumen".
+                      </div>
+                      <?php endif; ?>
+               
+                          <!-- Status Flow Diagram
+                          <div class="card mb-4">
+                            <div class="card-header bg-light">
+                              <h6 class="mb-0"><i class="bi bi-diagram-3 me-2"></i>Alur Status Approval</h6>
+                            </div>
+                            <div class="card-body">
+                              <div class="d-flex justify-content-between align-items-center flex-wrap" style="gap: 1rem;">
+                                <div class="text-center" style="flex: 1; min-width: 150px;">
+                                  <div class="badge p-3" style="width: 100%; font-size: 0.9rem; background: linear-gradient(135deg, #6C757D 0%, #5A6268 100%); color: white;">
+                                    <i class="bi bi-file-earmark"></i><br>Draft
+                                  </div>
+                                </div>
+                                <i class="bi bi-arrow-right" style="font-size: 1.5rem; color: #6c757d;"></i>
+                                
+                                <div class="text-center" style="flex: 1; min-width: 150px;">
+                                  <div class="badge p-3" style="width: 100%; font-size: 0.9rem; background: linear-gradient(135deg, #FFC107 0%, #FFB300 100%); color: white;">
+                                    <i class="bi bi-pencil-square"></i><br>Lengkapi Data
+                                  </div>
+                                </div>
+                                <i class="bi bi-arrow-right" style="font-size: 1.5rem; color: #6c757d;"></i>
+                                
+                                <div class="text-center" style="flex: 1; min-width: 150px;">
+                                  <div class="badge p-3" style="width: 100%; font-size: 0.9rem; background: linear-gradient(135deg, #FF8C00 0%, #FF7700 100%); color: white;">
+                                    <i class="bi bi-cloud-upload"></i><br>Perlu Dokumen
+                                  </div>
+                                </div>
+                                <i class="bi bi-arrow-right" style="font-size: 1.5rem; color: #6c757d;"></i>
+                                
+                                <div class="text-center" style="flex: 1; min-width: 150px;">
+                                  <div class="badge p-3" style="width: 100%; font-size: 0.9rem; background: linear-gradient(135deg, #0D6EFD 0%, #0B5ED7 100%); color: white;">
+                                    <i class="bi bi-hourglass-split"></i><br>Pending SubReg
+                                  </div>
+                                </div>
+                                <i class="bi bi-arrow-right" style="font-size: 1.5rem; color: #6c757d;"></i>
+                                
+                                <div class="text-center" style="flex: 1; min-width: 150px;">
+                                  <div class="badge p-3" style="width: 100%; font-size: 0.9rem; background: linear-gradient(135deg, #17A2B8 0%, #138496 100%); color: white;">
+                                    <i class="bi bi-check-circle"></i><br>Approved SubReg
+                                  </div>
+                                </div>
+                                <i class="bi bi-arrow-right" style="font-size: 1.5rem; color: #6c757d;"></i>
+                                
+                                <div class="text-center" style="flex: 1; min-width: 150px;">
+                                  <div class="badge p-3" style="width: 100%; font-size: 0.9rem; background: linear-gradient(135deg, #28A745 0%, #218838 100%); color: white;">
+                                    <i class="bi bi-award"></i><br>Approved Regional
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div> -->
+
+                          <!-- Detailed Status Table -->
+                          <div class="card">
+                            <div class="card-header bg-light">
+                              <h6 class="mb-0"><i class="bi me-2"></i>Daftar Semua Usulan dengan Status Tracking</h6>
+                            </div>
+                            <div class="card-body">
+                              <?php
+                              // Query semua usulan user dengan status lengkap
+                              $q_all = $con->prepare("SELECT up.*, 
+                                                      id.keterangan_asset as nama_aset,
+                                                      (SELECT COUNT(*) FROM dokumen_penghapusan WHERE usulan_id = up.id) as jumlah_dokumen
+                                                      FROM usulan_penghapusan up 
+                                                      LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama 
+                                                      WHERE up.created_by = ? 
+                                                      ORDER BY up.created_at DESC");
+                              $q_all->bind_param("s", $_SESSION['nipp']);
+                              $q_all->execute();
+                              $res_all = $q_all->get_result();
+                              ?>
+
+                              <div class="table-responsive">
+                                <table class="table table-striped table-hover table-sm" id="summaryTable">
+                                  <thead class="table-light">
+                                    <tr>
+                                      <th>No</th>
+                                      <th>Nomor Aset</th>
+                                      <th>Nama Aset</th>
+                                      <th>Status Aset Saat Ini</th>
+                                      <th>Dokumen</th>
+                                      <th>Mekanisme Penghapusan</th>
+                                      <th>Last Update</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    <?php 
+                                    $no = 1; 
+                                    while ($row = $res_all->fetch_assoc()): 
+                                      // Determine status badge
+                                      $statusBadge = '';
+                                      
+                                      switch ($row['status']) {
+                                        case 'draft':
+                                          $statusBadge = '<span class="badge" style="background: #6C757D; color: white;"><i class="bi bi-file-earmark"></i> Draft</span>';
+                                          break;
+                                        case 'lengkapi_dokumen':
+                                          $statusBadge = '<span class="badge" style="background: #FFC107; color: white;"><i class="bi bi-exclamation-triangle"></i> Lengkapi Data</span>';
+                                          break;
+                                        case 'dokumen_lengkap':
+                                          $statusBadge = '<span class="badge" style="background: #218838; color: white;"><i class="bi bi-check-circle-fill"></i> Data Lengkap</span>';
+                                          break;
+                                        case 'submitted':
+                                        case 'pending_subreg':
+                                          $statusBadge = '<span class="badge" style="background: #0D6EFD; color: white;"><i class="bi bi-hourglass-split"></i> Pending SubReg</span>';
+                                          break;
+                                        case 'approved_subreg':
+                                          $statusBadge = '<span class="badge" style="background: #17A2B8; color: white;"><i class="bi bi-check-circle-fill"></i> Approved SubReg</span>';
+                                          break;
+                                        case 'pending_regional':
+                                          $statusBadge = '<span class="badge" style="background: #0D6EFD; color: white;"><i class="bi bi-hourglass"></i> Pending Regional</span>';
+                                          break;
+                                        case 'approved_regional':
+                                        case 'approved':
+                                          $statusBadge = '<span class="badge" style="background: #28A745; color: white;"><i class="bi bi-award-fill"></i> Approved Regional</span>';
+                                          break;
+                                        case 'rejected':
+                                          $statusBadge = '<span class="badge bg-danger"><i class="bi bi-x-circle-fill"></i> Rejected</span>';
+                                          break;
+                                        default:
+                                          $statusBadge = '<span class="badge bg-secondary">Unknown</span>';
+                                      }
+                                    ?>
+                                      <tr>
+                                        <td><?= $no++ ?></td>
+                                        <td><strong><?= htmlspecialchars($row['nomor_asset_utama']) ?></strong></td>
+                                        <td><?= htmlspecialchars(str_replace('AUC-', '', $row['nama_aset'])) ?></td>
+                                        <td><?= $statusBadge ?></td>
+                                        <td>
+                                          <?php if ($row['jumlah_dokumen'] > 0): ?>
+                                            <span class="badge bg-info"><?= $row['jumlah_dokumen'] ?> file(s)</span>
+                                          <?php else: ?>
+                                            <span class="text-muted small">-</span>
+                                          <?php endif; ?>
+                                        </td>
+                                        <td>
+                                          <?= !empty($row['mekanisme_penghapusan']) ? htmlspecialchars($row['mekanisme_penghapusan']) : '-' ?>
+                                        </td>
+                                        <td><?= date('d/m/Y H:i', strtotime($row['updated_at'])) ?></td>
+                                      </tr>
+                                    <?php endwhile; ?>
+                                  </tbody>
+                                </table>
+                              </div>
+                              <?php $q_all->close(); ?>
+                            </div>
+                          </div>
+
+                          <!-- Status Legend
+                          <div class="card mt-3">
+                            <div class="card-header bg-light">
+                              <h6 class="mb-0"><i class="bi bi-info-circle me-2"></i>Keterangan Status</h6>
+                            </div>
+                            <div class="card-body">
+                              <div class="row">
+                                <div class="col-md-6">
+                                  <ul class="list-unstyled">
+                                    <li class="mb-2">
+                                      <span class="badge me-2" style="background: #6C757D; color: white;">Draft</span>
+                                      <span class="text-muted">Aset sudah dipilih, belum disubmit</span>
+                                    </li>
+                                    <li class="mb-2">
+                                      <span class="badge me-2" style="background: #FFC107; color: white;">Lengkapi Data</span>
+                                      <span class="text-muted">Menunggu pengisian formulir data aset</span>
+                                    </li>
+                                    <li class="mb-2">
+                                      <span class="badge me-2" style="background: #FF8C00; color: white;">Perlu Dokumen</span>
+                                      <span class="text-muted">Data sudah lengkap, perlu upload dokumen pendukung</span>
+                                    </li>
+                                    <li class="mb-2">
+                                      <span class="badge me-2" style="background: #0D6EFD; color: white;">Pending SubReg</span>
+                                      <span class="text-muted">Menunggu approval dari SubReg</span>
+                                    </li>
+                                  </ul>
+                                </div>
+                                <div class="col-md-6">
+                                  <ul class="list-unstyled">
+                                    <li class="mb-2">
+                                      <span class="badge me-2" style="background: #17A2B8; color: white;">Approved SubReg</span>
+                                      <span class="text-muted">Sudah disetujui SubReg, menuju Regional</span>
+                                    </li>
+                                    <li class="mb-2">
+                                      <span class="badge me-2" style="background: #0D6EFD; color: white;">Pending Regional</span>
+                                      <span class="text-muted">Menunggu approval Regional</span>
+                                    </li>
+                                    <li class="mb-2">
+                                      <span class="badge me-2" style="background: #28A745; color: white;">Approved Regional</span>
+                                      <span class="text-muted">Sudah disetujui Regional (FINAL)</span>
+                                    </li>
+                                    <li class="mb-2">
+                                      <span class="badge bg-danger me-2">Rejected</span>
+                                      <span class="text-muted">Usulan ditolak, perlu revisi</span>
+                                    </li>
+                                  </ul> -->
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        <!-- End Tab Summary -->
+                      
+                    <!-- End Tab Content -->  
+                  
                </div> <!-- End card-body -->
              <!--end::Row-->
            </div>
@@ -1079,9 +2333,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
       <!--end::Footer-->
     </div>
     <!--end::App Wrapper-->
-    <!-- ============================================================ -->
     <!-- MODAL 1: Peringatan — belum pilih aset                       -->
-    <!-- ============================================================ -->
     <div class="modal fade" id="modalPeringatan" tabindex="-1" aria-hidden="true">
       <div class="modal-dialog modal-dialog-centered" style="max-width:480px;">
         <div class="modal-content border-0 shadow-lg overflow-hidden">
@@ -1112,9 +2364,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
       </div>
     </div>
 
-    <!-- ============================================================ -->
-    <!-- MODAL 2: Konfirmasi Submit ke Lengkapi Dokumen               -->
-    <!-- ============================================================ -->
+    <!-- MODAL 2: Konfirmasi Submit ke Lengkapi Data               -->
     <div class="modal fade" id="modalConfirmSubmit" tabindex="-1" aria-hidden="true">
       <div class="modal-dialog modal-dialog-centered" style="max-width:500px;">
         <div class="modal-content border-0 shadow-lg overflow-hidden">
@@ -1134,17 +2384,16 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                 </p>
               </div>
             </div>
-            <div class="d-flex align-items-center justify-content-center mt-3 p-3" style="background:#f0f7ff; border:2px dashed #0d6efd; border-radius:10px;">
-              <i class="bi bi-layers-fill me-2" style="color:#0d6efd; font-size:1.5rem;"></i>
-              <div class="text-center">
-                <div class="fw-bold" style="color:#0d6efd; font-size:1.6rem;" id="submitAssetCount">0</div>
-                <div class="text-muted small">Aset akan di-Submit</div>
-              </div>
+            <div class="mt-3" style="background:#f0f7ff; border:2px dashed #0d6efd; border-radius:10px; max-height:200px; overflow-y:auto;">
+                <div id="submitAssetList"></div>
+            </div>
+            <div class="text-end mt-1">
+                <small class="text-muted"><span id="submitAssetCount">0</span> aset dipilih</small>
             </div>
             <div class="mt-3 p-2 px-3" style="background:#fff3cd; border:1px solid #ffc107; border-radius:8px;">
               <small style="color:#856404;">
                 <i class="bi bi-clock-history me-1"></i>
-                Setelah submit, aset akan dipindahkan ke tab <strong>"Lengkapi Dokumen"</strong> untuk pengisian berkas selanjutnya.
+                Setelah submit, aset akan dipindahkan ke tab <strong>"Lengkapi Data Aset"</strong> untuk pengisian berkas selanjutnya.
               </small>
             </div>
           </div>
@@ -1161,9 +2410,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
       </div>
     </div>
 
-    <!-- ============================================================ -->
     <!-- MODAL 3: Konfirmasi Simpan Draft                             -->
-    <!-- ============================================================ -->
     <div class="modal fade" id="modalConfirmDraft" tabindex="-1" aria-hidden="true">
       <div class="modal-dialog modal-dialog-centered" style="max-width:500px;">
         <div class="modal-content border-0 shadow-lg overflow-hidden">
@@ -1183,12 +2430,12 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                 </p>
               </div>
             </div>
-            <div class="d-flex align-items-center justify-content-center mt-3 p-3" style="background:#f8f9fa; border:2px dashed #6c757d; border-radius:10px;">
-              <i class="bi bi-layers-fill me-2" style="color:#6c757d; font-size:1.5rem;"></i>
-              <div class="text-center">
-                <div class="fw-bold" style="color:#6c757d; font-size:1.6rem;" id="draftAssetCount">0</div>
-                <div class="text-muted small">Aset akan Disimpan sebagai Draft</div>
-              </div>
+            <div class="mt-3" style="background:#f8f9fa; border:2px dashed #6c757d; border-radius:10px; max-height:200px; overflow-y:auto;">
+                <div id="draftAssetList">
+                </div>
+            </div>
+            <div class="text-end mt-1">
+                <small class="text-muted"><span id="draftAssetCount">0</span> aset dipilih</small>
             </div>
             <div class="mt-3 p-2 px-3" style="background:#fff3cd; border:1px solid #ffc107; border-radius:8px;">
               <small style="color:#856404;">
@@ -1209,11 +2456,8 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
         </div>
       </div>
     </div>
-    <!-- End Modal Confirm Draft -->
     
-    <!-- ============================================================ -->
     <!-- MODAL: Konfirmasi Hapus Usulan -->
-    <!-- ============================================================ -->
    <div class="modal fade" id="modalConfirmDeleteUsulan" tabindex="-1" aria-hidden="true">
       <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content border-0 shadow-lg">
@@ -1255,10 +2499,92 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
         </div>
       </div>
     </div>
+
+    <!-- MODAL: Konfirmasi Delete Dokumen -->
+    <div class="modal fade" id="modalConfirmDeleteDokumen" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg">
+          <div class="modal-header bg-danger text-white">
+            <h5 class="modal-title">
+              <i class="bi bi-trash me-2"></i>Konfirmasi Hapus Dokumen
+            </h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <div class="alert alert-warning mb-3">
+              <i class="bi bi-exclamation-triangle me-2"></i>
+              <strong>Peringatan!</strong> File dokumen akan dihapus permanen.
+            </div>
+            <p class="mb-2">Anda akan menghapus dokumen:</p>
+            <div class="p-3 bg-light rounded border">
+              <i class="bi bi-file-earmark-pdf me-2"></i>
+              <strong id="deleteDokumenName">-</strong>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+              <i class="bi bi-x-circle me-1"></i> Batal
+            </button>
+            <form method="POST" style="display:inline;">
+              <input type="hidden" name="action" value="delete_dokumen">
+              <input type="hidden" name="dokumen_id" id="deleteDokumenId">
+              <button type="submit" class="btn btn-danger">
+                <i class="bi bi-trash me-1"></i> Ya, Hapus Dokumen
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL: Konfirmasi Submit ke Approval -->
+    <div class="modal fade" id="modalConfirmSubmitApproval" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg">
+          <div class="modal-header bg-primary text-white">
+            <h5 class="modal-title">
+              <i class="bi bi-send-check me-2"></i>Konfirmasi Submit ke Approval
+            </h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <div class="alert alert-info mb-3">
+              <i class="bi bi-info-circle me-2"></i>
+              <strong>Info:</strong> Usulan akan dikirim ke Approval SubReg untuk diproses.
+            </div>
+            <p class="mb-2">Anda akan submit usulan untuk aset:</p>
+            <div class="p-3 bg-light rounded border mb-3">
+              <div class="mb-2">
+                <i class="bi bi-tag me-2"></i>
+                <strong id="submitApprovalNomor">-</strong>
+              </div>
+              <div>
+                <i class="bi bi-paperclip me-2"></i>
+                Jumlah dokumen: <strong id="submitApprovalJumlahDok">0</strong> file(s)
+              </div>
+            </div>
+            <p class="text-muted small">
+              <i class="bi bi-exclamation-circle me-1"></i>
+              Setelah di-submit, Anda tidak dapat mengubah data atau menambah dokumen lagi.
+            </p>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+              <i class="bi bi-x-circle me-1"></i> Batal
+            </button>
+            <form method="POST" style="display:inline;">
+              <input type="hidden" name="action" value="submit_to_approval">
+              <input type="hidden" name="usulan_id" id="submitApprovalUsulanId">
+              <button type="submit" class="btn btn-primary">
+                <i class="bi bi-send-check me-1"></i> Ya, Submit ke Approval
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
     
-    <!-- ============================================================ -->
     <!-- MODAL: Konfirmasi Cancel Draft -->
-    <!-- ============================================================ -->
     <div class="modal fade" id="modalConfirmCancelDraft" tabindex="-1" aria-hidden="true">
       <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content border-0 shadow-lg">
@@ -1308,9 +2634,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
     </div>
 </div>
     
-    <!-- ============================================================ -->
-    <!-- MODAL: Sukses Dokumen Lengkap -->
-    <!-- ============================================================ -->
+    <!-- MODAL: Sukses Data Lengkap -->
     <div class="modal fade" id="modalSuksesDokumenLengkap" tabindex="-1" aria-hidden="true">
       <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content border-0 shadow-lg">
@@ -1321,14 +2645,15 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                 <i class="bi bi-check-circle text-white" style="font-size: 3rem;"></i>
               </div>
             </div>
-            <h4 class="mb-3 text-success fw-bold">Dokumen Berhasil Dilengkapi!</h4>
+            <h4 class="mb-3 text-success fw-bold">Data Berhasil Dilengkapi!</h4>
             <p class="text-muted mb-4">
-              Data usulan penghapusan aset telah berhasil dilengkapi dan statusnya diubah menjadi 
-              <span class="badge bg-success">Dokumen Lengkap</span>
+              Data usulan penghapusan aset telah berhasil dilengkapi, namun statusnya diubah menjadi 
+              <span class="badge" style="background: #218838; color: white;">
+                <i class="bi bi-check-circle-fill text-success"></i>Data Lengkap</span>.
             </p>
             <div class="alert alert-info mb-4">
               <i class="bi bi-info-circle me-2"></i>
-              Data akan masuk ke <strong>Halaman Approval SubReg</strong> untuk proses selanjutnya.
+              Silakan unggah dokumen pendukung agar data dapat masuk ke <strong>Halaman Approval SubReg</strong> untuk proses selanjutnya. 
             </div>
             <button type="button" class="btn btn-success px-4" data-bs-dismiss="modal">
               <i class="bi bi-check-circle me-1"></i> OK, Mengerti
@@ -1338,9 +2663,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
       </div>
     </div>
 
-    <!-- ============================================================ -->
     <!-- MODAL: Konfirmasi Hapus Draft (single row)                   -->
-    <!-- ============================================================ -->
     <script  
     src="https://cdn.jsdelivr.net/npm/overlayscrollbars@2.11.0/browser/overlayscrollbars.browser.es6.min.js"
       crossorigin="anonymous"
@@ -1403,10 +2726,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
       crossorigin="anonymous"
     ></script>
     <script>
-      // NOTICE!! DO NOT USE ANY OF THIS JAVASCRIPT
-      // IT'S ALL JUST JUNK FOR DEMO
-      // ++++++++++++++++++++++++++++++++++++++++++
-
+   
       // Optimized document ready function
       $(document).ready(function() {
         // Add loading state to import button
@@ -1454,7 +2774,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
         });
       });
 
-// Initialize DataTable untuk tab Lengkapi Dokumen
+// Initialize DataTable untuk tab Lengkapi Data
         $('#lengkapiTable').DataTable({
             responsive: false,
             autoWidth: false,
@@ -1469,7 +2789,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
             }
         });
 
-// Auto-switch ke tab Lengkapi Dokumen jika ada hash #dokumen di URL
+// Auto-switch ke tab Lengkapi Data jika ada hash #dokumen di URL
         if (window.location.hash === '#dokumen') {
             const lengkapiTab = new bootstrap.Tab(document.getElementById('lengkapi-dokumen-tab'));
             lengkapiTab.show();
@@ -1483,6 +2803,13 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
         document.getElementById('lengkapi-dokumen-tab').addEventListener('shown.bs.tab', function () {
             document.getElementById('infoTextContent').textContent = 'Lengkapi data pendukung untuk aset yang sudah diusulkan';
         });
+        document.getElementById('upload-dokumen-tab').addEventListener('shown.bs.tab', function () {
+          document.getElementById('infoTextContent').textContent = 'Unggah dokumen pendukung untuk melengkapi usulan penghapusan aset.';
+        });
+
+        document.getElementById('summary-tab').addEventListener('shown.bs.tab', function () {
+          document.getElementById('infoTextContent').textContent = 'Tinjau ringkasan data usulan sebelum masuk ke proses persetujuan.';
+        });
 
 // Function untuk konfirmasi hapus usulan
       function confirmDeleteUsulan(usulanId, nomorAset, namaAset) {
@@ -1492,6 +2819,30 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
           
          
           const modal = new bootstrap.Modal(document.getElementById('modalConfirmDeleteUsulan'));
+          modal.show();
+      }
+
+// Function untuk konfirmasi delete dokumen
+      function confirmDeleteDokumen(dokumenId, fileName) {
+          document.getElementById('deleteDokumenId').value = dokumenId;
+          document.getElementById('deleteDokumenName').textContent = fileName;
+          
+          const modal = new bootstrap.Modal(document.getElementById('modalConfirmDeleteDokumen'));
+          modal.show();
+      }
+
+// Function untuk konfirmasi submit ke approval
+      function confirmSubmitApproval(usulanId, nomorAset, jumlahDokumen) {
+          if (jumlahDokumen < 1) {
+              alert('❌ Minimal upload 1 dokumen sebelum submit ke approval!');
+              return;
+          }
+          
+          document.getElementById('submitApprovalUsulanId').value = usulanId;
+          document.getElementById('submitApprovalNomor').textContent = nomorAset;
+          document.getElementById('submitApprovalJumlahDok').textContent = jumlahDokumen;
+          
+          const modal = new bootstrap.Modal(document.getElementById('modalConfirmSubmitApproval'));
           modal.show();
       }
 
@@ -1562,28 +2913,22 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
       if (document.querySelector('#table-sparkline-6')) createSparklineChart('#table-sparkline-6', table_sparkline_6_data);
       if (document.querySelector('#table-sparkline-7')) createSparklineChart('#table-sparkline-7', table_sparkline_7_data);
 
-      //-----------------
-      // - END PIE CHART -
-      //-----------------
-
       // Select All functionality
             $('#selectAll').on('change', function() {
                 const isChecked = $(this).prop('checked');
-                $('.row-checkbox').prop('checked', isChecked);
+                 $('#myTable .row-checkbox:not(:disabled):not(.is-draft)').prop('checked', isChecked);
                 updateSelectedCount();
             });
             
-            // Individual checkbox
             $(document).on('change', '.row-checkbox', function() {
-                const totalCheckboxes = $('.row-checkbox').length;
-                const checkedCheckboxes = $('.row-checkbox:checked').length;
+                const totalCheckboxes = $('#myTable .row-checkbox:not(:disabled):not(.is-draft)').length;
+                const checkedCheckboxes = $('#myTable .row-checkbox:checked:not(:disabled):not(.is-draft)').length;
                 $('#selectAll').prop('checked', totalCheckboxes === checkedCheckboxes);
                 updateSelectedCount();
             });
         
         function updateSelectedCount() {
-            // Hanya hitung checkbox yang TIDAK disabled (bukan yang sudah di-submit)
-            const count = $('.row-checkbox:checked:not(:disabled)').length;
+            const count = $('#myTable .row-checkbox:checked:not(:disabled):not(.is-draft)').length;
             $('#selectionCount').text(count);
             
             if (count > 0) {
@@ -1594,47 +2939,80 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
         }
         
         function clearSelection() {
-            $('.row-checkbox').prop('checked', false);
+            $('#myTable .row-checkbox:not(:disabled):not(.is-draft)').prop('checked', false);
             $('#selectAll').prop('checked', false);
             updateSelectedCount();
         }
-        
 
-        // =========================================================
-        // saveData — buka modal yang sesuai
-        // =========================================================
+        // saveData 
+        // function saveData(type) {
+        //     const selectedIds = [];
+        //     $('#myTable .row-checkbox:checked:not(:disabled):not(.is-draft)').each(function() {
+        //         selectedIds.push($(this).val());
+        //     });
+
+        //     if (selectedIds.length === 0) {
+        //         new bootstrap.Modal(document.getElementById('modalPeringatan')).show();
+        //         return;
+        //     }
+
+        //     window._selectedIds = selectedIds;
+
+        //     if (type === 'draft') {
+        //         $('#draftAssetCount').text(selectedIds.length);
+        //         new bootstrap.Modal(document.getElementById('modalConfirmDraft')).show();
+        //     } else {
+        //         $('#submitAssetCount').text(selectedIds.length);
+        //         new bootstrap.Modal(document.getElementById('modalConfirmSubmit')).show();
+        //     }
+        // }
+        
         function saveData(type) {
             const selectedIds = [];
-            // Hanya ambil checkbox yang checked DAN tidak disabled
-            $('.row-checkbox:checked:not(:disabled)').each(function() {
-                selectedIds.push($(this).val());
+            const selectedAssetInfo = [];
+
+            $('#myTable .row-checkbox:checked:not(:disabled):not(.is-draft)').each(function() {
+                const id = $(this).val();
+                const row = $(this).closest('tr');
+                const nomorAset = row.find('.mekanisme-dropdown').data('nomor-aset') || id;
+                const namaAset  = row.find('td:nth-child(8)').text().trim();
+
+                selectedIds.push(id);
+                selectedAssetInfo.push({ id, nomorAset, namaAset });
             });
 
-            // Kalau belum pilih aset → buka modal peringatan
             if (selectedIds.length === 0) {
                 new bootstrap.Modal(document.getElementById('modalPeringatan')).show();
                 return;
             }
 
-            // Simpan di variable global supaya bisa dipakai pas tombol modal diklik
             window._selectedIds = selectedIds;
+
+            let listHtml = '';
+            selectedAssetInfo.forEach(function(a) {
+                listHtml += `
+                    <div class="d-flex align-items-center gap-2 px-3 py-2" style="border-bottom:1px solid #eee;">
+                        <i class="bi bi-tag-fill" style="color:#0d6efd;"></i>
+                        <div>
+                            <div class="fw-semibold" style="font-size:0.95rem;">${a.nomorAset}</div>
+                            <div class="text-muted" style="font-size:0.82rem;">${a.namaAset}</div>
+                        </div>
+                    </div>`;
+            });
 
             if (type === 'draft') {
                 $('#draftAssetCount').text(selectedIds.length);
+                $('#draftAssetList').html(listHtml);
                 new bootstrap.Modal(document.getElementById('modalConfirmDraft')).show();
             } else {
                 $('#submitAssetCount').text(selectedIds.length);
+                $('#submitAssetList').html(listHtml);
                 new bootstrap.Modal(document.getElementById('modalConfirmSubmit')).show();
             }
         }
 
-
-
-        // =========================================================
-        // Handler tombol "Submit Usulan" di modal konfirmasi submit
-        // =========================================================
+        //Submit Usulan
         $('#btnDoSubmit').on('click', function() {
-            // Ambil data lengkap (termasuk mekanisme dan fisik) untuk setiap aset yang dicentang
             const selectedAssets = [];
             window._selectedIds.forEach(function(assetId) {
                 const row = $('input.row-checkbox[value="' + assetId + '"]').closest('tr');
@@ -1644,7 +3022,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                 
                 selectedAssets.push({
                     id: assetId,
-                    nomor_aset: nomorAset,
+                    no_aset: nomorAset,
                     mekanisme: mekanisme,
                     fisik: fisik
                 });
@@ -1653,17 +3031,13 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
             document.getElementById('selectedItemsInput').value = JSON.stringify(selectedAssets);
             document.getElementById('actionType').value = 'submit_data';
 
-            // Disable tombol + spinner
             $(this).prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span> Memproses...');
 
             document.getElementById('saveForm').submit();
         });
 
-        // =========================================================
-        // Handler tombol "Simpan Draft" di modal konfirmasi draft
-        // =========================================================
+        //Simpan Draft
         $('#btnDoDraft').on('click', function() {
-            // Ambil data lengkap (termasuk mekanisme dan fisik) untuk setiap aset yang dicentang
             const selectedAssets = [];
             window._selectedIds.forEach(function(assetId) {
                 const row = $('input.row-checkbox[value="' + assetId + '"]').closest('tr');
@@ -1673,7 +3047,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                 
                 selectedAssets.push({
                     id: assetId,
-                    nomor_aset: nomorAset,
+                    no_aset: nomorAset,
                     mekanisme: mekanisme,
                     fisik: fisik
                 });
@@ -1686,9 +3060,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
         });
             document.getElementById('draftActionForm').submit();
         
-        // =========================================================
-        // Handler untuk dropdown Mekanisme Penghapusan dan Fisik Aset
-        // =========================================================
+        //dropdown Mekanisme Penghapusan dan Fisik Aset
         $(document).on('change', '.mekanisme-dropdown, .fisik-dropdown', function() {
             const dropdown = $(this);
             const assetId = dropdown.data('asset-id');
@@ -1703,7 +3075,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                 data: {
                     action: 'update_dropdown_field',
                     asset_id: assetId,
-                    nomor_aset: nomorAset,
+                    no_aset: nomorAset,
                     field_type: fieldType,
                     value: value
                 },
@@ -1719,13 +3091,13 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
         });
     </script>
 
-    <!-- MODAL: Form Lengkapi Dokumen -->
+    <!-- MODAL: Form Lengkapi Data -->
     <div class="modal fade" id="modalFormLengkapiDokumen" tabindex="-1" aria-labelledby="modalFormLengkapiDokumenLabel" aria-hidden="true">
       <div class="modal-dialog modal-xl">
         <div class="modal-content">
           <div class="modal-header bg-primary text-white">
             <h5 class="modal-title" id="modalFormLengkapiDokumenLabel">
-              <i class="bi bi-file-earmark-plus me-2"></i>Lengkapi Data Usulan Penghapusan Aset
+              <i class="bi bi-file-earmark-plus me-2"></i> Form Lengkapi Data Usulan Penghapusan Aset
             </h5>
             <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
           </div>
@@ -1745,7 +3117,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                     <div class="col-md-6">
                       <dl class="row mb-0">
                         <dt class="col-sm-4">Nomor Aset:</dt>
-                        <dd class="col-sm-8" id="display_nomor_aset">-</dd>
+                        <dd class="col-sm-8" id="display_no_aset">-</dd>
                         
                         <dt class="col-sm-4">Nama Aset:</dt>
                         <dd class="col-sm-8" id="display_nama_aset">-</dd>
@@ -1887,7 +3259,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
         document.getElementById('usulan_id').value = usulanId;
         
         // Populate READ-ONLY fields (info aset)
-        document.getElementById('display_nomor_aset').textContent = usulan.nomor_asset_utama || '-';
+        document.getElementById('display_no_aset').textContent = usulan.nomor_asset_utama || '-';
         document.getElementById('display_nama_aset').textContent = usulan.nama_aset || '-';
         document.getElementById('display_subreg').textContent = usulan.subreg || '-';
         document.getElementById('display_profit_center').textContent = usulan.profit_center + ' - ' + (usulan.profit_center_text || '');
@@ -1952,17 +3324,17 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
         const fotoInput = document.getElementById('fotoInput');
         
         if (fisikAset === 'Ada') {
-            // Show foto section dan set required
+  
             fotoSection.style.display = 'block';
             fotoInput.setAttribute('required', 'required');
         } else if (fisikAset === 'Tidak Ada') {
-            // Hide foto section dan remove required
+        
             fotoSection.style.display = 'none';
             fotoInput.removeAttribute('required');
-            fotoInput.value = ''; // Clear file input
+            fotoInput.value = ''; 
             document.getElementById('fotoPreview').style.display = 'none';
         } else {
-            // Default: hide
+       
             fotoSection.style.display = 'none';
             fotoInput.removeAttribute('required');
         }
@@ -1971,7 +3343,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
     function previewFoto(event) {
         const file = event.target.files[0];
         if (file) {
-            // Validate size (5MB)
+
             if (file.size > 5 * 1024 * 1024) {
                 alert('Ukuran file terlalu besar. Maksimal 5MB.');
                 event.target.value = '';
@@ -2025,8 +3397,6 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
         </div>
       </div>
     </div>
-
-    <!--end::Script-->
   </body>
-  <!--end::Body-->
+
 </html>
