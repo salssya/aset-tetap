@@ -7,6 +7,13 @@ $dbname     = "asetreg3_db";
 $con = mysqli_connect($servername, $username, $password, $dbname);
 session_start();
 
+// Helper: hapus kode AUC dalam berbagai variasi (AUC, AUC-, AUC - )
+function stripAUC($s) {
+  if ($s === null) return $s;
+  $s = preg_replace('/\\bAUC\\s*(?:-|–)?\\s*/i', '', $s);
+  return trim($s);
+}
+
 if (!isset($_SESSION["nipp"]) || !isset($_SESSION["name"])) {
     header("Location: ../login/login_view.php");
     exit();
@@ -40,7 +47,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'view_doc' && isset($_GET['id'
   $nipp_val = (string)($_SESSION['nipp'] ?? '');
 
   $q = "SELECT file_path, file_name, nipp, subreg, profit_center, profit_center_text, type_user 
-        FROM dokumen_penghapusan WHERE usulan_id = $id LIMIT 1";
+      , tahun_dokumen
+      FROM dokumen_penghapusan WHERE usulan_id = $id LIMIT 1";
   $res = mysqli_query($con, $q);
 
   if (!$res || mysqli_num_rows($res) === 0) {
@@ -86,30 +94,89 @@ if (isset($_GET['action']) && $_GET['action'] === 'view_doc' && isset($_GET['id'
     }
   }
 
-  // Debug sementara — hapus setelah berhasil
-  // echo "nipp_session=$nipp_val | nipp_db={$row['nipp']} | isOwner=".($isOwner?'Y':'N')." | typeUser=$typeUser | canView=".($canView?'Y':'N'); exit();
-
   if ($canView) {
     $file_path_db = $row['file_path'] ?? '';
     $file_name    = !empty($row['file_name']) ? $row['file_name'] : 'dokumen.pdf';
+    $file_year    = isset($row['tahun_dokumen']) && !empty($row['tahun_dokumen']) ? intval($row['tahun_dokumen']) : null;
 
-    // Resolve path absolut
-    $abs_path = realpath(__DIR__ . '/' . $file_path_db);
+    $candidates = [];
 
-    // Fallback pakai nama file saja
-    if (!$abs_path || !file_exists($abs_path)) {
-      $abs_path = realpath(__DIR__ . '/../../uploads/dokumen_penghapusan/' . basename($file_name));
+    if (!empty($file_path_db) && (strpos($file_path_db, '/') === 0 || preg_match('/^[A-Za-z]:\\\\/', $file_path_db))) {
+        $candidates[] = $file_path_db;
     }
 
-    if ($abs_path && file_exists($abs_path)) {
+    if (!empty($file_path_db)) {
+        $candidates[] = __DIR__ . '/' . $file_path_db;
+        $candidates[] = __DIR__ . '/../../' . ltrim($file_path_db, '/\\');
+    }
+
+    $candidates[] = __DIR__ . '/../../uploads/dokumen_penghapusan/' . basename($file_path_db ?: $file_name);
+    $candidates[] = __DIR__ . '/../../uploads/dokumen_penghapusan/' . basename($file_name);
+   
+    if ($file_year) {
+      $candidates[] = __DIR__ . '/../../uploads/dokumen_penghapusan/' . $file_year . '/' . basename($file_path_db ?: $file_name);
+      $candidates[] = __DIR__ . '/../../uploads/dokumen_penghapusan/' . $file_year . '/' . basename($file_name);
+    }
+
+    $abs_path_found = false;
+    $checked = [];
+    foreach ($candidates as $c) {
+        $checked[] = $c;
+        $real = realpath($c);
+        if ($real && file_exists($real)) {
+            $abs_path = $real;
+            $abs_path_found = true;
+            break;
+        }
+        
+        if (file_exists($c)) {
+            $abs_path = $c;
+            $abs_path_found = true;
+            break;
+        }
+    }
+
+    if ($abs_path_found) {
       header('Content-Type: application/pdf');
-      header('Content-Disposition: inline; filename="' . basename($file_name) . '"');
+      header('Content-Disposition: inline; filename="' . basename($abs_path) . '"');
       header('Content-Length: ' . filesize($abs_path));
       readfile($abs_path);
       exit();
     } else {
+      // Coba cari rekursif berdasarkan nama file di folder uploads/dokumen_penghapusan
+      $basename = basename($file_path_db ?: $file_name);
+      $search_root = realpath(__DIR__ . '/../../uploads/dokumen_penghapusan');
+      $found_in_uploads = null;
+      if ($search_root && is_dir($search_root)) {
+        try {
+          $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($search_root));
+          foreach ($it as $f) {
+            if ($f->isFile() && $f->getFilename() === $basename) {
+              $found_in_uploads = $f->getPathname();
+              break;
+            }
+          }
+        } catch (UnexpectedValueException $e) {
+          // ignore iterator errors
+        }
+      }
+
+      if ($found_in_uploads) {
+        // Serve the file found in uploads (and show a note so admin can update DB path if desired)
+        header('Content-Type: application/pdf');
+        header('Content-Disposition: inline; filename="' . basename($found_in_uploads) . '"');
+        header('Content-Length: ' . filesize($found_in_uploads));
+        // echo a small notice about automatic fallback (optional)
+        readfile($found_in_uploads);
+        exit();
+      }
+
       http_response_code(404);
-      echo 'File tidak ada di server. Path: ' . htmlspecialchars($abs_path ?: $file_path_db);
+      echo 'File tidak ada di server. Paths checked:\n';
+      foreach ($checked as $p) {
+        echo htmlspecialchars($p) . "\n";
+      }
+      echo '\nDB file_path: ' . htmlspecialchars($file_path_db) . '\nDB file_name: ' . htmlspecialchars($file_name);
       exit();
     }
   } else {
@@ -118,7 +185,6 @@ if (isset($_GET['action']) && $_GET['action'] === 'view_doc' && isset($_GET['id'
     exit();
   }
 }
-// ============================================================
 
 if (!isset($_SESSION["nipp"]) || !isset($_SESSION["name"])) {
     header("Location: ../login/login_view.php");
@@ -165,8 +231,8 @@ $result = $stmt->get_result();
 
 $daftar_usulan = [];
 while ($row = $result->fetch_assoc()) {
-    $row['nama_aset'] = str_replace('AUC-', '', $row['nama_aset']);
-    $daftar_usulan[] = $row;
+  $row['nama_aset'] = stripAUC($row['nama_aset']);
+  $daftar_usulan[] = $row;
 }
 $stmt->close();
 
@@ -200,8 +266,8 @@ $result_docs = $stmt_docs->get_result();
 
 $daftar_dokumen = [];
 while ($row = $result_docs->fetch_assoc()) {
-    $row['nama_aset'] = str_replace('AUC-', '', $row['nama_aset']);
-    $daftar_dokumen[] = $row;
+  $row['nama_aset'] = stripAUC($row['nama_aset']);
+  $daftar_dokumen[] = $row;
 }
 $stmt_docs->close();
 ?>
@@ -766,6 +832,13 @@ $stmt_docs->close();
     }
   });
   document.addEventListener('DOMContentLoaded', function () {
+    // Prevent DataTables default alert on column/data mismatch; log instead
+    if (typeof $.fn.dataTable !== 'undefined') {
+      $.fn.dataTable.ext.errMode = function ( settings, helpPage, message ) {
+        console.warn('DataTables warning:', message);
+      };
+    }
+
     $('#usulanTable').DataTable({
       ordering: true, searching: true, paging: true, pageLength: 25,
       language: { url: 'https://cdn.datatables.net/plug-ins/1.13.6/i18n/id.json' },
