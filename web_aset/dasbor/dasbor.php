@@ -31,15 +31,10 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
     <meta name="theme-color" content="#1a1a1a" media="(prefers-color-scheme: dark)" />
     <!--end::Accessibility Meta Tags-->
     <!--begin::Primary Meta Tags-->
-    <meta name="title" content="AdminLTE | Dashboard v2" />
-    <meta name="author" content="ColorlibHQ" />
+    <meta charset="utf-8" />
     <meta
       name="description"
-      content="AdminLTE is a Free Bootstrap 5 Admin Dashboard, 30 example pages using Vanilla JS. Fully accessible with WCAG 2.1 AA compliance."
-    />
-    <meta 
-      name="keywords"
-      content="bootstrap 5, bootstrap, bootstrap 5 admin dashboard, bootstrap 5 dashboard, bootstrap 5 charts, bootstrap 5 calendar, bootstrap 5 datepicker, bootstrap 5 tables, bootstrap 5 datatable, vanilla js datatable, colorlibhq, colorlibhq dashboard, colorlibhq admin dashboard, accessible admin panel, WCAG compliant"
+      content="Aset Tetap Dashboard Application for PT Pelabuhan Indonesia (Persero) Regional 3"
     />
     <!--end::Primary Meta Tags-->
     <!--begin::Accessibility Features-->
@@ -81,12 +76,78 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
       integrity="sha256-4MX+61mt9NVvvuPjUWdUdyfZfxSB1/Rf9WtqRHgG5S0="
       crossorigin="anonymous"
     />
+    <style> 
+     .app-sidebar {
+        background-color: #0b3a8c !important;
+      }
+      /* Remove header border/shadow and brand bottom line */
+      .app-header, nav.app-header, .app-header.navbar {
+        border-bottom: 0 !important;
+        box-shadow: none !important;
+      }
+      /* Ensure the sidebar-brand area fills with the same blue and has no divider */
+      .sidebar-brand {
+        background-color: #0b3a8c !important;
+        margin-bottom: 0 !important;
+        padding: 0.25rem 0 !important;
+        border-bottom: 0 !important;
+        box-shadow: none !important;
+      }
+      .sidebar-brand .brand-link {
+        display: block !important;
+        padding: 0.5rem 0.75rem !important;
+        border-bottom: 0 !important;
+        box-shadow: none !important;
+        background-color: transparent !important;
+      }
+      /* Make sure the logo image doesn't leave a visual gap */
+      .sidebar-brand .brand-link .brand-image {
+        display: block !important;
+        height: auto !important;
+        max-height: 48px !important;
+        margin: 0 !important;
+        padding: 6px 8px !important;
+        background-color: transparent !important;
+      }
+
+      .app-sidebar {
+        border-right: 0 !important;
+      }
+      .app-sidebar,
+      .app-sidebar a,
+      .app-sidebar .nav-link,
+      .app-sidebar .nav-link p,
+      .app-sidebar .nav-header,
+      .app-sidebar .brand-text,
+      .app-sidebar .nav-icon,
+      .app-sidebar .nav-badge {
+        color: #ffffff !important;
+        fill: #ffffff !important;
+      }
+      .app-sidebar .nav-link .nav-icon,
+      .app-sidebar .nav-link i {
+        color: #ffffff !important;
+      }
+      .app-sidebar .nav-link.active,
+      .app-sidebar .nav-link:hover {
+        background-color: #0b5db7 !important;
+        color: #ffffff !important;
+        fill: #ffffff !important;
+      }
+      .app-sidebar .nav-link.active .nav-icon,
+      .app-sidebar .nav-link:hover .nav-icon,
+      .app-sidebar .nav-link.active i,
+      .app-sidebar .nav-link:hover i {
+        color: #ffffff !important;
+      }
+    </style>
+
   </head>
   <body class="layout-fixed sidebar-expand-lg sidebar-open bg-body-tertiary">
     <!--begin::App Wrapper-->
     <div class="app-wrapper">
       <!--begin::Header-->
-      <nav class="app-header navbar navbar-expand bg-body">
+      <nav class="app-header navbar navbar-expand bg-white border-0 shadow-none" style="border-bottom:0!important;box-shadow:none!important;">
         <!--begin::Container-->
         <div class="container-fluid">
           <!--begin::Start Navbar Links-->
@@ -153,11 +214,11 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
       </nav>
       <!--end::Header-->
       <!--begin::Sidebar-->
-      <aside class="app-sidebar bg-body-secondary shadow" data-bs-theme="dark">
+      <aside class="app-sidebar">
         <!--begin::Sidebar Brand-->
         <div class="sidebar-brand">
           <!--begin::Brand Link-->
-          <a href="./index.html" class="brand-link">
+          <a href="../dasbor/dasbor.php" class="brand-link">
             <!--begin::Brand Image-->
             <img
               src="../../dist/assets/img/logo.png"
@@ -171,7 +232,7 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
         </div>
         <!--end::Sidebar Brand-->
         <!--begin::Sidebar Wrapper-->
-        <div class="sidebar-wrapper">
+        <div class="sidebar-wrapper" >
           <nav class="mt-2">
             <!--begin::Sidebar Menu-->
             <ul
@@ -187,16 +248,17 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
             $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '" . mysqli_real_escape_string($con, $userNipp) . "' ORDER BY menus.urutan_menu ASC";
             $result = mysqli_query($con, $query) or die(mysqli_error($con));
             $iconMap = [
-                'Dasboard'               => 'bi bi-grid-fill',
-                'Usulan Penghapusan'     => 'bi bi-clipboard-plus-fill',
-                'Approval SubReg'        => 'bi bi-check-circle',
-                'Approval Regional'      => 'bi bi-check2-square',
-                'Persetujuan Penghapusan'=> 'bi bi-clipboard-check-fill',
-                'Pelaksanaan Penghapusan'=> 'bi bi-tools',
-                'Manajemen Menu'         => 'bi bi-list-ul',
-                'Import DAT'             => 'bi bi-file-earmark-arrow-up-fill',
-                'Daftar Aset Tetap'      => 'bi bi-card-list',
-                'Manajemen User'         => 'bi bi-people-fill'
+                'Dasboard'                  => 'bi bi-grid-fill',
+                'Usulan Penghapusan'        => 'bi bi-clipboard-plus',
+                'Daftar Usulan Penghapusan' => 'bi bi-clipboard-check-fill',
+                'Approval SubReg'           => 'bi bi-check-circle',
+                'Approval Regional'         => 'bi bi-check2-square',
+                'Persetujuan Penghapusan'   => 'bi bi-clipboard-check-fill',
+                'Pelaksanaan Penghapusan'   => 'bi bi-tools',
+                'Manajemen Menu'            => 'bi bi-list-ul',
+                'Import DAT'                => 'bi bi-file-earmark-arrow-up-fill',
+                'Daftar Aset Tetap'         => 'bi bi-card-list',
+                'Manajemen User'            => 'bi bi-people-fill'
             ]; 
   
             while ($row = mysqli_fetch_assoc($result)) {
@@ -346,60 +408,63 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                   return 'Rp ' . number_format($value, 0, ',', '.');
               }
               ?>
-              <div class="col-12 col-sm-6 col-md-3">
-                <div class="info-box">
-                  <span class="info-box-icon text-bg-primary shadow-sm">
-                    <i class="bi bi-clipboard-fill"></i>
-                  </span>
-                  <div class="info-box-content">
-                    <span class="info-box-text">Total Aset</span>
-                    <span class="info-box-number"><?php echo $totalAssets; ?></span>
+              <style>
+                .stat-card { background: #ffffff; border-radius: 12px; padding: 18px 22px 18px 18px; box-shadow: 0 8px 24px rgba(11,93,183,0.06); display:flex; align-items:center; gap:14px; border:1px solid rgba(0,0,0,0.04); position:relative; overflow:visible; min-height:88px; }
+                .stat-card .accent { position:absolute; left:0; top:0; bottom:0; width:8px; border-radius:12px 0 0 12px; }
+                .stat-card .stat-body { display:flex; flex-direction:column; gap:4px; z-index:2; padding-left:18px; }
+                .stat-text { display:block; color:#4b5563; font-size:0.70rem; text-transform:uppercase; letter-spacing:0.08em; font-weight:700; }
+                .stat-number { font-weight:900; font-size:2.15rem; color:#09203f; line-height:1; }
+                .stat-small { display:block; font-size:0.98rem; color:#2b3a48; font-weight:700; margin-top:2px; }
+                .stat-bg-icon { position:absolute; right:14px; top:12px; font-size:40px; color: rgba(9,32,63,0.12); z-index:1; }
+                .accent-blue{ background: #0d6efd; }
+                .accent-green{ background: #20c997; }
+                .accent-gray{ background: #0dcaf0; }
+                .accent-yellow{ background: #ffc107; }
+                @media (max-width:768px){ .stat-bg-icon{ display:none; } }
+              </style>
+
+              <div class="col-xl-3 col-md-6 mb-4">
+                <div class="stat-card">
+                  <div class="accent accent-blue"></div>
+                  <div class="stat-body">
+                    <span class="stat-text">Total Aset</span>
+                    <span class="stat-number"><?php echo $totalAssets; ?></span>
                   </div>
-                  <!-- /.info-box-content -->
+                  <i class="bi bi-clipboard-fill stat-bg-icon"></i>
                 </div>
-                <!-- /.info-box -->
               </div>
-              <!-- /.col -->
-              <div class="col-12 col-sm-6 col-md-3">
-                <div class="info-box">
-                  <span class="info-box-icon text-bg-danger shadow-sm">
-                    <i class="bi bi-currency-dollar"></i>
-                  </span>
-                  <div class="info-box-content">
-                    <span class="info-box-text">Total Nilai Perolehan</span>
-                    <span class="info-box-number" style="font-size: 0.85rem;"><?php echo formatCurrency($perolehanCount); ?></span>
+
+              <div class="col-12 col-sm-6 col-md-3 mb-4">
+                <div class="stat-card">
+                  <div class="accent accent-green"></div>
+                  <div class="stat-body">
+                    <span class="stat-text">Total Nilai Perolehan</span>
+                    <span class="stat-number stat-small"><?php echo formatCurrency($perolehanCount); ?></span>
                   </div>
-                  <!-- /.info-box-content -->
+                  <i class="bi bi-currency-dollar stat-bg-icon"></i>
                 </div>
-                <!-- /.info-box -->
               </div>
-              <!-- /.col -->
-              <div class="col-12 col-sm-6 col-md-3">
-                <div class="info-box">
-                  <span class="info-box-icon text-bg-success shadow-sm">
-                    <i class="bi bi-currency-dollar"></i>
-                  </span>
-                  <div class="info-box-content">
-                    <span class="info-box-text">Total Nilai Buku</span>
-                    <span class="info-box-number" style="font-size: 0.85rem;"><?php echo formatCurrency($nilai_bukuCount); ?></span>
+
+              <div class="col-12 col-sm-6 col-md-3 mb-4">
+                <div class="stat-card">
+                  <div class="accent accent-gray"></div>
+                  <div class="stat-body">
+                    <span class="stat-text">Total Nilai Buku</span>
+                    <span class="stat-number stat-small"><?php echo formatCurrency($nilai_bukuCount); ?></span>
                   </div>
-                  <!-- /.info-box-content -->
+                  <i class="bi bi-currency-dollar stat-bg-icon"></i>
                 </div>
-                <!-- /.info-box -->
               </div>
-              <!-- /.col -->
-              <div class="col-12 col-sm-6 col-md-3">
-                <div class="info-box">
-                  <span class="info-box-icon text-bg-warning shadow-sm">
-                    <i class="bi bi-currency-dollar"></i>
-                  </span>
-                  <div class="info-box-content">
-                    <span class="info-box-text">Total Akumulasi Penyusutan</span>
-                    <span class="info-box-number" style="font-size: 0.85rem;"><?php echo formatCurrency($penyusutanCount); ?></span>
+
+              <div class="col-12 col-sm-6 col-md-3 mb-4">
+                <div class="stat-card">
+                  <div class="accent accent-yellow"></div>
+                  <div class="stat-body">
+                    <span class="stat-text">Total Akumulasi Penyusutan</span>
+                    <span class="stat-number stat-small"><?php echo formatCurrency($penyusutanCount); ?></span>
                   </div>
-                  <!-- /.info-box-content -->
+                  <i class="bi bi-currency-dollar stat-bg-icon"></i>
                 </div>
-                <!-- /.info-box -->
               </div>
               <!-- /.col -->
             
