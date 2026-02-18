@@ -7,6 +7,12 @@ $dbname     = "asetreg3_db";
 $con = mysqli_connect($servername, $username, $password, $dbname);
 session_start();
 
+function stripAUC($s) {
+  if ($s === null) return $s;
+  $s = preg_replace('/\\bAUC\\s*(?:-|–)?\\s*/i', '', $s);
+  return trim($s);
+}
+
 if (!isset($_SESSION["nipp"]) || !isset($_SESSION["name"])) {
     header("Location: ../login/login_view.php");
     exit();
@@ -118,8 +124,8 @@ $result_lengkapi = $stmt_lengkapi->get_result();
 $lengkapi_data = [];
 $lengkapi_asset_numbers = []; 
 while ($row = $result_lengkapi->fetch_assoc()) {
-    $row['nama_aset'] = str_replace('AUC-', '', $row['nama_aset']);
-    $row['kategori_aset'] = str_replace('AUC-', '', $row['kategori_aset']);
+    $row['nama_aset'] = stripAUC($row['nama_aset']);
+    $row['kategori_aset'] = stripAUC($row['kategori_aset']);
     
     $lengkapi_data[] = $row;
     $lengkapi_asset_numbers[] = $row['nomor_asset_utama']; 
@@ -174,7 +180,7 @@ $result_upload = $stmt_upload->get_result();
 
 $upload_data = [];
 while ($row = $result_upload->fetch_assoc()) {
-    $row['nama_aset'] = str_replace('AUC-', '', $row['nama_aset']);
+    $row['nama_aset'] = stripAUC($row['nama_aset']);
     $upload_data[] = $row;
 }
 $stmt_upload->close();
@@ -1355,8 +1361,8 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                         $nilai_buku = isset($row['nilai_buku_sd']) ? 'Rp ' . number_format($row['nilai_buku_sd'], 0, ',', '.') : '-';
                                         $nilai_perolehan = isset($row['nilai_perolehan_sd']) ? 'Rp ' . number_format($row['nilai_perolehan_sd'], 0, ',', '.') : '-';
                                         
-                                        $kategori_aset = str_replace('AUC-', '', $row['asset_class_name']);
-                                        $nama_aset = str_replace('AUC-', '', $row['keterangan_asset']);
+                                        $kategori_aset = stripAUC($row['asset_class_name']);
+                                        $nama_aset = stripAUC($row['keterangan_asset']);
                                         
                                         $mekanisme = !empty($row['mekanisme_penghapusan']) ? htmlspecialchars($row['mekanisme_penghapusan']) : '-';
                                         $fisik = !empty($row['fisik_aset']) ? htmlspecialchars($row['fisik_aset']) : '-';
@@ -1785,7 +1791,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                                     class="form-check-input asset-checkbox" 
                                                     value="<?= $ua['id'] ?>"
                                                     data-nomor="<?= htmlspecialchars($ua['nomor_asset_utama']) ?>"
-                                                    data-nama="<?= htmlspecialchars(str_replace('AUC-', '', $ua['nama_aset'] ?? '-')) ?>"
+                                                    data-nama="<?= htmlspecialchars(stripAUC($ua['nama_aset'] ?? '-')) ?>"
                                                     data-has-doc="<?= in_array($ua['id'], $usulan_with_docs) ? 'true' : 'false' ?>"
                                                     <?= in_array($ua['id'], $usulan_with_docs) ? 'disabled' : '' ?>>
                                            
@@ -1795,7 +1801,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                               <?= !empty($ua['mekanisme_penghapusan']) ? htmlspecialchars($ua['mekanisme_penghapusan']) : '-' ?> 
                                             </td>
                                             </td>
-                                            <td><?= htmlspecialchars(str_replace('AUC-', '', $ua['nama_aset'] ?? '-')) ?></td>
+                                            <td><?= htmlspecialchars(stripAUC($ua['nama_aset'] ?? '-')) ?></td>
                                             <td><?= htmlspecialchars($ua['kategori_aset'] ?? '-') ?></td>
                                              <td><?= htmlspecialchars($row['profit_center']) . (!empty($row['profit_center_text']) ? ' - ' . htmlspecialchars($row['profit_center_text']) : '') ?></td>
                                           </tr>                                       
@@ -2186,7 +2192,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                           <?= htmlspecialchars($usulan['nomor_asset_utama']) ?>
                                         </div>
                                         <small class="text-muted d-block mt-1">
-                                          <?= htmlspecialchars(str_replace('AUC-', '', $usulan['nama_aset'] ?? '-')) ?>
+                                          <?= htmlspecialchars(stripAUC($usulan['nama_aset'] ?? '-')) ?>
                                         </small>
                                       </div>
                                       <span class="badge bg-info"><?= $res_dok_jml['jml'] ?> file(s)</span>
@@ -2337,7 +2343,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                       <tr>
                                         <td><?= $no++ ?></td>
                                         <td><strong><?= htmlspecialchars($row['nomor_asset_utama']) ?></strong></td>
-                                        <td><?= htmlspecialchars(str_replace('AUC-', '', $row['nama_aset'])) ?></td>
+                                        <td><?= htmlspecialchars(stripAUC($row['nama_aset'])) ?></td>
                                         <td><?= $statusBadge ?></td>
                                         <td>
                                           <?php if ($row['jumlah_dokumen'] > 0): ?>
