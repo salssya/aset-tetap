@@ -32,6 +32,44 @@ function get_pcs_for_subreg($con, $subreg_text) {
   return $out;
 }
 
+// Helper: normalisasi foto_path agar menjadi URL/web-path yang dapat dipakai di <img src="">
+function normalize_foto_path($p) {
+  if (empty($p)) return '';
+  $p = trim((string)$p);
+  // If already a URL, return as-is
+  if (preg_match('#^https?://#i', $p)) return $p;
+  // If starts with slash, treat as web-root relative path
+  if (strpos($p, '/') === 0) return $p;
+
+  // Normalize backslashes
+  $p2 = str_replace('\\', '/', $p);
+
+  // Try resolve realpath; if path is inside document root, return web-relative path
+  $docroot = realpath($_SERVER['DOCUMENT_ROOT'] ?? '') ?: '';
+  if ($docroot !== '') {
+    $docroot = str_replace('\\', '/', $docroot);
+    $abs = realpath($p2);
+    if ($abs) {
+      $abs = str_replace('\\', '/', $abs);
+      if (strpos($abs, $docroot) === 0) {
+        $rel = substr($abs, strlen($docroot));
+        if ($rel === '' || $rel === false) return '/';
+        // ensure leading slash
+        return '/' . ltrim($rel, '/');
+      }
+    }
+  }
+
+  // If path seems to start with uploads/ make it web-relative from project root
+  if (preg_match('#^(uploads/|\.\./uploads|/uploads)#', $p2)) {
+    if (strpos($p2, '/uploads') === 0) return $p2;
+    return '../../' . ltrim($p2, '/');
+  }
+
+  // Fallback: return original value
+  return $p;
+}
+
 // ============================================================
 // HANDLER: Lihat Dokumen — file disimpan di folder, path di DB
 // ============================================================
@@ -166,6 +204,12 @@ $result = $stmt->get_result();
 $daftar_usulan = [];
 while ($row = $result->fetch_assoc()) {
     $row['nama_aset'] = str_replace('AUC-', '', $row['nama_aset']);
+  // Normalize foto_path from DB so front-end can use it directly in <img src="">
+  if (isset($row['foto_path'])) {
+    $row['foto_path'] = normalize_foto_path($row['foto_path']);
+  } else {
+    $row['foto_path'] = '';
+  }
     $daftar_usulan[] = $row;
 }
 $stmt->close();
@@ -213,9 +257,9 @@ $stmt_docs->close();
   <link rel="icon" type="image/png" href="../../dist/assets/img/emblem.png" />
   <link rel="shortcut icon" type="image/png" href="../../dist/assets/img/emblem.png" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/source-sans-3@5.0.12/index.css" crossorigin="anonymous" media="print" onload="this.media='all'" />
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/overlayscrollbars@2.11.0/styles/overlayscrollbars.min.css" crossorigin="anonymous" />
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css" crossorigin="anonymous" />
+  <link rel="stylesheet" href="../../dist/css/index.css"/>
+  <link rel="stylesheet" href="../../dist/css/overlayscrollbars.min.css"/>
+  <link rel="stylesheet" href="../../dist/css/bootstrap-icons/bootstrap-icons.min.css"/>
   <link rel="stylesheet" href="../../dist/css/adminlte.css" />
   <style>
     .app-header, nav.app-header, .app-header.navbar { border-bottom: 0 !important; box-shadow: none !important; }
@@ -224,8 +268,8 @@ $stmt_docs->close();
     .sidebar-brand .brand-link .brand-image { display: block !important; height: auto !important; max-height: 48px !important; margin: 0 !important; padding: 6px 8px !important; background-color: transparent !important; }
     .app-sidebar { border-right: 0 !important; }
   </style>
-  <link rel="stylesheet" href="https://cdn.datatables.net/1.13.7/css/dataTables.bootstrap5.min.css">
-  <link rel="stylesheet" href="https://cdn.datatables.net/2.3.6/css/dataTables.dataTables.min.css" />
+  <link rel="stylesheet" href="../../dist/css/dataTables.bootstrap5.min.css">
+  <link rel="stylesheet" href="../../dist/css/dataTables.dataTables.min.css" />
 
   <style>
     .app-sidebar {
@@ -823,9 +867,9 @@ $stmt_docs->close();
 
 
 <!-- Scripts -->
-<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-<script src="https://cdn.datatables.net/2.3.6/js/dataTables.min.js"></script>
+<script src="../../dist/js/jquery-3.7.1.min.js"></script>
+<script src="../../dist/js/bootstrap.bundle.min.js"></script>
+<script src="../../dist/js/dataTables.min.js"></script>
 
 <script>
   // Pindahkan modal ke body agar tidak terpengaruh CSS AdminLTE
@@ -838,12 +882,12 @@ $stmt_docs->close();
   document.addEventListener('DOMContentLoaded', function () {
     $('#usulanTable').DataTable({
       ordering: true, searching: true, paging: true, pageLength: 25,
-      language: { url: 'https://cdn.datatables.net/plug-ins/1.13.6/i18n/id.json' },
+      language: { url: '../../dist/js/i18n/id.json' },
       scrollX: true
     });
     $('#dokumenTable').DataTable({
       ordering: true, searching: true, paging: true, pageLength: 25,
-      language: { url: 'https://cdn.datatables.net/plug-ins/1.13.6/i18n/id.json' },
+      language: { url: '../../dist/js/i18n/id.json' },
       scrollX: true
     });
   });
@@ -987,8 +1031,8 @@ $stmt_docs->close();
   }
 </script>
 
-<script src="https://cdn.jsdelivr.net/npm/overlayscrollbars@2.11.0/browser/overlayscrollbars.browser.es6.min.js" crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.11.8/dist/umd/popper.min.js" crossorigin="anonymous"></script>
+<script src="../../dist/js/overlayscrollbars.browser.es6.min.js"></script>
+<script src="../../dist/js/popper.min.js"></script>
 <script src="../../dist/js/adminlte.js"></script>
 </body>
 </html>

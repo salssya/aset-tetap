@@ -45,37 +45,25 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
     <!--begin::Fonts-->
     <link
       rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/@fontsource/source-sans-3@5.0.12/index.css"
-      integrity="sha256-tXJfXfp6Ewt1ilPzLDtQnJV4hclT9XuaZUKyUvmyr+Q="
-      crossorigin="anonymous"
-      media="print"
-      onload="this.media='all'"
-    />
+      href="../../dist/css/index.css"/>
     <!--end::Fonts-->
     <!--begin::Third Party Plugin(OverlayScrollbars)-->
     <link
       rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/overlayscrollbars@2.11.0/styles/overlayscrollbars.min.css"
-      crossorigin="anonymous"
-    />
+      href="../../dist/css/overlayscrollbars.min.css"/>
     <!--end::Third Party Plugin(OverlayScrollbars)-->
     <!--begin::Third Party Plugin(Bootstrap Icons)-->
     <link
       rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css"
-      crossorigin="anonymous"
-    />
+      href="../../dist/css/bootstrap-icons/bootstrap-icons.min.css"/>
     <!--end::Third Party Plugin(Bootstrap Icons)-->
     <!--begin::Required Plugin(AdminLTE)-->
-    <link rel="stylesheet" href="../../dist/css/adminlte.css" />
+    <link rel="stylesheet" href="../../dist/css/adminlte.css"/>
     <!--end::Required Plugin(AdminLTE)-->
     <!-- apexcharts -->
     <link
       rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/apexcharts@3.37.1/dist/apexcharts.css"
-      integrity="sha256-4MX+61mt9NVvvuPjUWdUdyfZfxSB1/Rf9WtqRHgG5S0="
-      crossorigin="anonymous"
-    />
+      href="../../dist/css/apexcharts.css"/> 
     <style> 
      .app-sidebar {
         background-color: #0b3a8c !important;
@@ -423,6 +411,21 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                 @media (max-width:768px){ .stat-bg-icon{ display:none; } }
               </style>
 
+              <style>
+                /* ApexCharts legend: align left and wrap neatly */
+                .apexcharts-legend {
+                  justify-content: flex-start !important;
+                  padding-left: 6px !important;
+                  flex-wrap: wrap !important;
+                }
+                .apexcharts-legend .apexcharts-legend-series {
+                  margin-right: 10px !important;
+                  white-space: nowrap;
+                }
+                /* make background icons lighter and consistent */
+                .stat-bg-icon { opacity: 0.14; }
+              </style>
+
               <div class="col-xl-3 col-md-6 mb-4">
                 <div class="stat-card">
                   <div class="accent accent-blue"></div>
@@ -514,20 +517,20 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                           <table class="table table-sm table-striped mb-0">
                           <thead><tr><th>Asset Class</th>
                           <th class="text-end">Jumlah</th> 
-                          <th class="text-end">Total Perolehan</th>
-                          <th class="text-end">Total Nilai Buku</th>
-                          <th class="text-end">Total Akumulasi Penyusutan</th>
-                          <th class="text-end">Total Penyusutan perBulan</th>
+                          <th class="text-start">Total Perolehan</th>
+                          <th class="text-start">Total Nilai Buku</th>
+                          <th class="text-start">Total Akumulasi Penyusutan</th>
+                          <th class="text-start">Total Penyusutan perBulan</th>
                           </tr></thead><tbody>';
                           
                           while ($b = mysqli_fetch_assoc($breakdownResult)) {
                             echo '<tr>';
                             echo '<td>' . htmlspecialchars($b['asset_class_name']) . '</td>';
                             echo '<td class="text-end">' . number_format((int)$b['count']) . '</td>';
-                            echo '<td class="text-end">' . formatCurrency(round((float)$b['total_nilai'], 0)) . '</td>';
-                            echo '<td class="text-end">' . formatCurrency(round((float)$b['total_nilai_buku'], 0)) . '</td>';
-                            echo '<td class="text-end">' . formatCurrency(round((float)$b['total_akumulasi_penyusutan'], 0)) . '</td>';
-                            echo '<td class="text-end">' . formatCurrency(round((float)$b['total_penyusutan_bulan'], 0)) . '</td>';
+                            echo '<td class="text-start">' . formatCurrency(round((float)$b['total_nilai'], 0)) . '</td>';
+                            echo '<td class="text-start">' . formatCurrency(round((float)$b['total_nilai_buku'], 0)) . '</td>';
+                            echo '<td class="text-start">' . formatCurrency(round((float)$b['total_akumulasi_penyusutan'], 0)) . '</td>';
+                            echo '<td class="text-start">' . formatCurrency(round((float)$b['total_penyusutan_bulan'], 0)) . '</td>';
                             echo '</tr>';
                           }
                           echo '</tbody></table></div>';
@@ -568,18 +571,15 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
     <!--begin::Script-->
     <!--begin::Third Party Plugin(OverlayScrollbars)-->
     <script
-      src="https://cdn.jsdelivr.net/npm/overlayscrollbars@2.11.0/browser/overlayscrollbars.browser.es6.min.js"
-      crossorigin="anonymous"
+      src="../../dist/js/overlayscrollbars.browser.es6.min.js"
     ></script>
     <!--end::Third Party Plugin(OverlayScrollbars)--><!--begin::Required Plugin(popperjs for Bootstrap 5)-->
     <script
-      src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.11.8/dist/umd/popper.min.js"
-      crossorigin="anonymous"
+      src="../../dist/js/popper.min.js"
     ></script>
     <!--end::Required Plugin(popperjs for Bootstrap 5)--><!--begin::Required Plugin(Bootstrap 5)-->
     <script
-      src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.7/dist/js/bootstrap.min.js"
-      crossorigin="anonymous"
+      src="../../dist/js/bootstrap.min.js"
     ></script>
     <!--end::Required Plugin(Bootstrap 5)--><!--begin::Required Plugin(AdminLTE)-->
     <script src="../../dist/js/adminlte.js"></script>
@@ -608,9 +608,7 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
     <!-- OPTIONAL SCRIPTS -->
     <!-- apexcharts -->
     <script
-      src="https://cdn.jsdelivr.net/npm/apexcharts@3.37.1/dist/apexcharts.min.js"
-      integrity="sha256-+vh8GkaU7C9/wbSLIcwq82tQ2wTf44aOHA8HlBMwRI8="
-      crossorigin="anonymous"
+      src="../../dist/js/apexcharts.min.js"
     ></script>
     <script>
       // NOTICE!! DO NOT USE ANY OF THIS JAVASCRIPT
@@ -821,6 +819,7 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
         ],
         legend: {
           position: 'bottom',
+          horizontalAlign: 'left',
           fontSize: '12px',
           fontWeight: 500,
           labels: {

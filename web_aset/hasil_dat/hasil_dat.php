@@ -570,34 +570,10 @@ function saveDataToDatabase($con, $importedData) {
     <link rel="preload" href="../../dist/css/adminlte.css" as="style" />
     <!--end::Accessibility Features-->
     <!--begin::Fonts-->
-    <link
-      rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/@fontsource/source-sans-3@5.0.12/index.css"
-      integrity="sha256-tXJfXfp6Ewt1ilPzLDtQnJV4hclT9XuaZUKyUvmyr+Q="
-      crossorigin="anonymous"
-      media="print"
-      onload="this.media='all'"
-    />
-    <!--end::Fonts-->
-    <!--begin::Third Party Plugin(OverlayScrollbars)-->
-    <link
-      rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/overlayscrollbars@2.11.0/styles/overlayscrollbars.min.css"
-      crossorigin="anonymous"
-    />
-    <!--end::Third Party Plugin(OverlayScrollbars)-->
-    <!--begin::Third Party Plugin(Bootstrap Icons)-->
-    <link
-      rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css"
-      crossorigin="anonymous"
-    />
-    <!--end::Third Party Plugin(Bootstrap Icons)-->
-    <!--begin::Required Plugin(AdminLTE)-->
-    <link rel="stylesheet" href="../../dist/css/adminlte.css" />
-    <!--end::Required Plugin(AdminLTE)-->
-
-    
+    <link rel="stylesheet" href="../../dist/css/index.css"/>
+      <link rel="stylesheet" href="../../dist/css/overlayscrollbars.min.css"/>
+      <link rel="stylesheet" href="../../dist/css/bootstrap-icons/bootstrap-icons.min.css"/>
+      <link rel="stylesheet" href="../../dist/css/adminlte.css" />
     <!-- Custom Styles for Horizontal Scroll -->
     <style>
       .app-sidebar {
@@ -704,12 +680,10 @@ function saveDataToDatabase($con, $importedData) {
     <!-- apexcharts -->
     <link
       rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/apexcharts@3.37.1/dist/apexcharts.css"
-      integrity="sha256-4MX+61mt9NVvvuPjUWdUdyfZfxSB1/Rf9WtqRHgG5S0="
-      crossorigin="anonymous"
+      href="../../dist/css/apexcharts.css"
     />
     <link rel="stylesheet"
-      href="https://cdn.datatables.net/2.3.6/css/dataTables.dataTables.min.css"
+      href="../../dist/css/dataTables.dataTables.min.css"
     />
   </head>
   <body class="layout-fixed sidebar-expand-lg sidebar-open bg-body-tertiary">
@@ -1098,18 +1072,15 @@ function saveDataToDatabase($con, $importedData) {
     <!--begin::Script-->
     <!--begin::Third Party Plugin(OverlayScrollbars)-->
     <script
-      src="https://cdn.jsdelivr.net/npm/overlayscrollbars@2.11.0/browser/overlayscrollbars.browser.es6.min.js"
-      crossorigin="anonymous"
+      src="../../dist/js/overlayscrollbars.browser.es6.min.js"
     ></script>
     <!--end::Third Party Plugin(OverlayScrollbars)--><!--begin::Required Plugin(popperjs for Bootstrap 5)-->
     <script
-      src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.11.8/dist/umd/popper.min.js"
-      crossorigin="anonymous"
+      src="../../dist/js/popper.min.js"
     ></script>
     <!--end::Required Plugin(popperjs for Bootstrap 5)--><!--begin::Required Plugin(Bootstrap 5)-->
     <script
-      src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.7/dist/js/bootstrap.min.js"
-      crossorigin="anonymous"
+      src="../../dist/js/bootstrap.min.js"
     ></script>
     <!--end::Required Plugin(Bootstrap 5)--><!--begin::Required Plugin(AdminLTE)-->
     <script src="../../dist/js/adminlte.js"></script>
@@ -1137,19 +1108,17 @@ function saveDataToDatabase($con, $importedData) {
     <!--end::OverlayScrollbars Configure-->
     <!-- OPTIONAL SCRIPTS -->
     <!-- apexcharts -->
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-    <script src="https://cdn.datatables.net/2.3.6/js/dataTables.js"></script>
-    <script src="https://cdn.datatables.net/responsive/3.0.0/js/dataTables.responsive.js"></script>
-    <script src="https://cdn.datatables.net/buttons/3.0.0/js/dataTables.buttons.js"></script>
-    <script src="https://cdn.datatables.net/buttons/3.0.0/js/buttons.html5.js"></script>
-    <script src="https://cdn.datatables.net/buttons/3.0.0/js/buttons.print.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/pdfmake.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/vfs_fonts.min.js"></script>
+    <script src="../../dist/js/jquery-3.6.0.min.js"></script>
+    <script src="../../dist/js/dataTables.js"></script>
+    <script src="../../dist/js/dataTables.responsive.js"></script>
+    <script src="../../dist/js/dataTables.buttons.js"></script>
+    <script src="../../dist/js/buttons.html5.js"></script>
+    <script src="../../dist/js/buttons.print.js"></script>
+    <script src="../../dist/js/jszip.min.js"></script>
+    <script src="../../dist/js/pdfmake.min.js"></script>
+    <script src="../../dist/js/vfs_fonts.min.js"></script>
     <script
-      src="https://cdn.jsdelivr.net/npm/apexcharts@3.37.1/dist/apexcharts.min.js"
-      integrity="sha256-+vh8GkaU7C9/wbSLIcwq82tQ2wTf44aOHA8HlBMwRI8="
-      crossorigin="anonymous"
+      src="../../dist/js/apexcharts.min.js"
     ></script>
     <script>
       // NOTICE!! DO NOT USE ANY OF THIS JAVASCRIPT

@@ -769,17 +769,16 @@ if (isset($_GET['action']) && $_GET['action'] === 'get_detail_aset' && isset($_G
 
     // Ambil data dari import_dat
     $stmt_da = $con->prepare(
-        "SELECT id.nomor_asset_utama, id.keterangan_asset, id.profit_center,
-                id.subreg, id.profit_center_text,
-                up.status AS status_penghapusan
-         FROM import_dat id
-         LEFT JOIN usulan_penghapusan up
-               ON id.nomor_asset_utama = up.nomor_asset_utama
-              AND up.created_by = ?
-         WHERE id.nomor_asset_utama = ?
-         LIMIT 10"
+          "SELECT id.nomor_asset_utama, id.keterangan_asset, id.profit_center,
+              id.subreg, id.profit_center_text,
+              up.mekanisme_penghapusan, up.status AS status_penghapusan
+           FROM import_dat id
+           LEFT JOIN usulan_penghapusan up
+             ON id.nomor_asset_utama = up.nomor_asset_utama
+           WHERE id.nomor_asset_utama = ?
+           LIMIT 10"
     );
-    $stmt_da->bind_param("ss", $_SESSION['nipp'], $no_aset);
+          $stmt_da->bind_param("s", $no_aset);
     $stmt_da->execute();
     $res_da = $stmt_da->get_result();
     $rows_da = [];
@@ -1034,37 +1033,18 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
     <link rel="preload" href="../../dist/css/adminlte.css" as="style" />
     <!--end::Accessibility Features-->
     <!--begin::Fonts-->
-    <link
-      rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/@fontsource/source-sans-3@5.0.12/index.css"
-      integrity="sha256-tXJfXfp6Ewt1ilPzLDtQnJV4hclT9XuaZUKyUvmyr+Q="
-      crossorigin="anonymous"
-      media="print"
-      onload="this.media='all'"
-    />
-    <!--end::Fonts-->
-    <!--begin::Third Party Plugin(OverlayScrollbars)-->
-    <link
-      rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/overlayscrollbars@2.11.0/styles/overlayscrollbars.min.css"
-      crossorigin="anonymous"
-    />
-    <!--end::Third Party Plugin(OverlayScrollbars)-->
-    <!--begin::Third Party Plugin(Bootstrap Icons)-->
-    <link
-      rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css"
-      crossorigin="anonymous"
-    />
+    <link rel="stylesheet" href="../../dist/css/index.css"/>
+    <link rel="stylesheet" href="../../dist/css/overlayscrollbars.min.css"/>
+    <link rel="stylesheet" href="../../dist/css/bootstrap-icons/bootstrap-icons.min.css"/>
+    <link rel="stylesheet" href="../../dist/css/adminlte.css" />
     <!--end::Third Party Plugin(Bootstrap Icons)-->
     <!--begin::Required Plugin(AdminLTE)-->
     <link rel="stylesheet" href="../../dist/css/adminlte.css" />
     <!--end::Required Plugin(AdminLTE)-->
 
     <!-- DataTables CSS -->
-    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.7/css/dataTables.bootstrap5.min.css">
-    <link rel="stylesheet" href="https://cdn.datatables.net/responsive/2.5.0/css/responsive.bootstrap5.min.css">
-    
+    <link rel="stylesheet" href="../../dist/css/dataTables.bootstrap5.min.css">
+    <link rel="stylesheet" href="../../dist/css/responsive.bootstrap5.min.css">
     <!-- Custom Styles for Horizontal Scroll -->
     <style>
       .app-sidebar {
@@ -1169,15 +1149,11 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
     </style>
     <!--end::Custom Styles-->
     <!-- apexcharts -->
-    <link
-      rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/apexcharts@3.37.1/dist/apexcharts.css"
-      integrity="sha256-4MX+61mt9NVvvuPjUWdUdyfZfxSB1/Rf9WtqRHgG5S0="
-      crossorigin="anonymous"
+    <Link rel="stylesheet"
+      href="../../dist/css/apexcharts.css"
     />
     <link rel="stylesheet"
-      href="https://cdn.datatables.net/2.3.6/css/dataTables.dataTables.min.css"
-    />
+      href="../../dist/css/dataTables.dataTables.min.css"/>
   </head>
   <body class="layout-fixed sidebar-expand-lg sidebar-open bg-body-tertiary">
     <!--begin::App Wrapper-->
@@ -1724,7 +1700,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                 ordering: true,
                                 info: true,
                                 language: {
-                                  url: 'https://cdn.datatables.net/plug-ins/1.13.7/i18n/id.json'
+                                  url: '../../dist/js/i18n/id.json'
                                 },
                                 columnDefs: [
                                   { orderable: false, targets: [6] }
@@ -1737,7 +1713,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                 responsive: false,
                                 pageLength: 10,
                                 language: {
-                                  url: 'https://cdn.datatables.net/plug-ins/1.13.7/i18n/id.json'
+                                  url: '../../dist/js/i18n/id.json'
                                 }
                               });
                             }
@@ -2227,18 +2203,15 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
     <!-- MODAL: Konfirmasi Hapus Draft (single row)                   -->
     <!-- ============================================================ -->
     <script  
-    src="https://cdn.jsdelivr.net/npm/overlayscrollbars@2.11.0/browser/overlayscrollbars.browser.es6.min.js"
-      crossorigin="anonymous"
+    src="../../dist/js/overlayscrollbars.browser.es6.min.js"
     ></script>
     <!--end::Third Party Plugin(OverlayScrollbars)--><!--begin::Required Plugin(popperjs for Bootstrap 5)-->
     <script
-      src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.11.8/dist/umd/popper.min.js"
-      crossorigin="anonymous"
+      src="../../dist/js/popper.min.js"
     ></script>
     <!--end::Required Plugin(popperjs for Bootstrap 5)--><!--begin::Required Plugin(Bootstrap 5)-->
     <script
-      src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.7/dist/js/bootstrap.min.js"
-      crossorigin="anonymous"
+      src="../../dist/js/bootstrap.min.js"
     ></script>
     <!--end::Required Plugin(Bootstrap 5)--><!--begin::Required Plugin(AdminLTE)-->
     <script src="../../dist/js/adminlte.js"></script>
@@ -2274,19 +2247,17 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
     <!--end::OverlayScrollbars Configure-->
     <!-- OPTIONAL SCRIPTS -->
     <!-- apexcharts -->
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-    <script src="https://cdn.datatables.net/2.3.6/js/dataTables.js"></script>
-    <script src="https://cdn.datatables.net/responsive/3.0.0/js/dataTables.responsive.js"></script>
-    <script src="https://cdn.datatables.net/buttons/3.0.0/js/dataTables.buttons.js"></script>
-    <script src="https://cdn.datatables.net/buttons/3.0.0/js/buttons.html5.js"></script>
-    <script src="https://cdn.datatables.net/buttons/3.0.0/js/buttons.print.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/pdfmake.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/vfs_fonts.min.js"></script>
+    <script src="../../dist/js/jquery-3.6.0.min.js"></script>
+    <script src="../../dist/js/dataTables.js"></script>
+    <script src="../../dist/js/dataTables.responsive.js"></script>
+    <script src="../../dist/js/dataTables.buttons.js"></script>
+    <script src="../../dist/js/buttons.html5.js"></script>
+    <script src="../../dist/js/buttons.print.js"></script>
+    <script src="../../dist/js/jszip.min.js"></script>
+    <script src="../../dist/js/pdfmake.min.js"></script>
+    <script src="../../dist/js/vfs_fonts.min.js"></script>
     <script
-      src="https://cdn.jsdelivr.net/npm/apexcharts@3.37.1/dist/apexcharts.min.js"
-      integrity="sha256-+vh8GkaU7C9/wbSLIcwq82tQ2wTf44aOHA8HlBMwRI8="
-      crossorigin="anonymous"
+      src="../../dist/js/apexcharts.min.js"
     ></script>
     <script>
    
@@ -2329,7 +2300,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
               }
             ],
             language: {
-              url: 'https://cdn.datatables.net/plug-ins/1.13.7/i18n/id.json'
+              url: '../../dist/js/i18n/id.json'
           },
             initComplete: function() {
             console.log('DataTable initialized successfully');
@@ -2348,7 +2319,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
             ordering: true,
             info: true,
             language: {
-                url: 'https://cdn.datatables.net/plug-ins/1.13.7/i18n/id.json'
+                url: '../../dist/js/i18n/id.json'
             }
         });
 
@@ -2420,40 +2391,41 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
 
           // Show confirm modal for Approve/Reject from reviewer UI
           function showApproveRejectConfirm(action, usulanId) {
-            const titleEl = document.getElementById('confirmApproveRejectTitle');
-            const msgEl = document.getElementById('confirmApproveRejectMessage');
-            const noteWrapper = document.getElementById('confirmRejectNoteWrapper');
-            const noteInput = document.getElementById('confirmRejectNote');
-
-            document.getElementById('confirmApproveRejectUsulanId').value = usulanId;
-            document.getElementById('confirmApproveRejectAction').value = action;
-            noteInput.value = '';
-
+            // If action is 'approve', use the simple confirmation modal.
+            // For 'reject', open the detailed form modal (single form) so reviewer
+            // can enter the reject reason there (avoid duplicate reject confirmation).
             if (action === 'approve') {
-              titleEl.textContent = 'Konfirmasi Approve';
-              msgEl.textContent = 'Anda akan menyetujui usulan ini. Lanjutkan?';
-              noteWrapper.style.display = 'none';
-            } else {
-              titleEl.textContent = 'Konfirmasi Reject';
-              msgEl.textContent = 'Anda akan menolak usulan ini. Tambahkan alasan (opsional) lalu lanjutkan.';
-              noteWrapper.style.display = 'block';
-            }
+              const titleEl = document.getElementById('confirmApproveRejectTitle');
+              const msgEl = document.getElementById('confirmApproveRejectMessage');
 
-            const modal = new bootstrap.Modal(document.getElementById('modalConfirmApproveReject'));
-            modal.show();
+                document.getElementById('confirmApproveRejectUsulanId').value = usulanId;
+                document.getElementById('confirmApproveRejectAction').value = action;
 
-            const btn = document.getElementById('btnConfirmApproveReject');
-            // remove previous handler
-            btn.onclick = null;
-            btn.onclick = function() {
-              modal.hide();
-              if (action === 'approve') {
+                titleEl.innerHTML = '<i class="bi bi-check-circle-fill me-2"></i>Konfirmasi Approve';
+                msgEl.textContent = 'Anda akan menyetujui usulan ini. Lanjutkan?';
+                // Set preview content (usulan id)
+                const previewEl = document.getElementById('confirmApprovePreview');
+                if (previewEl) previewEl.textContent = 'Usulan ID: ' + usulanId;
+
+              const modal = new bootstrap.Modal(document.getElementById('modalConfirmApproveReject'));
+              modal.show();
+
+              const btn = document.getElementById('btnConfirmApproveReject');
+              btn.onclick = null;
+              btn.onclick = function() {
+                modal.hide();
                 performApproveUsulan(usulanId);
+              };
+            } else {
+              // 'reject' -> open the existing detailed modal where the reject textarea
+              // (`modalRejectNote`) already exists to keep a single form.
+              if (typeof openFormLengkapiDokumen === 'function') {
+                openFormLengkapiDokumen(usulanId);
               } else {
-                const note = document.getElementById('confirmRejectNote').value.trim();
-                performRejectUsulan(usulanId, note);
+                // fallback: directly call reject without note
+                performRejectUsulan(usulanId, '');
               }
-            };
+            }
           }
 
           // Perform approve without browser confirm
@@ -2890,14 +2862,10 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
 
               <!-- Row 6 - Upload Foto (conditional) -->
                   <div class="mb-3" id="fotoUploadSection" style="display:none;">
-                    <label class="form-label">Foto Aset <span class="text-danger" id="fotoRequired">*</span></label>
-                    <input type="file" class="form-control" id="fotoInput" name="foto" accept="image/jpeg,image/jpg,image/png" 
-                           onchange="previewFoto(event)">
-                    <small class="text-muted">Format: JPG, JPEG, PNG. Maksimal 5MB.</small>
-                    
-                    <!-- Preview Foto -->
-                    <div id="fotoPreview" class="mt-3" style="display:none;">
-                      <img id="fotoPreviewImage" src="" style="max-width:300px; border:2px solid #ddd; border-radius:8px;">
+                    <label class="form-label">Foto Aset</label>
+                    <small class="text-muted d-block mb-2">Hanya untuk melihat foto aset yang telah diupload oleh pemilik aset.</small>
+                    <div id="fotoViewer" class="mt-2" style="display:none;">
+                      <img id="fotoViewerImage" src="" class="img-fluid" style="max-width:360px; border:2px solid #ddd; border-radius:8px;">
                     </div>
                   </div>
                 </div>
@@ -3002,13 +2970,19 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
             document.getElementById('kajian_risiko').value = usulan.kajian_risiko;
         }
         
-        // Tampilkan foto yang sudah ada (jika ada)
+        // Tampilkan foto yang sudah ada (jika ada) — viewer only (no upload)
         if (usulan.foto_path) {
-            document.getElementById('fotoPreviewImage').src = usulan.foto_path;
-            document.getElementById('fotoPreview').style.display = 'block';
-            document.getElementById('fotoUploadSection').style.display = 'block';
+          let src = usulan.foto_path;
+          const isAbsolute = /^(https?:)?\/\//i.test(src) || src.charAt(0) === '/';
+          if (!isAbsolute) src = '../../' + src; // halaman ini di web_aset/approval_subreg/
+          const viewerImg = document.getElementById('fotoViewerImage');
+          const viewer = document.getElementById('fotoViewer');
+          if (viewerImg) viewerImg.src = src;
+          if (viewer) viewer.style.display = 'block';
+          document.getElementById('fotoUploadSection').style.display = 'block';
         } else {
-            document.getElementById('fotoPreview').style.display = 'none';
+          const viewer = document.getElementById('fotoViewer');
+          if (viewer) viewer.style.display = 'none';
         }
         
         var modal = new bootstrap.Modal(document.getElementById('modalFormLengkapiDokumen'));
@@ -3054,7 +3028,15 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
         };
         document.getElementById('btnModalReject').onclick = function() {
           const id = document.getElementById('usulan_id').value;
-          if (id) showApproveRejectConfirm('reject', id);
+          if (!id) return;
+          const note = (document.getElementById('modalRejectNote') || {}).value || '';
+
+          // Tampilkan modal konfirmasi kustom (lebih atraktif)
+          document.getElementById('confirmRejectUsulanId').value = id;
+          document.getElementById('confirmRejectNotePreview').textContent = note.trim() || '(Tidak ada alasan)';
+
+          const confirmModal = new bootstrap.Modal(document.getElementById('modalConfirmReject'));
+          confirmModal.show();
         };
         // Save (submit the lengkapi form) — kept separate from approve/reject
         document.getElementById('btnSaveLengkapi').onclick = function() {
@@ -3062,27 +3044,45 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
         };
     }
 
+    // Handler untuk tombol konfirmasi reject di modal kustom
+    document.addEventListener('DOMContentLoaded', function() {
+      const btnConfirmReject = document.getElementById('btnConfirmReject');
+      if (!btnConfirmReject) return;
+      btnConfirmReject.addEventListener('click', function() {
+        const id = document.getElementById('confirmRejectUsulanId').value;
+        const note = (document.getElementById('modalRejectNote') || {}).value || '';
+        // Hide confirm modal
+        try { bootstrap.Modal.getInstance(document.getElementById('modalConfirmReject')).hide(); } catch(e){}
+        // Hide detail modal if open
+        try { bootstrap.Modal.getInstance(document.getElementById('modalFormLengkapiDokumen')).hide(); } catch(e){}
+        // Call reject
+        if (id) performRejectUsulan(id, note.trim());
+      });
+    });
+
     // Fungsi untuk toggle foto upload section berdasarkan pilihan Fisik Aset
     function toggleFotoUpload() {
         const fisikAset = document.getElementById('fisik_aset').value;
-        const fotoSection = document.getElementById('fotoUploadSection');
-        const fotoInput = document.getElementById('fotoInput');
-        
-        if (fisikAset === 'Ada') {
-            // Show foto section dan set required
-            fotoSection.style.display = 'block';
-            fotoInput.setAttribute('required', 'required');
-        } else if (fisikAset === 'Tidak Ada') {
-            // Hide foto section dan remove required
-            fotoSection.style.display = 'none';
-            fotoInput.removeAttribute('required');
-            fotoInput.value = ''; // Clear file input
-            document.getElementById('fotoPreview').style.display = 'none';
-        } else {
-            // Default: hide
-            fotoSection.style.display = 'none';
-            fotoInput.removeAttribute('required');
+      const fotoSection = document.getElementById('fotoUploadSection');
+      const fotoInput = document.getElementById('fotoInput');
+      // Only toggle visibility — when fotoInput exists (creator flow) we may set required
+      if (fisikAset === 'Ada') {
+        if (fotoSection) fotoSection.style.display = 'block';
+        if (fotoInput) fotoInput.setAttribute('required', 'required');
+      } else if (fisikAset === 'Tidak Ada') {
+        if (fotoSection) fotoSection.style.display = 'none';
+        if (fotoInput) {
+          fotoInput.removeAttribute('required');
+          fotoInput.value = '';
         }
+        const preview = document.getElementById('fotoPreview');
+        if (preview) preview.style.display = 'none';
+        const viewer = document.getElementById('fotoViewer');
+        if (viewer) viewer.style.display = 'none';
+      } else {
+        if (fotoSection) fotoSection.style.display = 'none';
+        if (fotoInput) fotoInput.removeAttribute('required');
+      }
     }
 
     function previewFoto(event) {
@@ -3228,22 +3228,58 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
     <div class="modal fade" id="modalConfirmApproveReject" tabindex="-1" aria-hidden="true">
       <div class="modal-dialog modal-dialog-centered" style="max-width:540px;">
         <div class="modal-content border-0 shadow-lg overflow-hidden">
-          <div class="modal-header bg-primary text-white">
-            <h5 class="modal-title" id="confirmApproveRejectTitle">Konfirmasi</h5>
+          <div class="modal-header bg-success text-white">
+            <h5 class="modal-title" id="confirmApproveRejectTitle"><i class="bi bi-check-circle-fill me-2"></i>Konfirmasi Approve</h5>
             <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
           </div>
           <div class="modal-body">
-            <p id="confirmApproveRejectMessage">Anda yakin ingin melakukan tindakan ini?</p>
+            <div class="d-flex align-items-start gap-3">
+              <div style="font-size:2.2rem;color:#d4edda;"><i class="bi bi-hand-thumbs-up-fill"></i></div>
+              <div>
+                <p id="confirmApproveRejectMessage" style="font-weight:600; margin-bottom:6px;">Anda akan menyetujui usulan ini. Lanjutkan?</p>
+                <p class="text-muted mb-2">Usulan akan dikirimkan ke Regional untuk persetujuan.</p>
+                <div>
+                  <small class="text-muted">Usulan:</small>
+                  <div id="confirmApprovePreview" class="p-2 mt-1" style="background:#f8f9fa;border-radius:6px;">(ID usulan akan ditampilkan di sini)</div>
+                </div>
+              </div>
+            </div>
             <input type="hidden" id="confirmApproveRejectUsulanId" value="">
             <input type="hidden" id="confirmApproveRejectAction" value="">
-            <div id="confirmRejectNoteWrapper" style="display:none;">
-              <label for="confirmRejectNote" class="form-label">Alasan Reject (opsional)</label>
-              <textarea id="confirmRejectNote" class="form-control" rows="3" placeholder="Tuliskan alasan jika menolak usulan (akan disimpan di riwayat)."></textarea>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-light" data-bs-dismiss="modal">Batal</button>
+            <button type="button" id="btnConfirmApproveReject" class="btn btn-success">Ya, Setujui</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Attractive Confirm Reject Modal -->
+    <div class="modal fade" id="modalConfirmReject" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered" style="max-width:520px;">
+        <div class="modal-content border-0 shadow-lg overflow-hidden">
+          <div class="modal-header bg-danger text-white">
+            <h5 class="modal-title"><i class="bi bi-exclamation-octagon-fill me-2"></i> Konfirmasi Reject</h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <div class="d-flex align-items-start gap-3">
+              <div style="font-size: 2.4rem; color: #f8d7da;"><i class="bi bi-x-circle-fill"></i></div>
+              <div>
+                <p class="mb-2" style="font-weight:600;">Anda akan menolak usulan ini.</p>
+                <p class="mb-2 text-muted">Tindakan ini akan dicatat di riwayat persetujuan dan tidak dapat dibatalkan.</p>
+                <div class="mt-2">
+                  <small class="text-muted">Alasan yang akan disimpan:</small>
+                  <div id="confirmRejectNotePreview" class="p-2 mt-1" style="background:#f8f9fa;border-radius:6px;">(Tidak ada alasan)</div>
+                </div>
+              </div>
             </div>
           </div>
           <div class="modal-footer">
+            <input type="hidden" id="confirmRejectUsulanId" value="">
             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
-            <button type="button" id="btnConfirmApproveReject" class="btn btn-primary">Ya, Lanjutkan</button>
+            <button type="button" id="btnConfirmReject" class="btn btn-danger">Ya, Tolak</button>
           </div>
         </div>
       </div>

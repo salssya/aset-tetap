@@ -387,41 +387,50 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
     // Handle file upload foto
     $foto_path = null;
     if (isset($_FILES['foto']) && $_FILES['foto']['error'] === UPLOAD_ERR_OK) {
-        $file = $_FILES['foto'];
-        $upload_dir = '../../uploads/foto_aset/';
-        
-        // Create directory if not exists
-        if (!file_exists($upload_dir)) {
-            mkdir($upload_dir, 0777, true);
-        }
-        
-        // Validate file size (max 5MB)
-        if ($file['size'] > 5 * 1024 * 1024) {
-            $pesan = "Ukuran foto terlalu besar. Maksimal 5MB.";
-            $tipe_pesan = "danger";
+      $file = $_FILES['foto'];
+
+      // Determine server upload directory (absolute) and ensure it exists
+      $upload_dir_server = realpath(__DIR__ . '/../../uploads/foto_aset');
+      if ($upload_dir_server === false) {
+        $upload_dir_server = __DIR__ . '/../../uploads/foto_aset';
+      }
+      if (!file_exists($upload_dir_server)) {
+        mkdir($upload_dir_server, 0777, true);
+      }
+
+      // Validate file size (max 5MB)
+      if ($file['size'] > 5 * 1024 * 1024) {
+        $pesan = "Ukuran foto terlalu besar. Maksimal 5MB.";
+        $tipe_pesan = "danger";
+      } else {
+        // Validate file type
+        $allowed_types = ['image/jpeg', 'image/jpg', 'image/png'];
+        $finfo = finfo_open(FILEINFO_MIME_TYPE);
+        $mime_type = finfo_file($finfo, $file['tmp_name']);
+        finfo_close($finfo);
+
+        if (!in_array($mime_type, $allowed_types)) {
+          $pesan = "Tipe file tidak didukung. Gunakan JPG, JPEG, atau PNG.";
+          $tipe_pesan = "danger";
         } else {
-            // Validate file type
-            $allowed_types = ['image/jpeg', 'image/jpg', 'image/png'];
-            $finfo = finfo_open(FILEINFO_MIME_TYPE);
-            $mime_type = finfo_file($finfo, $file['tmp_name']);
-            finfo_close($finfo);
-            
-            if (!in_array($mime_type, $allowed_types)) {
-                $pesan = "Tipe file tidak didukung. Gunakan JPG, JPEG, atau PNG.";
-                $tipe_pesan = "danger";
-            } else {
-                $file_ext = pathinfo($file['name'], PATHINFO_EXTENSION);
-                $new_filename = 'foto_' . $usulan_id . '_' . time() . '.' . $file_ext;
-                $upload_path = $upload_dir . $new_filename;
-                
-                if (move_uploaded_file($file['tmp_name'], $upload_path)) {
-                    $foto_path = $upload_path;
-                } else {
-                    $pesan = "Gagal mengupload foto.";
-                    $tipe_pesan = "danger";
-                }
-            }
+          $file_ext = pathinfo($file['name'], PATHINFO_EXTENSION);
+          $new_filename = 'foto_' . $usulan_id . '_' . time() . '.' . $file_ext;
+          $server_target = rtrim($upload_dir_server, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $new_filename;
+
+          if (move_uploaded_file($file['tmp_name'], $server_target)) {
+            // Build a web-accessible path by removing DOCUMENT_ROOT from server path
+            $docroot = rtrim(str_replace('\\', '/', realpath($_SERVER['DOCUMENT_ROOT'])), '/');
+            $server_target_norm = str_replace('\\', '/', $server_target);
+            $web_path = str_replace($docroot, '', $server_target_norm);
+            // Ensure leading slash
+            if (substr($web_path, 0, 1) !== '/') $web_path = '/' . $web_path;
+            $foto_path = $web_path;
+          } else {
+            $pesan = "Gagal mengupload foto.";
+            $tipe_pesan = "danger";
+          }
         }
+      }
     }
     
     // Update database jika tidak ada error upload
@@ -817,17 +826,16 @@ if (isset($_GET['action']) && $_GET['action'] === 'get_detail_aset' && isset($_G
 
     // Ambil data dari import_dat
     $stmt_da = $con->prepare(
-        "SELECT id.nomor_asset_utama, id.keterangan_asset, id.profit_center,
-                id.subreg, id.profit_center_text,
-                up.status AS status_penghapusan
-         FROM import_dat id
-         LEFT JOIN usulan_penghapusan up
-               ON id.nomor_asset_utama = up.nomor_asset_utama
-              AND up.created_by = ?
-         WHERE id.nomor_asset_utama = ?
-         LIMIT 10"
+          "SELECT id.nomor_asset_utama, id.keterangan_asset, id.profit_center,
+              id.subreg, id.profit_center_text,
+              up.mekanisme_penghapusan, up.status AS status_penghapusan
+           FROM import_dat id
+           LEFT JOIN usulan_penghapusan up
+             ON id.nomor_asset_utama = up.nomor_asset_utama
+           WHERE id.nomor_asset_utama = ?
+           LIMIT 10"
     );
-    $stmt_da->bind_param("ss", $_SESSION['nipp'], $no_aset);
+          $stmt_da->bind_param("s", $no_aset);
     $stmt_da->execute();
     $res_da = $stmt_da->get_result();
     $rows_da = [];
@@ -1089,51 +1097,16 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
     <meta name="theme-color" content="#007bff" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#1a1a1a" media="(prefers-color-scheme: dark)" />
     <!--end::Accessibility Meta Tags-->
-    <!--begin::Primary Meta Tags-->
-    <meta name="title" content="AdminLTE | Dashboard v2" />
-    <meta name="author" content="ColorlibHQ" />
-    <meta
-      name="description"
-      content="AdminLTE is a Free Bootstrap 5 Admin Dashboard, 30 example pages using Vanilla JS. Fully accessible with WCAG 2.1 AA compliance."
-    />
-    <meta 
-      name="keywords"
-      content="bootstrap 5, bootstrap, bootstrap 5 admin dashboard, bootstrap 5 dashboard, bootstrap 5 charts, bootstrap 5 calendar, bootstrap 5 datepicker, bootstrap 5 tables, bootstrap 5 datatable, vanilla js datatable, colorlibhq, colorlibhq dashboard, colorlibhq admin dashboard, accessible admin panel, WCAG compliant"
-    />
-    <!--end::Primary Meta Tags-->
     <!--begin::Accessibility Features-->
     <!-- Skip links will be dynamically added by accessibility.js -->
     <meta name="supported-color-schemes" content="light dark" />
     <link rel="preload" href="../../dist/css/adminlte.css" as="style" />
     <!--end::Accessibility Features-->
     <!--begin::Fonts-->
-    <link
-      rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/@fontsource/source-sans-3@5.0.12/index.css"
-      integrity="sha256-tXJfXfp6Ewt1ilPzLDtQnJV4hclT9XuaZUKyUvmyr+Q="
-      crossorigin="anonymous"
-      media="print"
-      onload="this.media='all'"
-    />
-    <!--end::Fonts-->
-    <!--begin::Third Party Plugin(OverlayScrollbars)-->
-    <link
-      rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/overlayscrollbars@2.11.0/styles/overlayscrollbars.min.css"
-      crossorigin="anonymous"
-    />
-    <!--end::Third Party Plugin(OverlayScrollbars)-->
-    <!--begin::Third Party Plugin(Bootstrap Icons)-->
-    <link
-      rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css"
-      crossorigin="anonymous"
-    />
-    <!--end::Third Party Plugin(Bootstrap Icons)-->
-    <!--begin::Required Plugin(AdminLTE)-->
+    <link rel="stylesheet" href="../../dist/css/index.css"/>
+    <link rel="stylesheet" href="../../dist/css/overlayscrollbars.min.css"/>
+    <link rel="stylesheet" href="../../dist/css/bootstrap-icons/bootstrap-icons.min.css"/>
     <link rel="stylesheet" href="../../dist/css/adminlte.css" />
-    <!--end::Required Plugin(AdminLTE)-->
-
     <style>
       /* Shared header/sidebar fixes (from dasbor.php) */
       .app-header, nav.app-header, .app-header.navbar {
@@ -1166,8 +1139,8 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
     </style>
 
     <!-- DataTables CSS -->
-    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.7/css/dataTables.bootstrap5.min.css">
-    <link rel="stylesheet" href="https://cdn.datatables.net/responsive/2.5.0/css/responsive.bootstrap5.min.css">
+    <link rel="stylesheet" href="../../dist/css/dataTables.bootstrap5.min.css">
+    <link rel="stylesheet" href="../../dist/css/responsive.bootstrap5.min.css">
     
     <!-- Custom Styles for Horizontal Scroll -->
     <style>
@@ -1273,15 +1246,11 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
     </style>
     <!--end::Custom Styles-->
     <!-- apexcharts -->
-    <link
-      rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/apexcharts@3.37.1/dist/apexcharts.css"
-      integrity="sha256-4MX+61mt9NVvvuPjUWdUdyfZfxSB1/Rf9WtqRHgG5S0="
-      crossorigin="anonymous"
+    <Link rel="stylesheet"
+      href="../../dist/css/apexcharts.css"
     />
     <link rel="stylesheet"
-      href="https://cdn.datatables.net/2.3.6/css/dataTables.dataTables.min.css"
-    />
+      href="../../dist/css/dataTables.dataTables.min.css"/>
   </head>
   <body class="layout-fixed sidebar-expand-lg sidebar-open bg-body-tertiary">
     <!--begin::App Wrapper-->
@@ -1302,6 +1271,34 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
             </li>
             <!--end::Navbar Search-->
             <!--begin::Messages Dropdown Menu-->
+            <!-- MODAL: Konfirmasi Approve/Reject (Regional) -->
+            <!-- ============================================================ -->
+            <div class="modal fade" id="modalConfirmRegionalAction" tabindex="-1" aria-hidden="true">
+              <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content border-0 shadow-lg">
+                  <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title" id="confirmRegionalTitle">Konfirmasi</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                  </div>
+                  <div class="modal-body">
+                    <p id="confirmRegionalBody">Apakah Anda yakin?</p>
+                    <div id="confirmRejectPreviewWrapper" style="display:none;">
+                      <label class="form-label">Alasan Reject (preview):</label>
+                      <div class="p-2 bg-light rounded border" id="confirmRejectNotePreview">(Tidak ada alasan)</div>
+                    </div>
+                    <input type="hidden" id="confirmRegionalAction" value="">
+                    <input type="hidden" id="confirmRegionalUsulanId" value="">
+                  </div>
+                  <div class="modal-footer">
+                    <button type="button" id="btnConfirmRegionalAction" class="btn btn-primary">
+                      <i class="bi bi-check-circle me-1"></i> Ya, Lanjutkan
+                    </button>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <!--end::Notifications Dropdown Menu-->
             <!--begin::Fullscreen Toggle-->
             <li class="nav-item">
@@ -1759,9 +1756,8 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                       ?>
                                     </td>
                                     <td>
-                                      <button type="button" class="btn btn-sm btn-outline-primary btn-review" 
-                                              data-usulan-id="<?= $row['id'] ?>" 
-                                              onclick="try{ if(typeof openFormLengkapiDokumen==='function'){ openFormLengkapiDokumen(<?= $row['id'] ?>); }else{ console.warn('openFormLengkapiDokumen not defined'); } }catch(e){console.error(e);}"
+                                      <button class="btn btn-sm btn-outline-primary" 
+                                              onclick="openFormLengkapiDokumen(<?= $row['id'] ?>)" 
                                               title="Review dokumen untuk Regional Approval">
                                         <i class="bi bi-eye"></i> Review
                                       </button>
@@ -1863,142 +1859,184 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                           
                           <script>
                           // JavaScript for Aset Picker Modal in Upload Tab
-                          $(document).ready(function() {
-                            let selectedAssets = [];
-                            
-                            // Select All checkbox
-                            $('#selectAllAssets').on('change', function() {
-                              const isChecked = $(this).prop('checked');
-                              $('.asset-checkbox').prop('checked', isChecked);
-                              updateSelectedAssets();
-                            });
-                            
-                            // Individual checkbox
-                            $(document).on('change', '.asset-checkbox', function() {
-                              updateSelectedAssets();
-                              
-                              // Update Select All state
-                              const total = $('.asset-checkbox').length;
-                              const checked = $('.asset-checkbox:checked').length;
-                              $('#selectAllAssets').prop('checked', total === checked);
-                            });
-                            
-                            // Update selected assets array
-                            function updateSelectedAssets() {
-                              selectedAssets = [];
-                              $('.asset-checkbox:checked').each(function() {
-                                selectedAssets.push({
-                                  id: $(this).val(),
-                                  nomor: $(this).data('nomor'),
-                                  nama: $(this).data('nama')
-                                });
-                              });
-                              
-                              // Update counter
-                              const count = selectedAssets.length;
-                              $('#countNumber').text(count);
-                              if (count > 0) {
-                                $('#selectedAssetCount').slideDown();
-                              } else {
-                                $('#selectedAssetCount').slideUp();
-                              }
-                            }
-                            
-                            // Confirm selection
-                            $('#btnConfirmSelectAssets').on('click', function() {
-                              if (selectedAssets.length === 0) {
-                                alert('Silakan pilih minimal 1 aset terlebih dahulu!');
-                                return;
-                              }
-                              
-                              // Set usulan IDs (comma separated)
-                              const usulanIds = selectedAssets.map(a => a.id).join(',');
-                              document.getElementById('inlineUsulanId').value = usulanIds;
-                              
-                              // Set display text
-                              let displayText = '';
-                              if (selectedAssets.length === 1) {
-                                displayText = selectedAssets[0].nomor + ' - ' + selectedAssets[0].nama;
-                              } else {
-                                displayText = selectedAssets.length + ' aset dipilih (' + 
-                                              selectedAssets.map(a => a.nomor).slice(0, 3).join(', ') + 
-                                              (selectedAssets.length > 3 ? '...' : '') + ')';
-                              }
-                              document.getElementById('inlineNomorAset').value = displayText;
-                              
-                              // Save full selected assets JSON to hidden input so upload handler can reference them
-                              try {
-                                document.getElementById('inlineSelectedItems').value = JSON.stringify(selectedAssets);
-                              } catch (e) {}
+                          (function initAsetPicker() {
+                            const run = function() {
+                              let selectedAssets = [];
 
-                              // Render selected assets list under the Nomor Aset field
-                              renderSelectedAssetsList(selectedAssets);
-                              
-                              // Clear validation
-                              document.getElementById('inlineNomorAset').classList.remove('is-invalid');
-                              document.getElementById('inlineNomorAsetError').style.display = 'none';
-                              
-                              // Close modal
-                              bootstrap.Modal.getInstance(document.getElementById('modalAsetPickerUpload')).hide();
-                              
-                              // Clear checkboxes for next use
-                              $('.asset-checkbox').prop('checked', false);
-                              $('#selectAllAssets').prop('checked', false);
-                              $('#selectedAssetCount').slideUp();
-                            });
-                          });
+                              // Select All checkbox
+                              $('#selectAllAssets').on('change', function() {
+                                const isChecked = $(this).prop('checked');
+                                $('.asset-checkbox').prop('checked', isChecked);
+                                updateSelectedAssets();
+                              });
+
+                              // Individual checkbox
+                              $(document).on('change', '.asset-checkbox', function() {
+                                updateSelectedAssets();
+
+                                // Update Select All state
+                                const total = $('.asset-checkbox').length;
+                                const checked = $('.asset-checkbox:checked').length;
+                                $('#selectAllAssets').prop('checked', total === checked);
+                              });
+
+                              // Update selected assets array
+                              function updateSelectedAssets() {
+                                selectedAssets = [];
+                                $('.asset-checkbox:checked').each(function() {
+                                  selectedAssets.push({
+                                    id: $(this).val(),
+                                    nomor: $(this).data('nomor'),
+                                    nama: $(this).data('nama')
+                                  });
+                                });
+
+                                // Update counter
+                                const count = selectedAssets.length;
+                                $('#countNumber').text(count);
+                                if (count > 0) {
+                                  $('#selectedAssetCount').slideDown();
+                                } else {
+                                  $('#selectedAssetCount').slideUp();
+                                }
+                              }
+
+                              // Confirm selection — recompute current checked assets to avoid stale closure state
+                              $('#btnConfirmSelectAssets').on('click', function() {
+                                // build fresh list from DOM
+                                const nowSelected = [];
+                                $('.asset-checkbox:checked').each(function() {
+                                  nowSelected.push({
+                                    id: $(this).val(),
+                                    nomor: $(this).data('nomor'),
+                                    nama: $(this).data('nama')
+                                  });
+                                });
+
+                                if (nowSelected.length === 0) {
+                                  alert('Silakan pilih minimal 1 aset terlebih dahulu!');
+                                  return;
+                                }
+
+                                // Set usulan IDs (comma separated)
+                                const usulanIds = nowSelected.map(a => a.id).join(',');
+                                const inlineUsulanEl = document.getElementById('inlineUsulanId');
+                                if (inlineUsulanEl) inlineUsulanEl.value = usulanIds;
+
+                                // Set display text
+                                let displayText = '';
+                                if (nowSelected.length === 1) {
+                                  displayText = nowSelected[0].nomor + ' - ' + nowSelected[0].nama;
+                                } else {
+                                  displayText = nowSelected.length + ' aset dipilih (' + 
+                                                nowSelected.map(a => a.nomor).slice(0, 3).join(', ') + 
+                                                (nowSelected.length > 3 ? '...' : '') + ')';
+                                }
+                                const inlineNomorEl = document.getElementById('inlineNomorAset');
+                                if (inlineNomorEl) inlineNomorEl.value = displayText;
+
+                                // Save full selected assets JSON to hidden input so upload handler can reference them
+                                try {
+                                  const inlineSel = document.getElementById('inlineSelectedItems');
+                                  if (inlineSel) inlineSel.value = JSON.stringify(nowSelected);
+                                } catch (e) {}
+
+                                // Render selected assets list under the Nomor Aset field (if function available)
+                                try { if (typeof renderSelectedAssetsList === 'function') renderSelectedAssetsList(nowSelected); } catch (e) {}
+
+                                // Clear validation
+                                if (inlineNomorEl) inlineNomorEl.classList.remove('is-invalid');
+                                const errEl = document.getElementById('inlineNomorAsetError');
+                                if (errEl) errEl.style.display = 'none';
+
+                                // Close modal (safely)
+                                try {
+                                  const modalEl = document.getElementById('modalAsetPickerUpload');
+                                  const instance = bootstrap.Modal.getInstance(modalEl) || new bootstrap.Modal(modalEl);
+                                  instance.hide();
+                                } catch (e) {}
+
+                                // Clear checkboxes for next use
+                                $('.asset-checkbox').prop('checked', false);
+                                $('#selectAllAssets').prop('checked', false);
+                                $('#selectedAssetCount').slideUp();
+                              });
+                            };
+
+                            // If jQuery is already loaded, run immediately; otherwise poll until available
+                            if (window.jQuery) {
+                              jQuery(run);
+                            } else {
+                              document.addEventListener('DOMContentLoaded', function() {
+                                const waitForJq = setInterval(function() {
+                                  if (window.jQuery) {
+                                    clearInterval(waitForJq);
+                                    jQuery(run);
+                                  }
+                                }, 100);
+                              });
+                            }
+                          })();
                           </script>
 
                           <!-- Modal: Detail Data Aset dengan Mekanisme Penghapusan -->
                           <div class="modal fade" id="modalDetailAset" tabindex="-1" aria-hidden="true">
                             <div class="modal-dialog modal-xl modal-dialog-centered">
-                              <div class="modal-content" style="border-radius: 6px; overflow: hidden;">
+                              <div class="modal-content border-0 shadow-sm" style="border-radius:6px; overflow:hidden;">
                                 <!-- Header -->
-                                <div class="modal-header" style="background: #fff; border-bottom: 2px solid #0d6efd; padding: 14px 20px;">
+                                <div class="modal-header bg-primary text-white">
                                   <div>
                                     <div class="d-flex align-items-center mb-1">
-                                      <i class="bi bi-table me-2" style="color: #0d6efd; font-size: 1.1rem;"></i>
-                                      <h5 class="modal-title mb-0 fw-bold" style="color: #0d6efd;">Detail Data Aset</h5>
+                                      <i class="bi bi-table me-2" style="font-size:1.1rem;"></i>
+                                      <h5 class="modal-title mb-0 fw-bold">Detail Data Aset</h5>
                                     </div>
-                                    <div style="font-size: 0.875rem; color: #555;">
+                                    <div style="font-size:0.9rem; opacity:0.95;">
                                       Profit Center: <strong id="detailAsetPC">-</strong>
                                       &nbsp;|&nbsp; Subreg: <strong id="detailAsetSubreg">-</strong>
                                     </div>
                                   </div>
-                                  <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                                 </div>
                                 <!-- Body — tabel data aset -->
-                                <div class="modal-body p-0">
+                                <div class="modal-body p-3">
+                                  <style>
+                                    /* Limit table height and allow scrolling inside modal */
+                                    #modalDetailAset .table-responsive{ max-height:420px; overflow:auto; }
+                                    #modalDetailAset .table thead th { position: sticky; top:0; background:#fff; z-index:1; }
+                                    /* Tighter header and close button */
+                                    #modalDetailAset .modal-header { padding: 12px 18px; }
+                                    #modalDetailAset .modal-header .btn { padding:6px 8px; border-radius:6px; }
+                                    /* Simplified column sizing for compact 4-column layout */
+                                    #modalDetailAset td, #modalDetailAset th { vertical-align: middle; }
+                                    #modalDetailAset td:nth-child(1), #modalDetailAset th:nth-child(1) { white-space:nowrap; width:220px; }
+                                    #modalDetailAset td:nth-child(2), #modalDetailAset th:nth-child(2) { width:40%; }
+                                    #modalDetailAset td:nth-child(3), #modalDetailAset th:nth-child(3) { text-align:center; width:160px; white-space:nowrap; }
+                                    #modalDetailAset td:nth-child(4), #modalDetailAset th:nth-child(4) { text-align:center; width:160px; white-space:nowrap; }
+                                    /* Make asset name link color subtle and wrap nicely */
+                                    #modalDetailAset td a { color:#0d6efd; text-decoration:none; }
+                                    #modalDetailAset td a:hover { text-decoration:underline; }
+                                  </style>
                                   <div class="table-responsive">
-                                    <table class="table mb-0" style="border-collapse: collapse;">
+                                    <table class="table mb-0 table-striped table-hover align-middle" style="border-collapse: collapse;">
                                       <thead class="table-light">
                                           <tr>
-                                              <th style="width: 50px;">No</th>
-                                              <th style="width: 180px;">Nomor Aset</th>
+                                              <th>Nomor Aset</th>
                                               <th>Nama Aset</th>
-                                              <th style="width: 150px;">Subreg</th>
-                                              <th style="width: 200px;">Cabang</th>
-                                              <th style="width: 120px;">Status</th>
-                                              <th style="width: 100px;">Dokumen</th>
-                                              <th style="width: 200px;">Aksi</th>
+                                              <th>Status Subreg</th>
+                                              <th>Mekanisme Penghapusan</th>
                                           </tr>
                                       </thead>
                                       <tbody id="detailAsetTbody">
                                         <tr>
-                                          <td colspan="5" class="text-center py-3 text-muted">Memuat data...</td>
+                                          <td colspan="4" class="text-center py-3 text-muted">Memuat data...</td>
                                         </tr>
                                       </tbody>
                                     </table>
                                   </div>
                                 </div>
                                 <!-- Footer -->
-                                <div class="modal-footer" style="background: #f8f9fa; border-top: 1px solid #dee2e6; padding: 10px 20px; justify-content: space-between;">
-                                  <span id="detailAsetTotal" style="font-size: 0.875rem; color: #555;"></span>
-                                  <button type="button" class="btn btn-secondary btn-sm px-4"
-                                          data-bs-dismiss="modal"
-                                          style="background: #6c757d; border: none; border-radius: 4px;">
-                                    Tutup
-                                  </button>
+                                <div class="modal-footer bg-light" style="justify-content: space-between;">
+                                  <div class="text-muted" id="detailAsetTotal" style="font-size:0.9rem;"></div>
+                                  <button type="button" class="btn btn-outline-secondary btn-sm px-4" data-bs-dismiss="modal">Tutup</button>
                                 </div>
                               </div>
                             </div>
@@ -2019,7 +2057,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                 ordering: true,
                                 info: true,
                                 language: {
-                                  url: 'https://cdn.datatables.net/plug-ins/1.13.7/i18n/id.json'
+                                  url: '../../dist/js/i18n/id.json'
                                 },
                                 columnDefs: [
                                   { orderable: false, targets: [6] }
@@ -2032,7 +2070,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                 responsive: false,
                                 pageLength: 10,
                                 language: {
-                                  url: 'https://cdn.datatables.net/plug-ins/1.13.7/i18n/id.json'
+                                  url: '../../dist/js/i18n/id.json'
                                 }
                               });
                             }
@@ -2086,28 +2124,27 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                 json.data.forEach(function(r, i) {
                                   const tr = document.createElement('tr');
                                   tr.style.background = (i % 2 === 0) ? '#f8f9fa' : '#fff';
-                                  
+
                                   // Badge untuk mekanisme
                                   let mekanismeBadge = '-';
                                   if (r.mekanisme_penghapusan) {
-                                    const badgeClass = r.mekanisme_penghapusan === 'Jual Lelang' ? 'success' : 'warning';
+                                    const badgeClass = r.mekanisme_penghapusan.toLowerCase().includes('jual') ? 'success' : 'warning';
                                     mekanismeBadge = '<span class="badge bg-' + badgeClass + '">' + escHtml(r.mekanisme_penghapusan) + '</span>';
                                   }
-                                  
-                                  // Badge untuk status
-                                  let statusBadge = '-';
-                                  if (r.status_penghapusan) {
-                                    const statusClass = r.status_penghapusan === 'Siap Upload' ? 'info' : 
-                                                      r.status_penghapusan === 'Lengkapi Data' ? 'warning' : 'secondary';
-                                    statusBadge = '<span class="badge bg-' + statusClass + '">' + escHtml(r.status_penghapusan) + '</span>';
-                                  }
-                                  
+
+                                  // Status dari SubReg (fallback ke status_penghapusan jika tidak ada)
+                                  let statusText = r.status_approval_subreg || r.status_penghapusan || '-';
+                                  let statusClass = 'secondary';
+                                  if (statusText && statusText.toLowerCase().includes('approved')) statusClass = 'success';
+                                  else if (statusText && statusText.toLowerCase().includes('reject')) statusClass = 'danger';
+                                  else if (statusText && (statusText.toLowerCase().includes('lengkapi') || statusText.toLowerCase().includes('pending'))) statusClass = 'warning';
+                                  const statusBadge = '<span class="badge bg-' + statusClass + '">' + escHtml(statusText) + '</span>';
+
                                   tr.innerHTML =
-                                    '<td style="padding: 10px 16px; color: #555;">' + (i + 1) + '</td>' +
-                                    '<td style="padding: 10px 16px; font-weight: 500;">' + escHtml(r.nomor_asset_utama || '') + '</td>' +
-                                    '<td style="padding: 10px 16px; color: #0d6efd;">' + escHtml(r.keterangan_asset || r.nama_aset || '-') + '</td>' +
-                                    '<td style="padding: 10px 16px;">' + mekanismeBadge + '</td>' +
-                                    '<td style="padding: 10px 16px;">' + statusBadge + '</td>';
+                                    '<td style="padding: 10px 12px; font-weight:500;">' + escHtml(r.nomor_asset_utama || '') + '</td>' +
+                                    '<td style="padding: 10px 12px; color: #0d6efd;">' + escHtml(r.keterangan_asset || r.nama_aset || '-') + '</td>' +
+                                    '<td style="padding: 10px 12px;">' + statusBadge + '</td>' +
+                                    '<td style="padding: 10px 12px;">' + mekanismeBadge + '</td>';
                                   tbody.appendChild(tr);
                                 });
                               } else {
@@ -2623,18 +2660,15 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
     <!-- MODAL: Konfirmasi Hapus Draft (single row)                   -->
     <!-- ============================================================ -->
     <script  
-    src="https://cdn.jsdelivr.net/npm/overlayscrollbars@2.11.0/browser/overlayscrollbars.browser.es6.min.js"
-      crossorigin="anonymous"
+    src="../../dist/js/overlayscrollbars.browser.es6.min.js"
     ></script>
     <!--end::Third Party Plugin(OverlayScrollbars)--><!--begin::Required Plugin(popperjs for Bootstrap 5)-->
     <script
-      src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.11.8/dist/umd/popper.min.js"
-      crossorigin="anonymous"
+      src="../../dist/js/popper.min.js"
     ></script>
     <!--end::Required Plugin(popperjs for Bootstrap 5)--><!--begin::Required Plugin(Bootstrap 5)-->
     <script
-      src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.7/dist/js/bootstrap.min.js"
-      crossorigin="anonymous"
+      src="../../dist/js/bootstrap.min.js"
     ></script>
     <!--end::Required Plugin(Bootstrap 5)--><!--begin::Required Plugin(AdminLTE)-->
     <script src="../../dist/js/adminlte.js"></script>
@@ -2669,19 +2703,17 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
     <!--end::OverlayScrollbars Configure-->
     <!-- OPTIONAL SCRIPTS -->
     <!-- apexcharts -->
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-    <script src="https://cdn.datatables.net/2.3.6/js/dataTables.js"></script>
-    <script src="https://cdn.datatables.net/responsive/3.0.0/js/dataTables.responsive.js"></script>
-    <script src="https://cdn.datatables.net/buttons/3.0.0/js/dataTables.buttons.js"></script>
-    <script src="https://cdn.datatables.net/buttons/3.0.0/js/buttons.html5.js"></script>
-    <script src="https://cdn.datatables.net/buttons/3.0.0/js/buttons.print.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/pdfmake.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/vfs_fonts.min.js"></script>
+    <script src="../../dist/js/jquery-3.6.0.min.js"></script>
+    <script src="../../dist/js/dataTables.js"></script>
+    <script src="../../dist/js/dataTables.responsive.js"></script>
+    <script src="../../dist/js/dataTables.buttons.js"></script>
+    <script src="../../dist/js/buttons.html5.js"></script>
+    <script src="../../dist/js/buttons.print.js"></script>
+    <script src="../../dist/js/jszip.min.js"></script>
+    <script src="../../dist/js/pdfmake.min.js"></script>
+    <script src="../../dist/js/vfs_fonts.min.js"></script>
     <script
-      src="https://cdn.jsdelivr.net/npm/apexcharts@3.37.1/dist/apexcharts.min.js"
-      integrity="sha256-+vh8GkaU7C9/wbSLIcwq82tQ2wTf44aOHA8HlBMwRI8="
-      crossorigin="anonymous"
+      src="../../dist/js/apexcharts.min.js"
     ></script>
     <script>
    
@@ -2724,14 +2756,39 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
               }
             ],
             language: {
-              url: 'https://cdn.datatables.net/plug-ins/1.13.7/i18n/id.json'
+              url: '../../dist/js/i18n/id.json'
           },
             initComplete: function() {
             console.log('DataTable initialized successfully');
           }
         });
       });
-
+      
+      // Ensure confirm modal stacks above any open modal (fix appearing behind)
+      (function() {
+        function raiseStack(modalId) {
+          const modalEl = document.getElementById(modalId);
+          if (!modalEl) return;
+          modalEl.addEventListener('shown.bs.modal', function () {
+            modalEl.style.zIndex = 11000;
+            const backs = document.querySelectorAll('.modal-backdrop');
+            if (backs.length) {
+              const last = backs[backs.length - 1];
+              last.style.zIndex = 10999;
+            }
+          });
+          modalEl.addEventListener('hidden.bs.modal', function () {
+            modalEl.style.zIndex = '';
+            const backs = document.querySelectorAll('.modal-backdrop');
+            if (backs.length) {
+              const last = backs[backs.length - 1];
+              last.style.zIndex = '';
+            }
+          });
+        }
+        // apply to our confirm modal
+        raiseStack('modalConfirmRegionalAction');
+      })();
 // Initialize DataTable untuk tab Lengkapi Data
         $('#lengkapiTable').DataTable({
             responsive: false,
@@ -2743,7 +2800,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
             ordering: true,
             info: true,
             language: {
-                url: 'https://cdn.datatables.net/plug-ins/1.13.7/i18n/id.json'
+                url: '../../dist/js/i18n/id.json'
             }
         });
 
@@ -2797,54 +2854,141 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
           modal.show();
       }
 
-      // Approve an usulan at REGIONAL level (AJAX POST)
+      // Approve / Reject via confirm modal (Regional)
       function approveUsulan(usulanId) {
-        if (!confirm('Setujui usulan ini untuk disetujui oleh Regional?')) return;
-        const body = new URLSearchParams();
-        body.append('action', 'approve_usulan_regional');
-        body.append('usulan_id', usulanId);
-        body.append('csrf_token', '<?= $_SESSION['csrf_token'] ?? '' ?>');
-
-        fetch(location.pathname, {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: body.toString()
-        }).then(res => res.json())
-          .then(json => {
-            if (json.success) {
-              location.reload();
-            } else {
-              alert('Gagal approve (Regional): ' + (json.error || 'Unknown error'));
-            }
-          }).catch(err => alert('Error: ' + err.message));
+        // Populate and show attractive approve confirm modal (matching SubReg style)
+        try {
+          const preview = document.getElementById('confirmApprovePreview');
+          if (preview) preview.textContent = usulanId || '(ID tidak tersedia)';
+          const hidId = document.getElementById('confirmApproveRejectUsulanId');
+          const hidAction = document.getElementById('confirmApproveRejectAction');
+          if (hidId) hidId.value = usulanId;
+          if (hidAction) hidAction.value = 'approve';
+          const modal = new bootstrap.Modal(document.getElementById('modalConfirmApproveReject'));
+          modal.show();
+        } catch (e) {
+          // fallback to earlier flow
+          openConfirmRegional('approve', usulanId);
+        }
       }
 
-      // Reject an usulan at REGIONAL level (AJAX POST) — includes optional reject reason
       function rejectUsulan(usulanId) {
-        if (!confirm('Tolak usulan ini pada level Regional?')) return;
-        const noteEl = document.getElementById('modalRejectNote');
-        const note = noteEl ? noteEl.value.trim() : '';
+        // Populate reject note preview (read from form textarea if present)
+        try {
+          const noteEl = document.getElementById('modalRejectNote');
+          const note = noteEl ? noteEl.value.trim() : '';
+          const preview = document.getElementById('confirmRejectNotePreviewRegional');
+          if (preview) preview.textContent = note || '(Tidak ada alasan)';
+          const hid = document.getElementById('confirmRejectUsulanId');
+          if (hid) hid.value = usulanId;
+          const modal = new bootstrap.Modal(document.getElementById('modalConfirmReject'));
+          modal.show();
+        } catch (e) {
+          openConfirmRegional('reject', usulanId);
+        }
+      }
 
-        const body = new URLSearchParams();
-        body.append('action', 'reject_usulan_regional');
-        body.append('usulan_id', usulanId);
-        body.append('note', note);
-        body.append('csrf_token', '<?= $_SESSION['csrf_token'] ?? '' ?>');
+      function openConfirmRegional(action, usulanId) {
+        // ensure modal exists (inject if missing)
+        ensureRegionalConfirmModal();
+        const modalEl = document.getElementById('modalConfirmRegionalAction');
+        if (!modalEl) return alert('Modal konfirmasi tidak ditemukan');
+        document.getElementById('confirmRegionalAction').value = action;
+        document.getElementById('confirmRegionalUsulanId').value = usulanId;
+        const title = document.getElementById('confirmRegionalTitle');
+        const body = document.getElementById('confirmRegionalBody');
+        const header = modalEl.querySelector('.modal-header');
+        const confirmBtn = document.getElementById('btnConfirmRegionalAction');
+        const previewWrapper = document.getElementById('confirmRejectPreviewWrapper');
 
-        fetch(location.pathname, {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: body.toString()
-        }).then(res => res.json())
-          .then(json => {
-            if (json.success) {
-              location.reload();
-            } else {
-              alert('Gagal reject (Regional): ' + (json.error || 'Unknown error'));
-            }
-          }).catch(err => alert('Error: ' + err.message));
+        if (action === 'approve') {
+          title.innerHTML = '<i class="bi bi-check-circle-fill me-2"></i> Konfirmasi Approve';
+          body.textContent = 'Setujui usulan ini pada level Regional?';
+          if (header) header.className = 'modal-header bg-success text-white';
+          if (confirmBtn) { confirmBtn.className = 'btn btn-success'; confirmBtn.innerHTML = '<i class="bi bi-check-circle me-1"></i> Ya, Setujui'; }
+          if (previewWrapper) previewWrapper.style.display = 'none';
+        } else {
+          title.innerHTML = '<i class="bi bi-exclamation-octagon-fill me-2"></i> Konfirmasi Reject';
+          body.textContent = 'Tolak usulan ini pada level Regional?';
+          if (header) header.className = 'modal-header bg-danger text-white';
+          if (confirmBtn) { confirmBtn.className = 'btn btn-danger'; confirmBtn.innerHTML = '<i class="bi bi-x-circle me-1"></i> Ya, Tolak'; }
+          if (previewWrapper) previewWrapper.style.display = '';
+        }
+        const modal = new bootstrap.Modal(modalEl);
+        modal.show();
+      }
+
+      // Handler when user confirms in the regional confirm modal
+      document.addEventListener('DOMContentLoaded', function() {
+        // Ensure modal exists on load
+        ensureRegionalConfirmModal();
+        const btn = document.getElementById('btnConfirmRegionalAction');
+        if (!btn) return;
+        btn.addEventListener('click', function() {
+          const action = document.getElementById('confirmRegionalAction').value;
+          const usulanId = document.getElementById('confirmRegionalUsulanId').value;
+          if (!action || !usulanId) return;
+
+          const body = new URLSearchParams();
+          body.append('action', action === 'approve' ? 'approve_usulan_regional' : 'reject_usulan_regional');
+          body.append('usulan_id', usulanId);
+          if (action === 'reject') {
+            const note = (document.getElementById('modalRejectNote') || {}).value || '';
+            body.append('note', note);
+          }
+          body.append('csrf_token', '<?= $_SESSION['csrf_token'] ?? '' ?>');
+
+          fetch(location.pathname, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: body.toString()
+          }).then(res => res.json())
+            .then(json => {
+              try { bootstrap.Modal.getInstance(document.getElementById('modalConfirmRegionalAction')).hide(); } catch(e){}
+              try { bootstrap.Modal.getInstance(document.getElementById('modalFormLengkapiDokumen')).hide(); } catch(e){}
+              if (json.success) {
+                location.reload();
+              } else {
+                // show a nicer alert inside modal
+                alert('Operasi gagal: ' + (json.error || 'Unknown error'));
+              }
+            }).catch(err => {
+              alert('Error: ' + err.message);
+            });
+        });
+      });
+
+      // Create modal markup dynamically if it isn't present (defensive)
+      function ensureRegionalConfirmModal() {
+        if (document.getElementById('modalConfirmRegionalAction')) return;
+        const html = `
+        <div class="modal fade" id="modalConfirmRegionalAction" tabindex="-1" aria-hidden="true">
+          <div class="modal-dialog modal-dialog-centered" style="max-width:520px;">
+            <div class="modal-content border-0 shadow-lg overflow-hidden">
+              <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title" id="confirmRegionalTitle">Konfirmasi</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+              </div>
+              <div class="modal-body">
+                <p id="confirmRegionalBody">Apakah Anda yakin?</p>
+                <div id="confirmRejectPreviewWrapper" style="display:none;">
+                  <label class="form-label">Alasan Reject (preview):</label>
+                  <div class="p-2 bg-light rounded border" id="confirmRejectNotePreview">(Tidak ada alasan)</div>
+                </div>
+                <input type="hidden" id="confirmRegionalAction" value="">
+                <input type="hidden" id="confirmRegionalUsulanId" value="">
+              </div>
+              <div class="modal-footer">
+                <button type="button" id="btnConfirmRegionalAction" class="btn btn-primary">
+                  <i class="bi bi-check-circle me-1"></i> Ya, Lanjutkan
+                </button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
+              </div>
+            </div>
+          </div>
+        </div>`;
+        document.body.insertAdjacentHTML('beforeend', html);
       }
 
 // ============================================================
@@ -3309,13 +3453,51 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
             if (usulan.kajian_ekonomis) document.getElementById('kajian_ekonomis').value = usulan.kajian_ekonomis || '';
             if (usulan.kajian_risiko) document.getElementById('kajian_risiko').value = usulan.kajian_risiko || '';
 
-            // Tampilkan foto yang sudah ada (jika ada)
+            // Tampilkan foto yang sudah ada (jika ada).
+            // Jika current user adalah pemilik usulan (bisa mengunggah), tampilkan input;
+            // untuk reviewer (Regional) hanya tampilkan preview foto tanpa input.
+            const currentUserNipp = <?= json_encode($_SESSION['nipp'] ?? '') ?>;
+            const isOwner = usulan.created_by && usulan.created_by.toString() === currentUserNipp.toString();
+
+            const fotoUploadSection = document.getElementById('fotoUploadSection');
+            const fotoInputEl = document.getElementById('fotoInput');
+            const fotoSmall = fotoUploadSection ? fotoUploadSection.querySelector('small') : null;
+
             if (usulan.foto_path) {
-                document.getElementById('fotoPreviewImage').src = usulan.foto_path;
-                document.getElementById('fotoPreview').style.display = 'block';
-                document.getElementById('fotoUploadSection').style.display = 'block';
+              // Normalize path: if it's not absolute or starting with '/', make it relative to this page like SubReg does
+              let src = usulan.foto_path;
+              const isAbsolute = /^(https?:)?\/\//i.test(src) || src.charAt(0) === '/';
+              if (!isAbsolute) src = '../../' + src;
+              const previewImg = document.getElementById('fotoPreviewImage');
+              if (previewImg) {
+                previewImg.onerror = function(e) {
+                  console.error('Failed loading fotoPreviewImage:', previewImg.src, e);
+                  // hide preview on error
+                  try { document.getElementById('fotoPreview').style.display = 'none'; } catch(e){}
+                };
+                previewImg.src = src;
+              }
+              document.getElementById('fotoPreview').style.display = 'block';
+              // If owner, allow file input (for replace). If not owner, hide file input.
+              if (isOwner) {
+                if (fotoInputEl) fotoInputEl.style.display = '';
+                if (fotoSmall) fotoSmall.style.display = '';
+                fotoUploadSection.style.display = 'block';
+              } else {
+                if (fotoInputEl) fotoInputEl.style.display = 'none';
+                if (fotoSmall) fotoSmall.style.display = 'none';
+                fotoUploadSection.style.display = 'block';
+              }
             } else {
-                document.getElementById('fotoPreview').style.display = 'none';
+              // No foto uploaded: hide section for non-owners; owners keep ability to upload
+              if (isOwner) {
+              if (fotoInputEl) fotoInputEl.style.display = '';
+              if (fotoSmall) fotoSmall.style.display = '';
+              document.getElementById('fotoPreview').style.display = 'none';
+              fotoUploadSection.style.display = 'block';
+            } else {
+                if (fotoUploadSection) fotoUploadSection.style.display = 'none';
+              }
             }
 
             var modal = new bootstrap.Modal(document.getElementById('modalFormLengkapiDokumen'));
@@ -3493,6 +3675,118 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
         </div>
       </div>
     </div>
+
+    <!-- Modal: Attractive Confirm Approve (Regional) -->
+    <div class="modal fade" id="modalConfirmApproveReject" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered" style="max-width:540px;">
+        <div class="modal-content border-0 shadow-lg overflow-hidden">
+          <div class="modal-header bg-success text-white">
+            <h5 class="modal-title" id="confirmApproveRejectTitle"><i class="bi bi-check-circle-fill me-2"></i>Konfirmasi Approve</h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <div class="d-flex align-items-start gap-3">
+              <div style="font-size:2.2rem;color:#d4edda;"><i class="bi bi-hand-thumbs-up-fill"></i></div>
+              <div>
+                <p id="confirmApproveRejectMessage" style="font-weight:600; margin-bottom:6px;">Anda akan menyetujui usulan ini. Lanjutkan?</p>
+                <p class="text-muted mb-2">Usulan akan dikirimkan ke Regional untuk persetujuan.</p>
+                <div>
+                  <small class="text-muted">Usulan:</small>
+                  <div id="confirmApprovePreview" class="p-2 mt-1" style="background:#f8f9fa;border-radius:6px;">(ID usulan akan ditampilkan di sini)</div>
+                </div>
+              </div>
+            </div>
+            <input type="hidden" id="confirmApproveRejectUsulanId" value="">
+            <input type="hidden" id="confirmApproveRejectAction" value="">
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-light" data-bs-dismiss="modal">Batal</button>
+            <button type="button" id="btnConfirmApproveReject" class="btn btn-success">Ya, Setujui</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Attractive Confirm Reject Modal (Regional) -->
+    <div class="modal fade" id="modalConfirmReject" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered" style="max-width:520px;">
+        <div class="modal-content border-0 shadow-lg overflow-hidden">
+          <div class="modal-header bg-danger text-white">
+            <h5 class="modal-title"><i class="bi bi-exclamation-octagon-fill me-2"></i> Konfirmasi Reject</h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <div class="d-flex align-items-start gap-3">
+              <div style="font-size: 2.4rem; color: #f8d7da;"><i class="bi bi-x-circle-fill"></i></div>
+              <div>
+                <p class="mb-2" style="font-weight:600;">Anda akan menolak usulan ini.</p>
+                <p class="mb-2 text-muted">Tindakan ini akan dicatat di riwayat persetujuan dan tidak dapat dibatalkan.</p>
+                <div class="mt-2">
+                  <small class="text-muted">Alasan yang akan disimpan:</small>
+                  <div id="confirmRejectNotePreviewRegional" class="p-2 mt-1" style="background:#f8f9fa;border-radius:6px;">(Tidak ada alasan)</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <input type="hidden" id="confirmRejectUsulanId" value="">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
+            <button type="button" id="btnConfirmReject" class="btn btn-danger">Ya, Tolak</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // Wire the confirm buttons for regional approve/reject
+      (function(){
+        const csrfToken = '<?= $_SESSION['csrf_token'] ?? '' ?>';
+
+        const btnApprove = document.getElementById('btnConfirmApproveReject');
+        if (btnApprove) btnApprove.addEventListener('click', function(){
+          const usulanId = (document.getElementById('confirmApproveRejectUsulanId') || {}).value || '';
+          if (!usulanId) return alert('ID usulan tidak ditemukan');
+          const body = new URLSearchParams();
+          body.append('action', 'approve_usulan_regional');
+          body.append('usulan_id', usulanId);
+          body.append('csrf_token', csrfToken);
+
+          fetch(location.pathname, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: body.toString()
+          }).then(r => r.json()).then(json => {
+            try{ bootstrap.Modal.getInstance(document.getElementById('modalConfirmApproveReject')).hide(); }catch(e){}
+            try{ bootstrap.Modal.getInstance(document.getElementById('modalFormLengkapiDokumen')).hide(); }catch(e){}
+            if (json.success) location.reload(); else alert('Operasi gagal: ' + (json.error || 'Unknown'));
+          }).catch(err => alert('Error: ' + err.message));
+        });
+
+        const btnReject = document.getElementById('btnConfirmReject');
+        if (btnReject) btnReject.addEventListener('click', function(){
+          const usulanId = (document.getElementById('confirmRejectUsulanId') || {}).value || '';
+          if (!usulanId) return alert('ID usulan tidak ditemukan');
+          const note = (document.getElementById('modalRejectNote') || {}).value || '';
+          const body = new URLSearchParams();
+          body.append('action', 'reject_usulan_regional');
+          body.append('usulan_id', usulanId);
+          body.append('note', note);
+          body.append('csrf_token', csrfToken);
+
+          fetch(location.pathname, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: body.toString()
+          }).then(r => r.json()).then(json => {
+            try{ bootstrap.Modal.getInstance(document.getElementById('modalConfirmReject')).hide(); }catch(e){}
+            try{ bootstrap.Modal.getInstance(document.getElementById('modalFormLengkapiDokumen')).hide(); }catch(e){}
+            if (json.success) location.reload(); else alert('Operasi gagal: ' + (json.error || 'Unknown'));
+          }).catch(err => alert('Error: ' + err.message));
+        });
+      })();
+    </script>
 
     <!--end::Script-->
   </body>

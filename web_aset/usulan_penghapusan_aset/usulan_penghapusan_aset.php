@@ -280,78 +280,103 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
     // Handle file upload foto
     $foto_path = null;
     if (isset($_FILES['foto']) && $_FILES['foto']['error'] === UPLOAD_ERR_OK) {
-        $file = $_FILES['foto'];
-        $upload_dir = '../../uploads/foto_aset/';
+      $file = $_FILES['foto'];
 
-        if (!file_exists($upload_dir)) {
-            mkdir($upload_dir, 0777, true);
-        }
-      
-        if ($file['size'] > 5 * 1024 * 1024) {
-            $pesan = "Ukuran foto terlalu besar. Maksimal 5MB.";
-            $tipe_pesan = "danger";
+      $upload_dir = __DIR__ . '/../../uploads/foto_aset/';
+      if (!file_exists($upload_dir)) {
+        mkdir($upload_dir, 0777, true);
+      }
+
+      if ($file['size'] > 5 * 1024 * 1024) {
+        $pesan = "Ukuran foto terlalu besar. Maksimal 5MB.";
+        $tipe_pesan = "danger";
+      } else {
+        $allowed_types = ['image/jpeg', 'image/jpg', 'image/png'];
+        $finfo = finfo_open(FILEINFO_MIME_TYPE);
+        $mime_type = finfo_file($finfo, $file['tmp_name']);
+        finfo_close($finfo);
+
+        if (!in_array($mime_type, $allowed_types)) {
+          $pesan = "Tipe file tidak didukung. Gunakan JPG, JPEG, atau PNG.";
+          $tipe_pesan = "danger";
         } else {
-       
-            $allowed_types = ['image/jpeg', 'image/jpg', 'image/png'];
-            $finfo = finfo_open(FILEINFO_MIME_TYPE);
-            $mime_type = finfo_file($finfo, $file['tmp_name']);
-            finfo_close($finfo);
-            
-            if (!in_array($mime_type, $allowed_types)) {
-                $pesan = "Tipe file tidak didukung. Gunakan JPG, JPEG, atau PNG.";
-                $tipe_pesan = "danger";
-            } else {
-                $file_ext = pathinfo($file['name'], PATHINFO_EXTENSION);
-                $new_filename = 'foto_' . $usulan_id . '_' . time() . '.' . $file_ext;
-                $upload_path = $upload_dir . $new_filename;
-                
-                if (move_uploaded_file($file['tmp_name'], $upload_path)) {
-                    $foto_path = $upload_path;
-                } else {
-                    $pesan = "Gagal mengupload foto.";
-                    $tipe_pesan = "danger";
-                }
-            }
+          $file_ext = pathinfo($file['name'], PATHINFO_EXTENSION);
+          $new_filename = 'foto_' . $usulan_id . '_' . time() . '.' . $file_ext;
+          $dest_path = $upload_dir . $new_filename;
+
+          if (move_uploaded_file($file['tmp_name'], $dest_path)) {
+            // Simpan path relatif yang dapat digunakan di web
+            $foto_path = 'uploads/foto_aset/' . $new_filename;
+          } else {
+            $pesan = "Gagal mengupload foto.";
+            $tipe_pesan = "danger";
+          }
         }
+      }
     }
-    
+
     // Update database jika tidak ada error upload
     if ($tipe_pesan !== 'danger') {
+      if ($foto_path !== null) {
         $stmt = $con->prepare("UPDATE usulan_penghapusan SET 
-            jumlah_aset = ?,
-            mekanisme_penghapusan = ?,
-            fisik_aset = ?,
-            justifikasi_alasan = ?,
-            kajian_hukum = ?,
-            kajian_ekonomis = ?,
-            kajian_risiko = ?,
-            foto_path = ?,
-            status = 'dokumen_lengkap',
-            updated_at = NOW()
-            WHERE id = ?");
-        
-        $stmt->bind_param("isssssssi", 
-            $jumlah_aset, 
-            $mekanisme_penghapusan, 
-            $fisik_aset,
-            $justifikasi_alasan, 
-            $kajian_hukum, 
-            $kajian_ekonomis, 
-            $kajian_risiko,
-            $foto_path,
-            $usulan_id
+          jumlah_aset = ?,
+          mekanisme_penghapusan = ?,
+          fisik_aset = ?,
+          justifikasi_alasan = ?,
+          kajian_hukum = ?,
+          kajian_ekonomis = ?,
+          kajian_risiko = ?,
+          foto_path = ?,
+          status = 'dokumen_lengkap',
+          updated_at = NOW()
+          WHERE id = ?");
+
+        $stmt->bind_param("isssssssi",
+          $jumlah_aset,
+          $mekanisme_penghapusan,
+          $fisik_aset,
+          $justifikasi_alasan,
+          $kajian_hukum,
+          $kajian_ekonomis,
+          $kajian_risiko,
+          $foto_path,
+          $usulan_id
         );
-        
-        if ($stmt->execute()) {
-            $_SESSION['show_success_modal'] = true;
-            header("Location: " . $_SERVER['PHP_SELF'] . "#dokumen");
-            exit();
-            exit();
-        } else {
-            $pesan = "Gagal menyimpan data: " . $stmt->error;
-            $tipe_pesan = "danger";
-        }
-        $stmt->close();
+      } else {
+        // Jika tidak ada foto diupload, jangan overwrite kolom foto_path
+        $stmt = $con->prepare("UPDATE usulan_penghapusan SET 
+          jumlah_aset = ?,
+          mekanisme_penghapusan = ?,
+          fisik_aset = ?,
+          justifikasi_alasan = ?,
+          kajian_hukum = ?,
+          kajian_ekonomis = ?,
+          kajian_risiko = ?,
+          status = 'dokumen_lengkap',
+          updated_at = NOW()
+          WHERE id = ?");
+
+        $stmt->bind_param("issssssi",
+          $jumlah_aset,
+          $mekanisme_penghapusan,
+          $fisik_aset,
+          $justifikasi_alasan,
+          $kajian_hukum,
+          $kajian_ekonomis,
+          $kajian_risiko,
+          $usulan_id
+        );
+      }
+
+      if ($stmt->execute()) {
+        $_SESSION['show_success_modal'] = true;
+        header("Location: " . $_SERVER['PHP_SELF'] . "#dokumen");
+        exit();
+      } else {
+        $pesan = "Gagal menyimpan data: " . $stmt->error;
+        $tipe_pesan = "danger";
+      }
+      $stmt->close();
     }
 }
 
@@ -854,16 +879,6 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
     <meta name="theme-color" content="#1a1a1a" media="(prefers-color-scheme: dark)" />
     <!--end::Accessibility Meta Tags-->
     <!--begin::Primary Meta Tags-->
-    <meta name="title" content="AdminLTE | Dashboard v2" />
-    <meta name="author" content="ColorlibHQ" />
-    <meta
-      name="description"
-      content="AdminLTE is a Free Bootstrap 5 Admin Dashboard, 30 example pages using Vanilla JS. Fully accessible with WCAG 2.1 AA compliance."
-    />
-    <meta 
-      name="keywords"
-      content="bootstrap 5, bootstrap, bootstrap 5 admin dashboard, bootstrap 5 dashboard, bootstrap 5 charts, bootstrap 5 calendar, bootstrap 5 datepicker, bootstrap 5 tables, bootstrap 5 datatable, vanilla js datatable, colorlibhq, colorlibhq dashboard, colorlibhq admin dashboard, accessible admin panel, WCAG compliant"
-    />
     <!--end::Primary Meta Tags-->
     <!--begin::Accessibility Features-->
     <!-- Skip links will be dynamically added by accessibility.js -->
@@ -873,29 +888,20 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
     <!--begin::Fonts-->
     <link
       rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/@fontsource/source-sans-3@5.0.12/index.css"
-      integrity="sha256-tXJfXfp6Ewt1ilPzLDtQnJV4hclT9XuaZUKyUvmyr+Q="
-      crossorigin="anonymous"
-      media="print"
-      onload="this.media='all'"
-    />
+      href="../../dist/css/index.css"/>
     <!--end::Fonts-->
     <!--begin::Third Party Plugin(OverlayScrollbars)-->
     <link
       rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/overlayscrollbars@2.11.0/styles/overlayscrollbars.min.css"
-      crossorigin="anonymous"
-    />
+      href="../../dist/css/overlayscrollbars.min.css"/>
     <!--end::Third Party Plugin(OverlayScrollbars)-->
     <!--begin::Third Party Plugin(Bootstrap Icons)-->
     <link
       rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css"
-      crossorigin="anonymous"
-    />
+      href="../../dist/css/bootstrap-icons/bootstrap-icons.min.css"/>
     <!--end::Third Party Plugin(Bootstrap Icons)-->
     <!--begin::Required Plugin(AdminLTE)-->
-    <link rel="stylesheet" href="../../dist/css/adminlte.css" />
+    <link rel="stylesheet" href="../../dist/css/adminlte.css"/>
     <!--end::Required Plugin(AdminLTE)-->
 
     <style>
@@ -908,8 +914,8 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
     </style>
 
     <!-- DataTables CSS -->
-    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.7/css/dataTables.bootstrap5.min.css">
-    <link rel="stylesheet" href="https://cdn.datatables.net/responsive/2.5.0/css/responsive.bootstrap5.min.css">
+    <link rel="stylesheet" href="../../dist/css/dataTables.bootstrap5.min.css">
+    <link rel="stylesheet" href="../../dist/css/responsive.bootstrap5.min.css">
     
     <!-- Custom Styles for Horizontal Scroll -->
     <style>
@@ -1026,12 +1032,10 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
     <!-- apexcharts -->
     <link
       rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/apexcharts@3.37.1/dist/apexcharts.css"
-      integrity="sha256-4MX+61mt9NVvvuPjUWdUdyfZfxSB1/Rf9WtqRHgG5S0="
-      crossorigin="anonymous"
+      href="../../dist/css/apexcharts.css"
     />
     <link rel="stylesheet"
-      href="https://cdn.datatables.net/2.3.6/css/dataTables.dataTables.min.css"
+      href="../../dist/css/dataTables.dataTables.min.css"
     />
   </head>
   <body class="layout-fixed sidebar-expand-lg sidebar-open bg-body-tertiary">
@@ -1803,7 +1807,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                             </td>
                                             <td><?= htmlspecialchars(stripAUC($ua['nama_aset'] ?? '-')) ?></td>
                                             <td><?= htmlspecialchars($ua['kategori_aset'] ?? '-') ?></td>
-                                             <td><?= htmlspecialchars($row['profit_center']) . (!empty($row['profit_center_text']) ? ' - ' . htmlspecialchars($row['profit_center_text']) : '') ?></td>
+                                            <td><?= htmlspecialchars($row['profit_center']) . (!empty($row['profit_center_text']) ? ' - ' . htmlspecialchars($row['profit_center_text']) : '') ?></td>
                                           </tr>                                       
                                           <?php endforeach; ?>
                                         </tbody>
@@ -1982,7 +1986,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                 ordering: true,
                                 info: true,
                                 language: {
-                                  url: 'https://cdn.datatables.net/plug-ins/1.13.7/i18n/id.json'
+                                  url: '../../dist/js/i18n/id.json'
                                 },
                                 columnDefs: [
                                   { orderable: false, targets: [6] }
@@ -2343,7 +2347,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                       <tr>
                                         <td><?= $no++ ?></td>
                                         <td><strong><?= htmlspecialchars($row['nomor_asset_utama']) ?></strong></td>
-                                        <td><?= htmlspecialchars(stripAUC($row['nama_aset'])) ?></td>
+                                        <td><?= htmlspecialchars(stripAUC($ua['nama_aset'] ?? '-')) ?></td>
                                         <td><?= $statusBadge ?></td>
                                         <td>
                                           <?php if ($row['jumlah_dokumen'] > 0): ?>
@@ -2772,19 +2776,16 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
     </div>
 
     <!-- MODAL: Konfirmasi Hapus Draft (single row)                   -->
-    <script  
-    src="https://cdn.jsdelivr.net/npm/overlayscrollbars@2.11.0/browser/overlayscrollbars.browser.es6.min.js"
-      crossorigin="anonymous"
+    <script
+      src="../../dist/js/overlayscrollbars.browser.es6.min.js"
     ></script>
     <!--end::Third Party Plugin(OverlayScrollbars)--><!--begin::Required Plugin(popperjs for Bootstrap 5)-->
     <script
-      src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.11.8/dist/umd/popper.min.js"
-      crossorigin="anonymous"
+      src="../../dist/js/popper.min.js"
     ></script>
     <!--end::Required Plugin(popperjs for Bootstrap 5)--><!--begin::Required Plugin(Bootstrap 5)-->
     <script
-      src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.7/dist/js/bootstrap.min.js"
-      crossorigin="anonymous"
+      src="../../dist/js/bootstrap.min.js"
     ></script>
     <!--end::Required Plugin(Bootstrap 5)--><!--begin::Required Plugin(AdminLTE)-->
     <script src="../../dist/js/adminlte.js"></script>
@@ -2819,19 +2820,17 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
     <!--end::OverlayScrollbars Configure-->
     <!-- OPTIONAL SCRIPTS -->
     <!-- apexcharts -->
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-    <script src="https://cdn.datatables.net/2.3.6/js/dataTables.js"></script>
-    <script src="https://cdn.datatables.net/responsive/3.0.0/js/dataTables.responsive.js"></script>
-    <script src="https://cdn.datatables.net/buttons/3.0.0/js/dataTables.buttons.js"></script>
-    <script src="https://cdn.datatables.net/buttons/3.0.0/js/buttons.html5.js"></script>
-    <script src="https://cdn.datatables.net/buttons/3.0.0/js/buttons.print.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/pdfmake.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/vfs_fonts.min.js"></script>
+    <script src="../../dist/js/jquery-3.6.0.min.js"></script>
+    <script src="../../dist/js/dataTables.js"></script>
+    <script src="../../dist/js/dataTables.responsive.js"></script>
+    <script src="../../dist/js/dataTables.buttons.js"></script>
+    <script src="../../dist/js/buttons.html5.js"></script>
+    <script src="../../dist/js/buttons.print.js"></script>
+    <script src="../../dist/js/jszip.min.js"></script>
+    <script src="../../dist/js/pdfmake.min.js"></script>
+    <script src="../../dist/js/vfs_fonts.min.js"></script>
     <script
-      src="https://cdn.jsdelivr.net/npm/apexcharts@3.37.1/dist/apexcharts.min.js"
-      integrity="sha256-+vh8GkaU7C9/wbSLIcwq82tQ2wTf44aOHA8HlBMwRI8="
-      crossorigin="anonymous"
+      src="../../dist/js/apexcharts.min.js"
     ></script>
     <script>
    
@@ -2874,7 +2873,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
               }
             ],
             language: {
-              url: 'https://cdn.datatables.net/plug-ins/1.13.7/i18n/id.json'
+              url: '../../dist/js/i18n/id.json'
           },
             initComplete: function() {
             console.log('DataTable initialized successfully');
@@ -2893,7 +2892,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
             ordering: true,
             info: true,
             language: {
-                url: 'https://cdn.datatables.net/plug-ins/1.13.7/i18n/id.json'
+                url: '../../dist/js/i18n/id.json'
             }
         });
 
@@ -3473,15 +3472,32 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
 
     // Fungsi untuk melihat foto yang sudah diupload
     function viewFoto(fotoPath, nomorAset, namaAset) {
-        let title = 'Foto Aset: ' + nomorAset;
-        if (namaAset) {
-            title += ' (' + namaAset + ')';
+      let title = 'Foto Aset: ' + nomorAset;
+      if (namaAset) {
+        title += ' (' + namaAset + ')';
+      }
+      document.getElementById('modalFotoTitle').textContent = title;
+
+      // Jika path yang tersimpan bukan URL absolut atau bukan root-relative,
+      // tambahkan prefix relatif dari file ini ke folder uploads.
+      let src = fotoPath;
+      if (typeof fotoPath === 'string' && fotoPath.length > 0) {
+        const isAbsoluteUrl = /^(https?:)?\/\//i.test(fotoPath) || fotoPath.charAt(0) === '/';
+        if (!isAbsoluteUrl) {
+          src = '../../' + fotoPath; // halaman ini berada di web_aset/usulan_penghapusan_aset/
         }
-        document.getElementById('modalFotoTitle').textContent = title;
-        document.getElementById('modalFotoImage').src = fotoPath;
-        
-        var modal = new bootstrap.Modal(document.getElementById('modalViewFoto'));
-        modal.show();
+      } else {
+        src = '';
+      }
+
+      const img = document.getElementById('modalFotoImage');
+      img.src = src;
+      img.onerror = function() {
+        img.src = '../../dist/assets/img/emblem.png';
+      };
+
+      var modal = new bootstrap.Modal(document.getElementById('modalViewFoto'));
+      modal.show();
     }
 
     // MODAL: View Foto

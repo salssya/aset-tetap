@@ -85,8 +85,10 @@ if (mysqli_num_rows($check_user) > 0) {
     <link rel="icon" type="image/png" href="../../dist/assets/img/emblem.png" /> 
     <link rel="shortcut icon" type="image/png" href="../../dist/assets/img/emblem.png" />  
     
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="../../dist/css/bootstrap-icons/bootstrap-icons.min.css" rel="stylesheet">
+    <link href="../../dist/css/all.min.css" rel="stylesheet">
+    <!-- CDN fallback for Font Awesome to ensure icons load when local webfonts missing -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <style>
         * {
             margin: 0;
@@ -155,15 +157,20 @@ if (mysqli_num_rows($check_user) > 0) {
             font-weight: 600;
             margin-bottom: 8px;
             display: block;
-            font-size: 0.9rem;
+            font-size: 0.85rem;
+            letter-spacing: 0.02em;
         }
 
         .form-control {
             border: 2px solid #e0e0e0;
             border-radius: 6px;
-            padding: 12px 15px;
+            padding: 10px 15px;
             font-size: 0.95rem;
+            height: 44px;
+            line-height: 1.2;
             transition: all 0.3s ease;
+            width: 100%;
+            box-sizing: border-box;
         }
 
         .form-control:focus {
@@ -176,13 +183,32 @@ if (mysqli_num_rows($check_user) > 0) {
             position: relative;
         }
 
+        /* place toggle vertically centered inside input */
         .password-toggle .toggle-icon {
             position: absolute;
-            right: 15px;
-            top: 45px;
+            right: 14px;
+            top: 50%;
+            transform: translateY(-50%);
             cursor: pointer;
             color: #6c757d;
             z-index: 10;
+            font-size: 1.05rem;
+            user-select: none;
+        }
+
+        /* avoid icon overlapping the text */
+        .password-toggle .form-control {
+            padding-right: 46px;
+        }
+
+        /* slight spacing for icons inside buttons */
+        .btn-login i {
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+
+        .toggle-icon:hover {
+            color: #0073b1;
         }
 
         .btn-login {
@@ -289,34 +315,33 @@ if (mysqli_num_rows($check_user) > 0) {
                     <label for="password">Password</label>
                     <input type="password" class="form-control" id="password" name="password" 
                            placeholder="Masukkan password" required>
-                    <i class="fas fa-eye toggle-icon" onclick="togglePasswordVisibility('password')"></i>
                 </div>
 
                 <button type="submit" name="login" class="btn-login">
-                    <i class="fas fa-sign-in-alt"></i> Masuk
+                    <i class="bi bi-box-arrow-in-right"></i> Masuk
                 </button>
             </form>
         </div>
     </div>
 
     <script>
-        function togglePasswordVisibility(fieldId) {
+        function togglePasswordVisibility(fieldId, icon) {
             const field = document.getElementById(fieldId);
-            const icon = event.target;
-            
+            // fallback to event target if icon wasn't passed
+            if (!icon && typeof event !== 'undefined' && event.target) icon = event.target;
+            if (!field) return;
+
             if (field.type === 'password') {
                 field.type = 'text';
-                icon.classList.remove('fa-eye');
-                icon.classList.add('fa-eye-slash');
+                if (icon) { icon.classList.remove('fa-eye'); icon.classList.add('fa-eye-slash'); }
             } else {
                 field.type = 'password';
-                icon.classList.remove('fa-eye-slash');
-                icon.classList.add('fa-eye');
+                if (icon) { icon.classList.remove('fa-eye-slash'); icon.classList.add('fa-eye'); }
             }
         }
     </script>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="../../dist/js/bootstrap.bundle.min.js"></script>
 </body>
 
 </html>
