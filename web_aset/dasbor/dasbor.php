@@ -18,7 +18,7 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
   <!--begin::Head-->
   <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-    <title>Web Aset Tetap</title>
+    <title>Import DAT - Web Aset Tetap</title>
     <!-- Favicon -->
     
     <!-- emblem pelindo -->
