@@ -46,6 +46,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
   <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
     <title>Edit Menu - Web Aset Tetap</title>
+    <link rel="icon" type="image/png" href="../../dist/assets/img/emblem.png" /> 
+    <link rel="shortcut icon" type="image/png" href="../../dist/assets/img/emblem.png" />  
     <!--begin::Accessibility Meta Tags-->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
     <meta name="color-scheme" content="light dark" />
@@ -72,10 +74,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     <!--begin::Fonts-->
     <link rel="stylesheet" href="../../dist/css/index.css"/>
     <link rel="stylesheet" href="../../dist/css/overlayscrollbars.min.css"/>
-    <link rel="stylesheet" href="../../dist/css/bootsrap-icons/bootstrap-icons.min.css"/>
-    <link rel="stylesheet" href="../../dist/css/adminlte.css" />
-    <!--end::Third Party Plugin(Bootstrap Icons)-->
-    <!--begin::Required Plugin(AdminLTE)-->
+    <link rel="stylesheet" href="../../dist/css/bootstrap-icons/bootstrap-icons.min.css"/>
     <link rel="stylesheet" href="../../dist/css/adminlte.css" />
     <!--end::Required Plugin(AdminLTE)-->
 
