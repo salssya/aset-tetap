@@ -85,10 +85,10 @@ if (mysqli_num_rows($check_user) > 0) {
     <link rel="icon" type="image/png" href="../../dist/assets/img/emblem.png" /> 
     <link rel="shortcut icon" type="image/png" href="../../dist/assets/img/emblem.png" />  
     
-    <link href="../../dist/css/bootstrap-icons/bootstrap-icons.min.css" rel="stylesheet">
-    <link href="../../dist/css/all.min.css" rel="stylesheet">
-    <!-- CDN fallback for Font Awesome to ensure icons load when local webfonts missing -->
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <!-- ===== FIX: Tambah rel="stylesheet" ===== -->
+    <link rel="stylesheet" href="../../dist/css/bootstrap-icons/bootstrap-icons.min.css" />
+    
+    
     <style>
         * {
             margin: 0;
@@ -157,58 +157,59 @@ if (mysqli_num_rows($check_user) > 0) {
             font-weight: 600;
             margin-bottom: 8px;
             display: block;
-            font-size: 0.85rem;
-            letter-spacing: 0.02em;
+            font-size: 0.9rem;
         }
 
+        /* ===== FIX: Paksa CSS dengan !important ===== */
         .form-control {
-            border: 2px solid #e0e0e0;
-            border-radius: 6px;
-            padding: 10px 15px;
-            font-size: 0.95rem;
-            height: 44px;
-            line-height: 1.2;
+            width: 100% !important;
+            border: 2px solid #e0e0e0 !important;
+            border-radius: 6px !important;
+            padding: 12px 15px !important;
+            font-size: 0.95rem !important;
+            line-height: 1.5 !important;
+            height: auto !important;
+            background-color: #fff !important;
             transition: all 0.3s ease;
-            width: 100%;
-            box-sizing: border-box;
+            box-sizing: border-box !important;
         }
 
         .form-control:focus {
-            border-color: #0073b1;
-            box-shadow: 0 0 0 3px rgba(0, 115, 177, 0.1);
-            outline: none;
+            border-color: #0073b1 !important;
+            box-shadow: 0 0 0 3px rgba(0, 115, 177, 0.1) !important;
+            outline: none !important;
+            background-color: #fff !important;
+        }
+
+        .form-control::placeholder {
+            color: #999 !important;
+            opacity: 1 !important;
         }
 
         .password-toggle {
             position: relative;
         }
 
-        /* place toggle vertically centered inside input */
+        .password-toggle input {
+            padding-right: 45px !important;  /* Biar text gak ketimpa icon */
+        }
+
         .password-toggle .toggle-icon {
             position: absolute;
-            right: 14px;
-            top: 50%;
+            right: 15px;
+            top: 50%;  /* Center vertikal */
             transform: translateY(-50%);
+            margin-top: 16px;  /* Offset label (setengah dari label height) */
             cursor: pointer;
             color: #6c757d;
             z-index: 10;
-            font-size: 1.05rem;
-            user-select: none;
+            font-size: 1.1rem;
+            pointer-events: all;  /* Pastikan bisa diklik */
+            user-select: none;  /* Gak bisa diselect */
         }
 
-        /* avoid icon overlapping the text */
-        .password-toggle .form-control {
-            padding-right: 46px;
-        }
-
-        /* slight spacing for icons inside buttons */
-        .btn-login i {
-            margin-right: 8px;
-            vertical-align: middle;
-        }
-
-        .toggle-icon:hover {
-            color: #0073b1;
+        .password-toggle .toggle-icon:hover {
+            color: #003f87;
         }
 
         .btn-login {
@@ -233,41 +234,21 @@ if (mysqli_num_rows($check_user) > 0) {
             text-decoration: none;
         }
 
-        .register-link {
-            text-align: center;
-            margin-top: 20px;
-            padding-top: 20px;
-            border-top: 1px solid #e0e0e0;
-        }
-
-        .register-link p {
-            color: #6c757d;
-            font-size: 0.9rem;
-            margin-bottom: 10px;
-        }
-
-        .register-link a {
-            color: white;
-            text-decoration: none;
-            font-weight: 600;
-            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
-            padding: 10px 20px;
-            border-radius: 6px;
-            display: inline-block;
-            transition: all 0.3s ease;
-        }
-
-        .register-link a:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 20px rgba(40, 167, 69, 0.4);
-            color: white;
-            text-decoration: none;
+        .btn-login:active {
+            transform: translateY(0);
         }
 
         .alert {
             margin-bottom: 20px;
             border-radius: 6px;
             border: none;
+            padding: 12px 15px;
+        }
+
+        .alert-danger {
+            background-color: #f8d7da;
+            color: #721c24;
+            border-left: 4px solid #dc3545;
         }
 
         @media (max-width: 480px) {
@@ -300,7 +281,7 @@ if (mysqli_num_rows($check_user) > 0) {
 
             <?php if (isset($error)): ?>
             <div class="alert alert-danger" role="alert">
-                <?php echo $error; ?>
+                <strong>⚠️ Error:</strong> <?php echo $error; ?>
             </div>
             <?php endif; ?>
 
@@ -308,13 +289,17 @@ if (mysqli_num_rows($check_user) > 0) {
                 <div class="form-group">
                     <label for="nipp">NIPP</label>
                     <input type="text" class="form-control" id="nipp" name="nipp" 
-                           placeholder="Masukkan NIPP Anda" value="<?php echo isset($_POST['nipp']) ? htmlspecialchars($_POST['nipp']) : ''; ?>" required>
+                           placeholder="Masukkan NIPP Anda" 
+                           value="<?php echo isset($_POST['nipp']) ? htmlspecialchars($_POST['nipp']) : ''; ?>" 
+                           required autocomplete="username">
                 </div>
 
                 <div class="form-group password-toggle">
                     <label for="password">Password</label>
                     <input type="password" class="form-control" id="password" name="password" 
-                           placeholder="Masukkan password" required>
+                           placeholder="Masukkan password" 
+                           required autocomplete="current-password">
+                    <i class="bi bi-eye toggle-icon" onclick="togglePasswordVisibility('password')"></i>
                 </div>
 
                 <button type="submit" name="login" class="btn-login">
@@ -325,19 +310,24 @@ if (mysqli_num_rows($check_user) > 0) {
     </div>
 
     <script>
-        function togglePasswordVisibility(fieldId, icon) {
+        function togglePasswordVisibility(fieldId) {
             const field = document.getElementById(fieldId);
-            // fallback to event target if icon wasn't passed
-            if (!icon && typeof event !== 'undefined' && event.target) icon = event.target;
-            if (!field) return;
-
+            const icon = event.target;
+            
             if (field.type === 'password') {
                 field.type = 'text';
-                if (icon) { icon.classList.remove('fa-eye'); icon.classList.add('fa-eye-slash'); }
+                icon.classList.remove('bi-eye');
+                icon.classList.add('bi-eye-slash');
             } else {
                 field.type = 'password';
-                if (icon) { icon.classList.remove('fa-eye-slash'); icon.classList.add('fa-eye'); }
+                icon.classList.remove('bi-eye-slash');
+                icon.classList.add('bi-eye');
             }
+        }
+
+        // Prevent form resubmission on refresh
+        if (window.history.replaceState) {
+            window.history.replaceState(null, null, window.location.href);
         }
     </script>
 
