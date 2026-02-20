@@ -4,11 +4,8 @@ $username = "root";
 $password = "";
 $dbname = "asetreg3_db";
 
-// Create connection
 $con = mysqli_connect($servername, $username, $password, $dbname);
-
 session_start();
-
 error_reporting(0);
 
 if (isset($_POST["login"])) {
@@ -20,28 +17,23 @@ if (isset($_POST["login"])) {
 if (mysqli_num_rows($check_user) > 0) {
     $row = mysqli_fetch_assoc($check_user);
 
-    // Verify password (supports hashed passwords and legacy plaintext)
     $isPasswordValid = false;
     if (!empty($row['Password'])) {
         if (password_verify($password, $row['Password'])) {
             $isPasswordValid = true;
         } elseif ($password === $row['Password']) {
-            // fallback for plain-text stored passwords
             $isPasswordValid = true;
         }
     }
 
     if ($isPasswordValid) {
-        // login sukses
         $_SESSION["nipp"]  = $row['NIPP'];
         $_SESSION["name"]  = $row['Nama'];
         $_SESSION["email"] = $row['Email'];
-        // set Type_User and Cabang if available
         $_SESSION["Type_User"] = isset($row['Type_User']) ? $row['Type_User'] : '';
         $_SESSION["Cabang"]    = isset($row['Cabang']) ? $row['Cabang'] : '';
         $_SESSION["profit_center_text"] = '';
 
-        // Try to populate profit_center_text from import_dat if Cabang available
         if (!empty($_SESSION["Cabang"])) {
             $stmt = mysqli_prepare($con, "SELECT profit_center_text FROM import_dat WHERE profit_center = ? LIMIT 1");
             if ($stmt) {
@@ -55,7 +47,6 @@ if (mysqli_num_rows($check_user) > 0) {
             }
         }
 
-        // Use json_encode to safely inject strings into JS
         echo "
         <script>
             sessionStorage.setItem('nipp', " . json_encode($row['NIPP']) . ");
@@ -64,11 +55,9 @@ if (mysqli_num_rows($check_user) > 0) {
             window.location = '../../web_aset/dasbor/dasbor.php';
         </script>";
     } else {
-        // password salah
         $error = "Password salah!";
     }
 } else {
-    // NIPP tidak ada di database
     $error = "NIPP tidak terdaftar!";
 }
 
@@ -84,190 +73,209 @@ if (mysqli_num_rows($check_user) > 0) {
     <title>Login - ASET TETAP</title>
     <link rel="icon" type="image/png" href="../../dist/assets/img/emblem.png" /> 
     <link rel="shortcut icon" type="image/png" href="../../dist/assets/img/emblem.png" />  
-    
-    <!-- ===== FIX: Tambah rel="stylesheet" ===== -->
     <link rel="stylesheet" href="../../dist/css/bootstrap-icons/bootstrap-icons.min.css" />
-    
-    
+
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+    * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+    }
 
-        html, body {
-            height: 100%;
-            background: linear-gradient(135deg, #003f87 0%, #0073b1 100%);
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
+    html, body {
+        height: 100%;
+        background: linear-gradient(135deg, #003f87 0%, #0073b1 100%);
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
 
-        .login-container {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            min-height: 100vh;
-            padding: 20px;
-        }
+    .login-container {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        padding: 20px;
+    }
 
+    .login-card {
+        background: white;
+        border-radius: 10px;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+        width: 100%;
+        max-width: 450px;
+        padding: 40px;
+        animation: slideUp 0.5s ease-out;
+    }
+
+    @keyframes slideUp {
+        from {
+            opacity: 0;
+            transform: translateY(30px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    .login-header {
+        text-align: center;
+        margin-bottom: 30px;
+    }
+
+    .login-header h1 {
+        color: #003f87;
+        font-size: 2.5rem;
+        font-weight: bold;
+        margin-bottom: 10px;
+    }
+
+    .login-header p {
+        color: #6c757d;
+        font-size: 0.95rem;
+    }
+
+    .form-group {
+        margin-bottom: 20px;
+    }
+
+    .form-group label {
+        color: #003f87;
+        font-weight: 600;
+        margin-bottom: 8px;
+        display: block;
+        font-size: 0.9rem;
+    }
+
+    .form-control {
+        width: 100% !important;
+        border: 2px solid #e0e0e0 !important;
+        border-radius: 6px !important;
+        padding: 12px 15px !important;
+        font-size: 0.95rem !important;
+        line-height: 1.5 !important;
+        height: auto !important;
+        background-color: #fff !important;
+        transition: all 0.3s ease;
+        box-sizing: border-box !important;
+    }
+
+    .form-control:focus {
+        border-color: #0073b1 !important;
+        box-shadow: 0 0 0 3px rgba(0, 115, 177, 0.1) !important;
+        outline: none !important;
+        background-color: #fff !important;
+    }
+
+    .form-control::placeholder {
+        color: #999 !important;
+        opacity: 1 !important;
+    }
+
+    /* ===== CRITICAL FIX: Hide native browser password reveal button ===== */
+    /* Untuk Microsoft Edge & IE */
+    input[type="password"]::-ms-reveal,
+    input[type="password"]::-ms-clear {
+        display: none !important;
+        width: 0 !important;
+        height: 0 !important;
+    }
+
+    /* Untuk Chrome & Edge Chromium */
+    input[type="password"]::-webkit-credentials-auto-fill-button,
+    input[type="password"]::-webkit-clear-button {
+        display: none !important;
+    }
+
+    /* Untuk semua browser - pastikan tidak ada button bawaan */
+    input[type="password"]::-webkit-textfield-decoration-container {
+        visibility: hidden !important;
+        pointer-events: none !important;
+    }
+    /* ===== END FIX ===== */
+
+    /* Password toggle styling */
+    .password-wrapper {
+        position: relative;
+        display: block;
+    }
+
+    .password-wrapper input {
+        padding-right: 45px !important;
+    }
+
+    .password-wrapper .toggle-icon {
+        position: absolute;
+        right: 15px;
+        top: 50%;
+        transform: translateY(-50%);
+        cursor: pointer;
+        color: #6c757d;
+        font-size: 1.1rem;
+        user-select: none;
+        transition: color 0.2s ease;
+        z-index: 10;
+    }
+
+    .password-wrapper .toggle-icon:hover {
+        color: #003f87;
+    }
+
+    .btn-login {
+        width: 100%;
+        padding: 12px;
+        background: linear-gradient(135deg, #003f87 0%, #0073b1 100%);
+        color: white;
+        border: none;
+        border-radius: 6px;
+        font-size: 1rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        margin-top: 10px;
+        margin-bottom: 20px;
+    }
+
+    .btn-login:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 20px rgba(0, 115, 177, 0.4);
+        color: white;
+        text-decoration: none;
+    }
+
+    .btn-login:active {
+        transform: translateY(0);
+    }
+
+    .alert {
+        margin-bottom: 20px;
+        border-radius: 6px;
+        border: none;
+        padding: 12px 15px;
+    }
+
+    .alert-danger {
+        background-color: #f8d7da;
+        color: #721c24;
+        border-left: 4px solid #dc3545;
+    }
+
+    @media (max-width: 480px) {
         .login-card {
-            background: white;
-            border-radius: 10px;
-            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
-            width: 100%;
-            max-width: 450px;
-            padding: 40px;
-            animation: slideUp 0.5s ease-out;
-        }
-
-        @keyframes slideUp {
-            from {
-                opacity: 0;
-                transform: translateY(30px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        .login-header {
-            text-align: center;
-            margin-bottom: 30px;
+            padding: 30px 20px;
         }
 
         .login-header h1 {
-            color: #003f87;
-            font-size: 2.5rem;
-            font-weight: bold;
-            margin-bottom: 10px;
+            font-size: 2rem;
         }
+    }
 
-        .login-header p {
-            color: #6c757d;
-            font-size: 0.95rem;
-        }
-
-        .form-group {
-            margin-bottom: 20px;
-        }
-
-        .form-group label {
-            color: #003f87;
-            font-weight: 600;
-            margin-bottom: 8px;
-            display: block;
-            font-size: 0.9rem;
-        }
-
-        /* ===== FIX: Paksa CSS dengan !important ===== */
-        .form-control {
-            width: 100% !important;
-            border: 2px solid #e0e0e0 !important;
-            border-radius: 6px !important;
-            padding: 12px 15px !important;
-            font-size: 0.95rem !important;
-            line-height: 1.5 !important;
-            height: auto !important;
-            background-color: #fff !important;
-            transition: all 0.3s ease;
-            box-sizing: border-box !important;
-        }
-
-        .form-control:focus {
-            border-color: #0073b1 !important;
-            box-shadow: 0 0 0 3px rgba(0, 115, 177, 0.1) !important;
-            outline: none !important;
-            background-color: #fff !important;
-        }
-
-        .form-control::placeholder {
-            color: #999 !important;
-            opacity: 1 !important;
-        }
-
-        .password-toggle {
-            position: relative;
-        }
-
-        .password-toggle input {
-            padding-right: 45px !important;  /* Biar text gak ketimpa icon */
-        }
-
-        .password-toggle .toggle-icon {
-            position: absolute;
-            right: 15px;
-            top: 50%;  /* Center vertikal */
-            transform: translateY(-50%);
-            margin-top: 16px;  /* Offset label (setengah dari label height) */
-            cursor: pointer;
-            color: #6c757d;
-            z-index: 10;
-            font-size: 1.1rem;
-            pointer-events: all;  /* Pastikan bisa diklik */
-            user-select: none;  /* Gak bisa diselect */
-        }
-
-        .password-toggle .toggle-icon:hover {
-            color: #003f87;
-        }
-
-        .btn-login {
-            width: 100%;
-            padding: 12px;
-            background: linear-gradient(135deg, #003f87 0%, #0073b1 100%);
-            color: white;
-            border: none;
-            border-radius: 6px;
-            font-size: 1rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            margin-top: 10px;
-            margin-bottom: 20px;
-        }
-
-        .btn-login:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 20px rgba(0, 115, 177, 0.4);
-            color: white;
-            text-decoration: none;
-        }
-
-        .btn-login:active {
-            transform: translateY(0);
-        }
-
-        .alert {
-            margin-bottom: 20px;
-            border-radius: 6px;
-            border: none;
-            padding: 12px 15px;
-        }
-
-        .alert-danger {
-            background-color: #f8d7da;
-            color: #721c24;
-            border-left: 4px solid #dc3545;
-        }
-
-        @media (max-width: 480px) {
-            .login-card {
-                padding: 30px 20px;
-            }
-
-            .login-header h1 {
-                font-size: 2rem;
-            }
-        }
-
-        .login-header .logo-img {
-            height: 100px;
-            width: 100px;
-            object-fit: contain;
-            margin-bottom: 20px;
-        }
-    </style>
+    .login-header .logo-img {
+        height: 100px;
+        width: 100px;
+        object-fit: contain;
+        margin-bottom: 20px;
+    }
+</style>
 </head>
 
 <body>
@@ -294,12 +302,14 @@ if (mysqli_num_rows($check_user) > 0) {
                            required autocomplete="username">
                 </div>
 
-                <div class="form-group password-toggle">
+                <div class="form-group">
                     <label for="password">Password</label>
-                    <input type="password" class="form-control" id="password" name="password" 
-                           placeholder="Masukkan password" 
-                           required autocomplete="current-password">
-                    <i class="bi bi-eye toggle-icon" onclick="togglePasswordVisibility('password')"></i>
+                    <div class="password-wrapper">
+                        <input type="password" class="form-control" id="password" name="password" 
+                            placeholder="Masukkan password" 
+                            required autocomplete="current-password">
+                        <i class="bi bi-eye toggle-icon" id="togglePassword"></i>
+                    </div>
                 </div>
 
                 <button type="submit" name="login" class="btn-login">
@@ -310,22 +320,22 @@ if (mysqli_num_rows($check_user) > 0) {
     </div>
 
     <script>
-        function togglePasswordVisibility(fieldId) {
-            const field = document.getElementById(fieldId);
-            const icon = event.target;
+
+        document.getElementById('togglePassword').addEventListener('click', function() {
+            const passwordField = document.getElementById('password');
+            const icon = this;
             
-            if (field.type === 'password') {
-                field.type = 'text';
+            if (passwordField.type === 'password') {
+                passwordField.type = 'text';
                 icon.classList.remove('bi-eye');
                 icon.classList.add('bi-eye-slash');
             } else {
-                field.type = 'password';
+                passwordField.type = 'password';
                 icon.classList.remove('bi-eye-slash');
                 icon.classList.add('bi-eye');
             }
-        }
+        });
 
-        // Prevent form resubmission on refresh
         if (window.history.replaceState) {
             window.history.replaceState(null, null, window.location.href);
         }
