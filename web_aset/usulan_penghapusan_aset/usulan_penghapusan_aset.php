@@ -2347,7 +2347,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                       <tr>
                                         <td><?= $no++ ?></td>
                                         <td><strong><?= htmlspecialchars($row['nomor_asset_utama']) ?></strong></td>
-                                        <td><?= htmlspecialchars(stripAUC($ua['nama_aset'] ?? '-')) ?></td>
+                                        <td><?= htmlspecialchars(stripAUC($row['nama_aset'] ?? '-')) ?></td>
                                         <td><?= $statusBadge ?></td>
                                         <td>
                                           <?php if ($row['jumlah_dokumen'] > 0): ?>
