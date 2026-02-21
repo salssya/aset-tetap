@@ -12,12 +12,10 @@ if (!isset($_SESSION["nipp"]) || !isset($_SESSION["name"])) {
     exit();
 }
 
-// Helper: normalize strings untuk perbandingan
 function normalize_str($s) {
   return strtolower(trim((string)$s));
 }
 
-// Helper: ambil daftar profit_center berdasarkan profit_center_text (subreg)
 function get_pcs_for_subreg($con, $subreg_text) {
   $out = [];
   $norm = normalize_str($subreg_text);
@@ -32,19 +30,14 @@ function get_pcs_for_subreg($con, $subreg_text) {
   return $out;
 }
 
-// Helper: normalisasi foto_path agar menjadi URL/web-path yang dapat dipakai di <img src="">
 function normalize_foto_path($p) {
   if (empty($p)) return '';
   $p = trim((string)$p);
-  // If already a URL, return as-is
   if (preg_match('#^https?://#i', $p)) return $p;
-  // If starts with slash, treat as web-root relative path
   if (strpos($p, '/') === 0) return $p;
 
-  // Normalize backslashes
   $p2 = str_replace('\\', '/', $p);
 
-  // Try resolve realpath; if path is inside document root, return web-relative path
   $docroot = realpath($_SERVER['DOCUMENT_ROOT'] ?? '') ?: '';
   if ($docroot !== '') {
     $docroot = str_replace('\\', '/', $docroot);
@@ -54,31 +47,32 @@ function normalize_foto_path($p) {
       if (strpos($abs, $docroot) === 0) {
         $rel = substr($abs, strlen($docroot));
         if ($rel === '' || $rel === false) return '/';
-        // ensure leading slash
         return '/' . ltrim($rel, '/');
       }
     }
   }
 
-  // If path seems to start with uploads/ make it web-relative from project root
   if (preg_match('#^(uploads/|\.\./uploads|/uploads)#', $p2)) {
     if (strpos($p2, '/uploads') === 0) return $p2;
     return '../../' . ltrim($p2, '/');
   }
 
-  // Fallback: return original value
   return $p;
 }
 
-// ============================================================
-// HANDLER: Lihat Dokumen — file disimpan di folder, path di DB
-// ============================================================
-if (isset($_GET['action']) && $_GET['action'] === 'view_doc' && isset($_GET['id'])) {
-  $id = (int)$_GET['id'];
+if (isset($_GET['action']) && $_GET['action'] === 'view_doc' && (isset($_GET['id']) || isset($_GET['id_dok']))) {
+  // Support: id_dok (id_dokumen langsung, lebih akurat) atau id (usulan_id, backward-compat)
   $nipp_val = (string)($_SESSION['nipp'] ?? '');
 
-  $q = "SELECT file_path, file_name, nipp, subreg, profit_center, profit_center_text, type_user 
-        FROM dokumen_penghapusan WHERE usulan_id = $id LIMIT 1";
+  if (isset($_GET['id_dok'])) {
+    $id_dok = (int)$_GET['id_dok'];
+    $q = "SELECT file_path, file_name, nipp, subreg, profit_center, profit_center_text, type_user 
+          FROM dokumen_penghapusan WHERE id_dokumen = $id_dok LIMIT 1";
+  } else {
+    $id = (int)$_GET['id'];
+    $q = "SELECT file_path, file_name, nipp, subreg, profit_center, profit_center_text, type_user 
+          FROM dokumen_penghapusan WHERE usulan_id = $id LIMIT 1";
+  }
   $res = mysqli_query($con, $q);
 
   if (!$res || mysqli_num_rows($res) === 0) {
@@ -89,75 +83,98 @@ if (isset($_GET['action']) && $_GET['action'] === 'view_doc' && isset($_GET['id'
 
   $row = mysqli_fetch_assoc($res);
 
-  // Cek akses — nipp dibandingkan sebagai string
-  $isOwner            = (trim((string)$row['nipp']) === trim($nipp_val));
-  $typeUser           = isset($_SESSION['Type_User']) ? (string)$_SESSION['Type_User'] : '';
-  $isAdmin            = stripos($typeUser, 'admin') !== false;
-  $isApprovalSubreg   = stripos($typeUser, 'approval subreg') !== false;
-  $isApprovalRegional = stripos($typeUser, 'approval regional') !== false;
+  $isOwner = (trim((string)$row['nipp']) === trim($nipp_val));
+  $typeUser = isset($_SESSION['Type_User']) ? (string)$_SESSION['Type_User'] : '';
+  $sessionPc = trim($_SESSION['Cabang'] ?? $_SESSION['profit_center'] ?? '');
+
+  // Deteksi role — gunakan string persis sesuai Type_User di DB
+  $isAdmin             = stripos($typeUser, 'admin') !== false;
+  $isApprovalSubreg    = stripos($typeUser, 'Approval Sub Regional') !== false;
+  $isApprovalRegional  = stripos($typeUser, 'Approval Regional') !== false;
+  $isUserEntryCabang   = stripos($typeUser, 'User Entry Cabang') !== false;
+  $isUserEntrySubreg   = stripos($typeUser, 'User Entry Sub Regional') !== false;
+  $isUserEntryRegional = stripos($typeUser, 'User Entry Regional') !== false;
 
   $canView = false;
 
   if ($isOwner || $isAdmin) {
+    // Pemilik dokumen atau admin → selalu bisa lihat
     $canView = true;
-  } elseif ($isApprovalSubreg) {
-    $session_subreg = normalize_str($_SESSION['profit_center_text'] ?? '');
-    $session_pc     = normalize_str($_SESSION['profit_center'] ?? $_SESSION['Cabang'] ?? '');
-    $doc_subreg     = normalize_str($row['subreg'] ?? '');
-    $doc_pc         = normalize_str($row['profit_center'] ?? '');
-    $doc_pct        = normalize_str($row['profit_center_text'] ?? '');
-    $allowed_pcs    = get_pcs_for_subreg($con, $session_subreg);
 
-    if ($session_subreg !== '' && ($doc_subreg === $session_subreg || $doc_pct === $session_subreg)) {
-      $canView = true;
-    } elseif ($session_pc !== '' && $doc_pc === $session_pc) {
-      $canView = true;
-    } elseif (!empty($allowed_pcs) && in_array($doc_pc, $allowed_pcs, true)) {
+  } elseif ($isApprovalRegional || $isUserEntryRegional) {
+    // Regional (Approval maupun User Entry) → bisa lihat semua dokumen
+    $canView = true;
+
+  } elseif ($isApprovalSubreg || $isUserEntrySubreg) {
+    // SubReg → bisa lihat dokumen seluruh cabang di subreg-nya
+    // Ambil nama subreg dari DB berdasarkan profit_center session
+    $doc_subreg = normalize_str($row['subreg'] ?? '');
+    $session_subreg = '';
+    if (!empty($sessionPc)) {
+      $q_sr = "SELECT subreg FROM import_dat WHERE profit_center = '" . mysqli_real_escape_string($con, $sessionPc) . "' AND subreg IS NOT NULL AND subreg != '' LIMIT 1";
+      $r_sr = mysqli_query($con, $q_sr);
+      if ($r_sr && mysqli_num_rows($r_sr) > 0) {
+        $session_subreg = normalize_str(mysqli_fetch_assoc($r_sr)['subreg']);
+      }
+    }
+    if ($session_subreg !== '' && $doc_subreg === $session_subreg) {
       $canView = true;
     }
-  } elseif ($isApprovalRegional) {
-    $sessionPc   = trim($_SESSION['profit_center'] ?? $_SESSION['Cabang'] ?? '');
-    $docPc       = trim($row['profit_center'] ?? '');
-    $docTypeUser = $row['type_user'] ?? '';
-    if ($docPc === $sessionPc || stripos($docTypeUser, 'approval sub regional') !== false) {
-      $canView = true;
-    }
+
+  } elseif ($isUserEntryCabang) {
+    // Cabang → hanya bisa lihat dokumen cabang sendiri
+    $doc_pc = normalize_str($row['profit_center'] ?? '');
+    $canView = ($doc_pc === normalize_str($sessionPc));
   }
 
-  // Debug sementara — hapus setelah berhasil
-  // echo "nipp_session=$nipp_val | nipp_db={$row['nipp']} | isOwner=".($isOwner?'Y':'N')." | typeUser=$typeUser | canView=".($canView?'Y':'N'); exit();
-
-  if ($canView) {
-    $file_path_db = $row['file_path'] ?? '';
-    $file_name    = !empty($row['file_name']) ? $row['file_name'] : 'dokumen.pdf';
-
-    // Resolve path absolut
-    $abs_path = realpath(__DIR__ . '/' . $file_path_db);
-
-    // Fallback pakai nama file saja
-    if (!$abs_path || !file_exists($abs_path)) {
-      $abs_path = realpath(__DIR__ . '/../../uploads/dokumen_penghapusan/' . basename($file_name));
-    }
-
-    if ($abs_path && file_exists($abs_path)) {
-      header('Content-Type: application/pdf');
-      header('Content-Disposition: inline; filename="' . basename($file_name) . '"');
-      header('Content-Length: ' . filesize($abs_path));
-      readfile($abs_path);
-      exit();
-    } else {
-      http_response_code(404);
-      echo 'File tidak ada di server. Path: ' . htmlspecialchars($abs_path ?: $file_path_db);
-      exit();
-    }
-  } else {
+  if (!$canView) {
     http_response_code(403);
-    echo 'Akses ditolak. Role: ' . htmlspecialchars($typeUser);
+    echo 'Anda tidak memiliki izin untuk melihat dokumen ini.';
     exit();
   }
-}
-// ============================================================
 
+  $filePathDb = $row['file_path'] ?? '';
+  $fileName   = !empty($row['file_name']) ? basename($row['file_name']) : 'dokumen.pdf';
+
+  // Resolve path absolut file — coba beberapa strategi
+  // Upload folder relatif dari __DIR__ file ini
+  $uploadBaseDir = realpath(__DIR__ . '/../../uploads/dokumen_penghapusan') ?: (__DIR__ . '/../../uploads/dokumen_penghapusan');
+  $absPath = null;
+
+  // Strategi 1 (paling reliable): cari di upload folder berdasarkan nama file
+  $try1 = $uploadBaseDir . '/' . basename($fileName);
+  if (file_exists($try1)) $absPath = $try1;
+
+  // Strategi 2: webroot-relative (format baru: 'uploads/dokumen_penghapusan/xxx.pdf')
+  if (!$absPath && !empty($filePathDb)) {
+    $try2 = rtrim($_SERVER['DOCUMENT_ROOT'], '/') . '/' . ltrim(str_replace('\\', '/', $filePathDb), '/');
+    if (file_exists($try2)) $absPath = $try2;
+  }
+
+  // Strategi 3: relative dari __DIR__ (format lama: '../../uploads/...')
+  if (!$absPath && !empty($filePathDb)) {
+    $try3 = realpath(__DIR__ . '/' . $filePathDb);
+    if ($try3 && file_exists($try3)) $absPath = $try3;
+  }
+
+  // Strategi 4: path absolut langsung
+  if (!$absPath && !empty($filePathDb) && file_exists($filePathDb)) $absPath = $filePathDb;
+
+  if (!$absPath || !file_exists($absPath)) {
+    http_response_code(404);
+    echo 'File dokumen tidak ditemukan di server.';
+    exit();
+  }
+
+  $mimeType = mime_content_type($absPath) ?: 'application/pdf';
+  $forceDownload = isset($_GET['download']) && $_GET['download'] === '1';
+  header('Content-Type: ' . $mimeType);
+  header('Content-Disposition: ' . ($forceDownload ? 'attachment' : 'inline') . '; filename="' . $fileName . '"');
+  header('Content-Length: ' . filesize($absPath));
+  header('Cache-Control: no-cache, must-revalidate');
+  readfile($absPath);
+  exit();
+}
 if (!isset($_SESSION["nipp"]) || !isset($_SESSION["name"])) {
     header("Location: ../login/login_view.php");
     exit();
@@ -167,15 +184,27 @@ $userNipp = $_SESSION['nipp'];
 $userType = isset($_SESSION['Type_User']) ? $_SESSION['Type_User'] : '';
 $userProfitCenter = isset($_SESSION['Cabang']) ? $_SESSION['Cabang'] : '';
 
+$isSubRegional = (strpos($userType, 'Approval Sub Regional') !== false || strpos($userType, 'User Entry Sub Regional') !== false);
+$isCabang      = (strpos($userType, 'Cabang') !== false || strpos($userType, 'User Entry Cabang') !== false);
+$isRegional    = !$isSubRegional && !$isCabang;
+
+$userSubreg = '';
+if ($isSubRegional && !empty($userProfitCenter)) {
+    $q_sub = $con->prepare("SELECT subreg FROM import_dat WHERE profit_center = ? AND subreg IS NOT NULL AND subreg != '' LIMIT 1");
+    $q_sub->bind_param("s", $userProfitCenter);
+    $q_sub->execute();
+    $r_sub = $q_sub->get_result();
+    if ($r_sub && $r_sub->num_rows > 0) {
+        $userSubreg = $r_sub->fetch_assoc()['subreg'];
+    }
+    $q_sub->close();
+}
+
 $whereClause = "WHERE up.status NOT IN ('draft', 'lengkapi_dokumen', 'dokumen_lengkap')";
-if (strpos($userType, 'Approval Sub Regional') !== false || strpos($userType, 'User Entry Sub Regional') !== false) {
-    $whereClause .= " AND (up.profit_center = ? OR up.subreg LIKE ?)";
-    $isSubRegional = true;
-} elseif (strpos($userType, 'Cabang') !== false || strpos($userType, 'User Entry Cabang') !== false) {
+if ($isSubRegional) {
+    $whereClause .= " AND up.subreg = ?";
+} elseif ($isCabang) {
     $whereClause .= " AND up.profit_center = ?";
-    $isCabang = true;
-} else {
-    $isRegional = true;
 }
 
 $query_daftar = "SELECT up.*,
@@ -183,7 +212,11 @@ $query_daftar = "SELECT up.*,
                         id.asset_class_name as kategori_aset,
                         id.profit_center_text,
                         id.subreg,
-                        (SELECT COUNT(*) FROM dokumen_penghapusan WHERE usulan_id = up.id) as jumlah_dokumen
+                        id.nilai_perolehan_sd,
+                        (SELECT COUNT(*) FROM dokumen_penghapusan dp2 
+                        WHERE dp2.usulan_id = up.id 
+                           OR dp2.no_aset LIKE CONCAT('%', up.nomor_asset_utama, '%')
+                       ) as jumlah_dokumen
                  FROM usulan_penghapusan up
                  LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama
                  " . $whereClause . "
@@ -191,10 +224,9 @@ $query_daftar = "SELECT up.*,
 
 $stmt = $con->prepare($query_daftar);
 
-if (isset($isSubRegional)) {
-    $subreg_pattern = $userProfitCenter . '%';
-    $stmt->bind_param("ss", $userProfitCenter, $subreg_pattern);
-} elseif (isset($isCabang)) {
+if ($isSubRegional) {
+    $stmt->bind_param("s", $userSubreg);
+} elseif ($isCabang) {
     $stmt->bind_param("s", $userProfitCenter);
 }
 
@@ -204,7 +236,6 @@ $result = $stmt->get_result();
 $daftar_usulan = [];
 while ($row = $result->fetch_assoc()) {
     $row['nama_aset'] = str_replace('AUC-', '', $row['nama_aset']);
-  // Normalize foto_path from DB so front-end can use it directly in <img src="">
   if (isset($row['foto_path'])) {
     $row['foto_path'] = normalize_foto_path($row['foto_path']);
   } else {
@@ -215,27 +246,26 @@ while ($row = $result->fetch_assoc()) {
 $stmt->close();
 
 $query_docs = "SELECT dp.id_dokumen, dp.usulan_id, dp.tipe_dokumen, 
-                      dp.file_path, YEAR(up.created_at) as tahun_usulan,
+                      dp.file_path, dp.file_name, dp.no_aset,
+                      YEAR(up.created_at) as tahun_usulan,
                       up.nomor_asset_utama, id.keterangan_asset as nama_aset
                FROM dokumen_penghapusan dp
                JOIN usulan_penghapusan up ON dp.usulan_id = up.id
                LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama
                WHERE up.status NOT IN ('draft', 'lengkapi_dokumen', 'dokumen_lengkap')";
 
-if (strpos($userType, 'Approval Sub Regional') !== false || strpos($userType, 'User Entry Sub Regional') !== false) {
-    $query_docs .= " AND (up.profit_center = ? OR up.subreg LIKE ?)";
-} elseif (strpos($userType, 'Cabang') !== false || strpos($userType, 'User Entry Cabang') !== false) {
+if ($isSubRegional) {
+    $query_docs .= " AND up.subreg = ?";
+} elseif ($isCabang) {
     $query_docs .= " AND up.profit_center = ?";
 }
-
 $query_docs .= " ORDER BY dp.id_dokumen DESC";
 
 $stmt_docs = $con->prepare($query_docs);
 
-if (isset($isSubRegional)) {
-    $subreg_pattern = $userProfitCenter . '%';
-    $stmt_docs->bind_param("ss", $userProfitCenter, $subreg_pattern);
-} elseif (isset($isCabang)) {
+if ($isSubRegional) {
+    $stmt_docs->bind_param("s", $userSubreg);
+} elseif ($isCabang) {
     $stmt_docs->bind_param("s", $userProfitCenter);
 }
 
@@ -275,12 +305,10 @@ $stmt_docs->close();
     .app-sidebar {
         background-color: #0b3a8c !important;
       }
-      /* Remove header border/shadow and brand bottom line */
       .app-header, nav.app-header, .app-header.navbar {
         border-bottom: 0 !important;
         box-shadow: none !important;
       }
-      /* Ensure the sidebar-brand area fills with the same blue and has no divider */
       .sidebar-brand {
         background-color: #0b3a8c !important;
         margin-bottom: 0 !important;
@@ -295,7 +323,6 @@ $stmt_docs->close();
         box-shadow: none !important;
         background-color: transparent !important;
       }
-      /* Make sure the logo image doesn't leave a visual gap */
       .sidebar-brand .brand-link .brand-image {
         display: block !important;
         height: auto !important;
@@ -391,7 +418,6 @@ $stmt_docs->close();
     .dataTables_wrapper .dataTables_paginate { margin-top: 12px; }
     .card-table .table-responsive { border: none !important; border-radius: 0; }
 
-    /* Fix posisi modal AdminLTE */
     .modal { padding-left: 0 !important; }
     .modal-dialog {
       margin: 1.75rem auto !important;
@@ -681,6 +707,7 @@ $stmt_docs->close();
                         <th style="text-align:center;">Status Regional</th>
                         <th>Mekanisme Penghapusan</th>
                         <th>Nilai Buku</th>
+                        <th>Nilai Perolehan</th>
                         <th>Nomor Aset</th>
                         <th>Nama Aset</th>
                         <th>Subreg</th>
@@ -734,6 +761,13 @@ $stmt_docs->close();
                               <span class="text-muted">—</span>
                             <?php endif; ?>
                           </td>
+                          <td style="font-family:'Courier New',monospace; font-weight:500;">
+                            <?php if (isset($usulan['nilai_perolehan_sd']) && $usulan['nilai_perolehan_sd'] !== null && $usulan['nilai_perolehan_sd'] !== ''): ?>
+                              Rp <?= number_format((float)$usulan['nilai_perolehan_sd'], 0, ',', '.') ?>
+                            <?php else: ?>
+                              <span class="text-muted">—</span>
+                            <?php endif; ?>
+                          </td>
                           <td><strong><?= htmlspecialchars($usulan['nomor_asset_utama']) ?></strong></td>
                           <td><?= htmlspecialchars($usulan['nama_aset'] ?? '—') ?></td>
                           <td style="font-size:0.85rem;"><?= htmlspecialchars($usulan['subreg'] ?? '—') ?></td>
@@ -752,7 +786,7 @@ $stmt_docs->close();
                         <?php endforeach; ?>
                       <?php else: ?>
                       <tr>
-                        <td colspan="11" class="text-center text-muted py-5">
+                        <td colspan="12" class="text-center text-muted py-5">
                           <i class="bi bi-inbox" style="font-size:2.5rem; opacity:0.3; display:block; margin-bottom:0.75rem;"></i>
                           Belum ada usulan penghapusan
                         </td>
@@ -761,8 +795,8 @@ $stmt_docs->close();
                     </tbody>
                   </table>
                 </div>
-              </div><!-- end card-table-body -->
-            </div><!-- end card-table -->
+              </div>
+            </div>
           </div>
         </div>
 
@@ -784,7 +818,7 @@ $stmt_docs->close();
                         <th>Nama Aset</th>
                         <th>Tipe Dokumen</th>
                         <th>Tahun</th>
-                        <th style="width:100px; text-align:center;">Lihat</th>
+                        <th style="width:100px; text-align:center;">Unduh</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -792,16 +826,29 @@ $stmt_docs->close();
                         <?php $no = 1; foreach ($daftar_dokumen as $dokumen): ?>
                         <tr>
                           <td><?= $no++ ?></td>
-                          <td><strong><?= htmlspecialchars($dokumen['nomor_asset_utama']) ?></strong></td>
+                          <td>
+                            <?php
+                            // Tampilkan semua nomor aset (bisa multi dengan ; separator)
+                            $no_aset_d = $dokumen['no_aset'] ?? $dokumen['nomor_asset_utama'] ?? '';
+                            $no_list_d = array_filter(array_map('trim', explode(';', $no_aset_d)));
+                            if (count($no_list_d) > 1): ?>
+                              <span class="badge bg-info text-dark mb-1"><?= count($no_list_d) ?> aset</span><br>
+                              <?php foreach ($no_list_d as $nm): ?>
+                                <small class="d-block"><strong><?= htmlspecialchars($nm) ?></strong></small>
+                              <?php endforeach; ?>
+                            <?php else: ?>
+                              <strong><?= htmlspecialchars($no_aset_d) ?></strong>
+                            <?php endif; ?>
+                          </td>
                           <td><?= htmlspecialchars($dokumen['nama_aset'] ?? '—') ?></td>
                           <td><?= htmlspecialchars($dokumen['tipe_dokumen'] ?? '—') ?></td>
                           <td><?= htmlspecialchars($dokumen['tahun_usulan'] ?? '—') ?></td>
                           <td style="text-align:center;">
-                            <a href="?action=view_doc&id=<?= $dokumen['usulan_id'] ?>"
-                               class="btn btn-sm btn-outline-primary"
-                               target="_blank"
-                               title="Lihat Dokumen">
-                              <i class="bi bi-eye"></i>
+                            <a href="?action=view_doc&id_dok=<?= $dokumen['id_dokumen'] ?>&download=1"
+                               class="btn btn-sm btn-outline-success"
+                               download
+                               title="Download Dokumen">
+                              <i class="bi bi-download"></i>
                             </a>
                           </td>
                         </tr>
@@ -833,10 +880,7 @@ $stmt_docs->close();
 
 </div><!-- end app-wrapper -->
 
-
-<!-- ============================================================ -->
 <!-- MODAL DETAIL                                                  -->
-<!-- ============================================================ -->
 <div class="modal fade" id="modalDetail" tabindex="-1" style="position:fixed !important;">
   <div class="modal-dialog modal-lg modal-dialog-scrollable" style="margin:1.75rem auto !important;">
     <div class="modal-content border-0 shadow-lg overflow-hidden">
@@ -852,7 +896,7 @@ $stmt_docs->close();
       </div>
 
       <div class="modal-body p-0" id="modalDetailBody">
-        <!-- diisi JS -->
+
       </div>
 
       <div class="modal-footer bg-light border-top">
@@ -872,7 +916,6 @@ $stmt_docs->close();
 <script src="../../dist/js/dataTables.min.js"></script>
 
 <script>
-  // Pindahkan modal ke body agar tidak terpengaruh CSS AdminLTE
   document.addEventListener('DOMContentLoaded', function () {
     const modal = document.getElementById('modalDetail');
     if (modal && modal.parentElement !== document.body) {
@@ -885,7 +928,7 @@ $stmt_docs->close();
       ordering: true, searching: true, paging: true, pageLength: 25,
       language: { url: '../../dist/js/i18n/id.json' },
       scrollX: true,
-      columnDefs: [{ orderable: false, targets: [1, 2, 9, 10] }]
+      columnDefs: [{ orderable: false, targets: [1, 2, 10, 11] }]
     });
   }
 
@@ -899,9 +942,27 @@ $stmt_docs->close();
   }
 });
 
-  // ============================================================
-  // FUNGSI MODAL DETAIL — clean & proporsional
-  // ============================================================
+  // Data dokumen untuk cek relasi gabungan aset
+  const semuaDokumen = <?= json_encode(array_values($daftar_dokumen)) ?>;
+
+  // Toggle preview inline dokumen di dalam modal
+  function togglePreviewDok(previewId, url) {
+    const container = document.getElementById(previewId);
+    const frame = document.getElementById(previewId + '-frame');
+    if (!container) return;
+
+    const isVisible = container.style.display !== 'none';
+    if (isVisible) {
+      container.style.display = 'none';
+      if (frame) frame.src = ''; // reset iframe biar hemat resource
+    } else {
+      if (frame && url) frame.src = url;
+      container.style.display = 'block';
+      // Scroll ke preview supaya kelihatan
+      setTimeout(function() { container.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, 150);
+    }
+  }
+
   function lihatDetail(usulan) {
 
     function rupiah(val) {
@@ -958,21 +1019,18 @@ $stmt_docs->close();
       </div>`;
     }
 
-    // Badge mekanisme
     const mek = usulan.mekanisme_penghapusan === 'Jual Lelang'
       ? `<span class="badge-pill" style="background:#dbeafe;color:#1d4ed8;">Jual Lelang</span>`
       : usulan.mekanisme_penghapusan === 'Hapus Administrasi'
       ? `<span class="badge-pill" style="background:#f3e8ff;color:#7c3aed;">Hapus Administrasi</span>`
       : '—';
 
-    // Badge fisik
     const fisik = usulan.fisik_aset === 'Ada'
       ? `<span class="badge-pill" style="background:#d1fae5;color:#065f46;">Ada</span>`
       : usulan.fisik_aset === 'Tidak Ada'
       ? `<span class="badge-pill" style="background:#fee2e2;color:#991b1b;">Tidak Ada</span>`
       : '—';
 
-    // Foto
     const fotoHtml = usulan.foto_path
       ? `<div class="text-center py-3" style="background:#f8f9fa; border-bottom:1px solid #f0f0f0;">
            <img src="${usulan.foto_path}" class="foto-aset-img img-fluid"
@@ -985,6 +1043,99 @@ $stmt_docs->close();
       : '';
 
     const isLocked = usulan.status_approval_subreg !== 'approved';
+
+    // Cari dokumen yang berkaitan dengan aset ini
+    // Prioritas: match usulan_id langsung (paling akurat)
+    // Fallback: match no_aset atau nomor_asset_utama (untuk dokumen gabungan multi-aset)
+    const usulanId   = String(usulan.id || '');
+    const nomorAset  = String(usulan.nomor_asset_utama || '').trim();
+
+    const dokTerkait = semuaDokumen.filter(function(d) {
+      // 1. Exact match via usulan_id
+      if (usulanId && String(d.usulan_id || '') === usulanId) return true;
+
+      // 2. Match via no_aset (dokumen gabungan yang mencakup nomor aset ini)
+      if (nomorAset) {
+        const noAsetDok = String(d.no_aset || '').trim();
+        if (noAsetDok) {
+          return noAsetDok.split(';').map(s => s.trim()).some(n => n === nomorAset);
+        }
+        // 3. Fallback: match via nomor_asset_utama dari tabel usulan_penghapusan
+        const noUtama = String(d.nomor_asset_utama || '').trim();
+        if (noUtama === nomorAset) return true;
+      }
+
+      return false;
+    });
+
+    let dokGabunganHtml = '';
+    if (dokTerkait.length > 0) {
+      const dokRows = dokTerkait.map(function(d, i) {
+        const noAsetList = (d.no_aset || d.nomor_asset_utama || '').split(';').map(s => s.trim()).filter(Boolean);
+        const isGabungan = noAsetList.length > 1;
+
+        const asetBadge = '';
+
+        // Keterangan gabungan: tampil info aset-aset yang satu dokumen
+        const infoGabungan = isGabungan
+          ? `<div style="margin-top:5px;font-size:0.75rem;color:#6b7280;">
+               <i class="bi bi-paperclip me-1"></i>Dokumen ini juga mencakup:
+               ${noAsetList.filter(n => n !== nomorAset).map(n => `<code style="background:#f1f5f9;color:#475569;padding:1px 6px;border-radius:4px;margin-left:3px;">${n}</code>`).join('')}
+             </div>`
+          : '';
+
+        const viewUrl = `?action=view_doc&id_dok=${d.id_dokumen}`;
+        const previewId = `dok-preview-${d.id_dokumen}`;
+
+        return `<div style="padding:10px 0;${i > 0 ? 'border-top:1px solid #f3f4f6;' : ''}">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;">
+            <div style="flex:1;">
+              <div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;">
+                <span style="font-weight:600;font-size:0.88rem;">${d.tipe_dokumen || 'Dokumen'}</span>
+                ${asetBadge}
+                <span style="color:#9ca3af;font-size:0.76rem;">Tahun ${d.tahun_usulan || '—'}</span>
+              </div>
+              ${infoGabungan}
+            </div>
+            <div style="display:flex;gap:6px;flex-shrink:0;margin-left:12px;">
+              <button onclick="togglePreviewDok('${previewId}','${viewUrl}')"
+                      class="btn btn-sm btn-outline-info"
+                      style="font-size:0.76rem;padding:2px 9px;"
+                      title="Preview Dokumen">
+                <i class="bi bi-card-image me-1"></i>Preview
+              </button>
+              <a href="${viewUrl}" target="_blank"
+                 class="btn btn-sm btn-outline-primary"
+                 style="font-size:0.76rem;padding:2px 9px;"
+                 title="Buka di tab baru">
+                <i class="bi bi-box-arrow-up-right me-1"></i>Buka
+              </a>
+            </div>
+          </div>
+          <!-- Inline Preview Area -->
+          <div id="${previewId}" style="display:none;margin-top:8px;">
+            <div style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;background:#f8fafc;">
+              <div style="padding:6px 12px;background:#f1f5f9;border-bottom:1px solid #e2e8f0;font-size:0.75rem;color:#64748b;display:flex;align-items:center;justify-content:space-between;">
+                <span><i class="bi bi-file-earmark-pdf text-danger me-1"></i>Preview Dokumen</span>
+                <button onclick="togglePreviewDok('${previewId}',null)" 
+                        class="btn btn-sm" style="padding:0 4px;font-size:0.7rem;color:#94a3b8;line-height:1;">
+                  <i class="bi bi-x-lg"></i> Tutup
+                </button>
+              </div>
+              <iframe id="${previewId}-frame" src="" 
+                      style="width:100%;height:480px;border:none;display:block;"
+                      title="Preview Dokumen PDF">
+              </iframe>
+            </div>
+          </div>
+        </div>`;
+      }).join('');
+
+      dokGabunganHtml = `<div class="detail-section">
+        <div class="detail-section-title"><i class="bi bi-file-earmark-pdf"></i> Dokumen Terkait</div>
+        <div style="padding:0 16px;">${dokRows}</div>
+      </div>`;
+    }
 
     const html = `
       ${fotoHtml}
@@ -1005,6 +1156,7 @@ $stmt_docs->close();
         <div class="detail-section-title"><i class="bi bi-clipboard-data"></i> Detail Usulan</div>
         <div class="detail-grid">
           ${item('Nilai Buku', `<span style="font-family:monospace;">${rupiah(usulan.nilai_buku)}</span>`)}
+          ${item('Nilai Perolehan', `<span style="font-family:monospace;">${rupiah(usulan.nilai_perolehan_sd)}</span>`)}
           ${item('Tahun Usulan', val(usulan.tahun_usulan))}
           ${item('Mekanisme Penghapusan', mek)}
           ${item('Fisik Aset', fisik)}
@@ -1022,6 +1174,7 @@ $stmt_docs->close();
         </div>
       </div>
 
+
       <!-- Kajian -->
       <div class="detail-section">
         <div class="detail-section-title"><i class="bi bi-journal-text"></i> Kajian & Justifikasi</div>
@@ -1030,6 +1183,9 @@ $stmt_docs->close();
         ${kajian('Kajian Ekonomis', usulan.kajian_ekonomis)}
         ${kajian('Kajian Risiko', usulan.kajian_risiko)}
       </div>
+
+      <!-- Dokumen Terkait + Preview -->
+      ${dokGabunganHtml}
     `;
 
     document.getElementById('modalSubtitle').textContent = usulan.nama_aset || usulan.nomor_asset_utama;
