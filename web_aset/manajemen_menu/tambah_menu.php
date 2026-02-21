@@ -47,6 +47,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
   <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
     <title>Tambah Menu - Web Aset Tetap</title>
+    <link rel="icon" type="image/png" href="../../dist/assets/img/emblem.png" /> 
+    <link rel="shortcut icon" type="image/png" href="../../dist/assets/img/emblem.png" />  
     <!-- Favicon -->
     <link rel="icon" type="image/png" href="../../dist/assets/img/emblem.png" /> 
     <link rel="shortcut icon" type="image/png" href="../../dist/assets/img/emblem.png" />
