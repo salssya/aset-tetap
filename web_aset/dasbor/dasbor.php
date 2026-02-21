@@ -171,7 +171,7 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                   <div class="row ps-3 pe-3 pt-2 pb-2 user-info">
                     <div class="col-6 text-start">
                       <small class="text-muted">Type User:</small><br>
-                      <span class="badge bg-primary">
+                      <span class="badge bg-primary small">
                         <?php echo htmlspecialchars($_SESSION['Type_User']); ?>
                       </span>
                     </div>
@@ -231,10 +231,10 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
               data-accordion="false"
               id="navigation"
             >
-            <?php  
+           <?php  
             $userNipp = isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : '';
             $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '" . mysqli_real_escape_string($con, $userNipp) . "' ORDER BY menus.urutan_menu ASC";
-            $result = mysqli_query($con, $query) or die(mysqli_error($con));
+            $result_menu = mysqli_query($con, $query) or die(mysqli_error($con));
             $iconMap = [
                 'Dasboard'                  => 'bi bi-grid-fill',
                 'Usulan Penghapusan'        => 'bi bi-clipboard-plus',
@@ -247,19 +247,40 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                 'Import DAT'                => 'bi bi-file-earmark-arrow-up-fill',
                 'Daftar Aset Tetap'         => 'bi bi-card-list',
                 'Manajemen User'            => 'bi bi-people-fill'
-            ]; 
-  
-            while ($row = mysqli_fetch_assoc($result)) {
-                $namaMenu = trim($row['nama_menu']); 
-                $icon = $iconMap[$namaMenu] ?? 'bi bi-circle';
+            ];
+            
+            $menuRows = [];
+            while ($row = mysqli_fetch_assoc($result_menu)) {
+                $menuRows[] = $row;
+            }
+            
+            $hasDaftarUsulan = false;
+            $daftarRow = null;
+            foreach ($menuRows as $row) {
+                if (trim($row['nama_menu']) === 'Daftar Usulan Penghapusan') {
+                    $hasDaftarUsulan = true;
+                    $daftarRow = $row;
+                    break;
+                }
+            }
+            
+            $currentPage = basename($_SERVER['PHP_SELF']);
+            
+            foreach ($menuRows as $row) {
+                $namaMenu = trim($row['nama_menu']);
                 
-                $currentPage = basename($_SERVER['PHP_SELF']);
-                $menuFile = $row['menu'].'.php'; 
+                if ($namaMenu === 'Daftar Usulan Penghapusan') {
+                    continue;
+                }
+                
+                $icon = $iconMap[$namaMenu] ?? 'bi bi-circle';
+                $menuFile = $row['menu'].'.php';
                 $isActive = ($currentPage === $menuFile) ? 'active' : '';
 
-              if ($namaMenu === 'Manajemen Menu') {
-               echo '<li class="nav-header"></li>';
-              }
+                if ($namaMenu === 'Manajemen Menu') {
+                    echo '<li class="nav-header"></li>';
+                }
+                
                 echo '
                 <li class="nav-item">
                     <a href="../'.$row['menu'].'/'.$row['menu'].'.php" class="nav-link '.$isActive.'">
@@ -267,6 +288,20 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                         <p>'.$row['nama_menu'].'</p>
                     </a>
                 </li>';
+                
+                if ($namaMenu === 'Usulan Penghapusan' && $hasDaftarUsulan && $daftarRow) {
+                    $daftarIcon = $iconMap['Daftar Usulan Penghapusan'] ?? 'bi bi-circle';
+                    $daftarFile = $daftarRow['menu'].'.php';
+                    $isDaftarActive = ($currentPage === $daftarFile) ? 'active' : '';
+                    
+                    echo '
+                <li class="nav-item">
+                    <a href="../'.$daftarRow['menu'].'/'.$daftarRow['menu'].'.php" class="nav-link '.$isDaftarActive.'">
+                        <i class="nav-icon '.$daftarIcon.'"></i>
+                        <p>Daftar Usulan Penghapusan</p>
+                    </a>
+                </li>';
+                }
             }
             ?>
 
