@@ -484,89 +484,104 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             exit();
         }
         
-        if ($file['size'] > 5 * 1024 * 1024) {
-            $_SESSION['warning_message'] = "Ukuran file maksimal 5MB!";
+        if ($file['size'] > 50 * 1024 * 1024) {
+            $_SESSION['warning_message'] = "Ukuran file maksimal 50MB!";
             header("Location: " . $_SERVER['PHP_SELF'] . "#upload");
             exit();
         }
         
-        // Baca file content langsung dari tmp tanpa menyimpan ke disk
+        // Baca file content
         $file_data = @file_get_contents($file['tmp_name']);
         if ($file_data === false) {
             $_SESSION['warning_message'] = "Gagal membaca file upload.";
-        } else {
-            $success_count = 0;
+            header("Location: " . $_SERVER['PHP_SELF'] . "#upload");
+            exit();
+        }
+        
+        // Compress file dengan gzip untuk mengurangi ukuran (biasanya jadi 10-20% dari original)
+        $compressed_data = gzencode($file_data, 9);
+        if ($compressed_data === false) {
+            $_SESSION['warning_message'] = "Gagal kompres file!";
+            header("Location: " . $_SERVER['PHP_SELF'] . "#upload");
+            exit();
+        }
+        
+        // Encode compressed data sebagai base64 untuk disimpan ke database
+        $base64_compressed = base64_encode($compressed_data);
+        $file_path = 'data:application/pdf;base64;gzip,' . $base64_compressed;
+        
+        // Simpan nama file asli untuk display
+        $new_filename = basename($file['name']);
+        
+        $success_count = 0;
 
-            $no_aset_raw = isset($_POST['no_aset_list']) && !empty($_POST['no_aset_list']) 
-                     ? trim($_POST['no_aset_list']) 
-                     : '';
+        $no_aset_raw = isset($_POST['no_aset_list']) && !empty($_POST['no_aset_list']) 
+                 ? trim($_POST['no_aset_list']) 
+                 : '';
 
-            $ids = array_filter(array_map('trim', explode(',', $usulan_ids)));
-            $first_id = !empty($ids) ? intval(reset($ids)) : 0; 
+        $ids = array_filter(array_map('trim', explode(',', $usulan_ids)));
+        $first_id = !empty($ids) ? intval(reset($ids)) : 0; 
 
-            // Encode file ke base64 untuk disimpan di database
-            $base64 = base64_encode($file_data);
-            $file_path = 'data:application/pdf;base64,' . $base64;
-            // Simpan nama file asli untuk display
-            $new_filename = basename($file['name']);
+        // Insert 1 dokumen dengan semua nomor aset yang digabung
+        if ($first_id > 0) {
+          $stmt = $con->prepare("SELECT nomor_asset_utama, profit_center, subreg FROM usulan_penghapusan WHERE id = ?");
+          $stmt->bind_param("i", $first_id);
+          $stmt->execute();
+          $result = $stmt->get_result();
+          $stmt->close();
 
-          // Insert 1 dokumen dengan semua nomor aset yang digabung
-          if ($first_id > 0) {
-            $stmt = $con->prepare("SELECT nomor_asset_utama, profit_center, subreg FROM usulan_penghapusan WHERE id = ?");
-            $stmt->bind_param("i", $first_id);
-            $stmt->execute();
-            $result = $stmt->get_result();
-            $stmt->close();
+          if ($result->num_rows > 0) {
+            $usulan = $result->fetch_assoc();
 
-            if ($result->num_rows > 0) {
-              $usulan = $result->fetch_assoc();
-
-              $profit_center_text = null;
-              $qimp = $con->prepare("SELECT profit_center_text, subreg FROM import_dat WHERE nomor_asset_utama = ? LIMIT 1");
-              $qimp->bind_param("s", $usulan['nomor_asset_utama']);
-              $qimp->execute();
-              $rimp = $qimp->get_result();
-              if ($rimp && $rimp->num_rows > 0) {
-                $rowimp = $rimp->fetch_assoc();
-                $profit_center_text = $rowimp['profit_center_text'];
-                if (empty($usulan['subreg'])) {
-                  $usulan['subreg'] = $rowimp['subreg'];
-                }
+            $profit_center_text = null;
+            $qimp = $con->prepare("SELECT profit_center_text, subreg FROM import_dat WHERE nomor_asset_utama = ? LIMIT 1");
+            $qimp->bind_param("s", $usulan['nomor_asset_utama']);
+            $qimp->execute();
+            $rimp = $qimp->get_result();
+            if ($rimp && $rimp->num_rows > 0) {
+              $rowimp = $rimp->fetch_assoc();
+              $profit_center_text = $rowimp['profit_center_text'];
+              if (empty($usulan['subreg'])) {
+                $usulan['subreg'] = $rowimp['subreg'];
               }
-              $qimp->close();
-
-              $no_aset_save = !empty($no_aset_raw) ? $no_aset_raw : $usulan['nomor_asset_utama'];
-              $insert_query = "INSERT INTO dokumen_penghapusan 
-                      (usulan_id, tahun_dokumen, tipe_dokumen, no_aset, subreg, profit_center, profit_center_text, type_user, nipp, file_name, file_path, file_size) 
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-              $stmt_insert = $con->prepare($insert_query);
-              $stmt_insert->bind_param("iisssssssssi", 
-                $first_id,     
-                $tahun_dokumen, 
-                $tipe_dokumen, 
-                $no_aset_save, 
-                $usulan['subreg'],
-                $usulan['profit_center'],
-                $profit_center_text,
-                $type_user,
-                $nipp,
-                $new_filename,
-                $file_path,
-                $file['size']
-              );
-
-              if ($stmt_insert->execute()) {
-                $success_count++;
-              }
-              $stmt_insert->close();
             }
-          }
+            $qimp->close();
 
-          if ($success_count > 0) {
-            $_SESSION['success_message'] = "✅ Berhasil upload dokumen untuk " . count($ids) . " aset!";
-          } else {
-            $_SESSION['warning_message'] = "Gagal menyimpan dokumen!";
+            $no_aset_save = !empty($no_aset_raw) ? $no_aset_raw : $usulan['nomor_asset_utama'];
+            $insert_query = "INSERT INTO dokumen_penghapusan 
+                    (usulan_id, tahun_dokumen, tipe_dokumen, no_aset, subreg, profit_center, profit_center_text, type_user, nipp, file_name, file_path, file_size) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+            $stmt_insert = $con->prepare($insert_query);
+            
+            // Simpan compressed size di database (ukuran file setelah dikompres)
+            $compressed_size = strlen($compressed_data);
+            
+            $stmt_insert->bind_param("iisssssssssi", 
+              $first_id,     
+              $tahun_dokumen, 
+              $tipe_dokumen, 
+              $no_aset_save, 
+              $usulan['subreg'],
+              $usulan['profit_center'],
+              $profit_center_text,
+              $type_user,
+              $nipp,
+              $new_filename,
+              $file_path,
+              $compressed_size
+            );
+
+            if ($stmt_insert->execute()) {
+              $success_count++;
+            }
+            $stmt_insert->close();
           }
+        }
+
+        if ($success_count > 0) {
+          $_SESSION['success_message'] = "✅ Berhasil upload dokumen untuk " . count($ids) . " aset!";
+        } else {
+          $_SESSION['warning_message'] = "Gagal menyimpan dokumen!";
         }
     }
     header("Location: " . $_SERVER['PHP_SELF'] . "#upload");
@@ -724,19 +739,45 @@ if (isset($_GET['action']) && $_GET['action'] === 'view_dokumen' && isset($_GET[
 
     // If file_path is a data URI (base64), serve it directly
     if (!empty($filePathDb) && strpos($filePathDb, 'data:') === 0) {
-      // data:[<mediatype>][;base64],<data>
-      if (preg_match('#^data:([^;]+);base64,(.+)$#', $filePathDb, $m)) {
-        $mime = $m[1];
-        $b64 = $m[2];
-        $data = base64_decode($b64);
-        if ($data === false) { http_response_code(500); echo 'Gagal decode data.'; exit(); }
-        header('Content-Type: ' . $mime);
-        header('Content-Disposition: inline; filename="' . $fileName . '"');
-        header('Content-Length: ' . strlen($data));
-        header('Cache-Control: no-cache');
-        echo $data; exit();
+      // Format: data:[<mediatype>][;base64][;gzip],<data>
+      // Check if file is gzip-compressed
+      $isGzipped = strpos($filePathDb, ';gzip,') !== false;
+      
+      if ($isGzipped) {
+        // Format: data:application/pdf;base64;gzip,<compressed_base64>
+        if (preg_match('#^data:([^;]+);base64;gzip,(.+)$#', $filePathDb, $m)) {
+          $mime = $m[1];
+          $b64_compressed = $m[2];
+          $compressed_data = base64_decode($b64_compressed);
+          if ($compressed_data === false) { http_response_code(500); echo 'Gagal decode data.'; exit(); }
+          
+          // Decompress gzip
+          $data = @gzdecode($compressed_data);
+          if ($data === false) { http_response_code(500); echo 'Gagal decompress data.'; exit(); }
+          
+          header('Content-Type: ' . $mime);
+          header('Content-Disposition: inline; filename="' . $fileName . '"');
+          header('Content-Length: ' . strlen($data));
+          header('Cache-Control: no-cache');
+          echo $data; exit();
+        } else {
+          http_response_code(400); echo 'Format data URI gzip tidak valid.'; exit();
+        }
       } else {
-        http_response_code(400); echo 'Format data URI tidak valid.'; exit();
+        // Format lama: data:application/pdf;base64,<base64>
+        if (preg_match('#^data:([^;]+);base64,(.+)$#', $filePathDb, $m)) {
+          $mime = $m[1];
+          $b64 = $m[2];
+          $data = base64_decode($b64);
+          if ($data === false) { http_response_code(500); echo 'Gagal decode data.'; exit(); }
+          header('Content-Type: ' . $mime);
+          header('Content-Disposition: inline; filename="' . $fileName . '"');
+          header('Content-Length: ' . strlen($data));
+          header('Cache-Control: no-cache');
+          echo $data; exit();
+        } else {
+          http_response_code(400); echo 'Format data URI tidak valid.'; exit();
+        }
       }
     }
 

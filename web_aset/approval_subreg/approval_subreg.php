@@ -539,100 +539,109 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         if ($file_data === false) {
             $_SESSION['warning_message'] = "Gagal membaca file upload.";
         } else {
-            // Encode file ke base64 untuk disimpan di database
-            $base64 = base64_encode($file_data);
-            $file_path = 'data:application/pdf;base64,' . $base64;
-            // Simpan nama file asli untuk display
-            $new_filename = basename($file['name']);
-            
-            // Split usulan IDs jika multiple
-            $ids = explode(',', $usulan_ids);
-            $success_count = 0;
-            $all_nomor_assets = [];
-            $first_id = null;
-            $first_usulan_data = null;
-            
-            // Kumpulkan semua nomor aset dari usulan yang dipilih
-            foreach ($ids as $id) {
-                $id = trim($id);
-                if (empty($id)) continue;
+            // Compress file dengan gzip untuk mengurangi ukuran
+            $compressed_data = @gzencode($file_data, 9);
+            if ($compressed_data === false) {
+                $_SESSION['warning_message'] = "Gagal kompres file!";
+            } else {
+                // Encode compressed file ke base64 untuk disimpan di database
+                $base64 = base64_encode($compressed_data);
+                $file_path = 'data:application/pdf;base64;gzip,' . $base64;
+                // Simpan nama file asli untuk display
+                $new_filename = basename($file['name']);
                 
-                // Get usulan data
-                $query = "SELECT nomor_asset_utama, profit_center, subreg FROM usulan_penghapusan WHERE id = ?";
-                $stmt = $con->prepare($query);
-                $stmt->bind_param("i", $id);
-                $stmt->execute();
-                $result = $stmt->get_result();
+                // Split usulan IDs jika multiple
+                $ids = explode(',', $usulan_ids);
+                $success_count = 0;
+                $all_nomor_assets = [];
+                $first_id = null;
+                $first_usulan_data = null;
                 
-                if ($result->num_rows > 0) {
-                    $usulan = $result->fetch_assoc();
-                    $all_nomor_assets[] = $usulan['nomor_asset_utama'];
+                // Kumpulkan semua nomor aset dari usulan yang dipilih
+                foreach ($ids as $id) {
+                    $id = trim($id);
+                    if (empty($id)) continue;
                     
-                    // Simpan data dari aset pertama untuk insert dokumen
-                    if ($first_id === null) {
-                        $first_id = $id;
-                        $first_usulan_data = $usulan;
+                    // Get usulan data
+                    $query = "SELECT nomor_asset_utama, profit_center, subreg FROM usulan_penghapusan WHERE id = ?";
+                    $stmt = $con->prepare($query);
+                    $stmt->bind_param("i", $id);
+                    $stmt->execute();
+                    $result = $stmt->get_result();
+                    
+                    if ($result->num_rows > 0) {
+                        $usulan = $result->fetch_assoc();
+                        $all_nomor_assets[] = $usulan['nomor_asset_utama'];
+                        
+                        // Simpan data dari aset pertama untuk insert dokumen
+                        if ($first_id === null) {
+                            $first_id = $id;
+                            $first_usulan_data = $usulan;
+                        }
+                    }
+                    $stmt->close();
+                }
+                
+                // Insert 1 dokumen dengan semua nomor aset yang digabung
+                if ($first_id !== null && !empty($all_nomor_assets)) {
+                    $type_user = isset($_SESSION['Type_User']) ? $_SESSION['Type_User'] : '';
+                    $profit_center_text = '';
+                    $subreg = $first_usulan_data['subreg'];
+                    
+                    // Get profit_center_text dan subreg dari session user (yang upload) berdasarkan userProfitCenter
+                    $qimp = $con->prepare("SELECT profit_center_text, subreg FROM import_dat WHERE profit_center = ? LIMIT 1");
+                    if ($qimp) {
+                      $qimp->bind_param("s", $userProfitCenter);
+                      $qimp->execute();
+                      $rimp = $qimp->get_result();
+                      if ($rimp && $rimp->num_rows > 0) {
+                        $rowimp = $rimp->fetch_assoc();
+                        $profit_center_text = $rowimp['profit_center_text'];
+                        // Gunakan subreg dari session user juga
+                        $subreg = $rowimp['subreg'];
+                      }
+                      $qimp->close();
+                    }
+
+                    // Gabungkan semua nomor aset dengan semicolon
+                    $combined_nomor_assets = implode(';', $all_nomor_assets);
+                    
+                    // Simpan compressed size di database
+                    $compressed_size = strlen($compressed_data);
+                    
+                    // Insert 1 dokumen dengan semua nomor aset
+                    $insert_query = "INSERT INTO dokumen_penghapusan 
+                             (usulan_id, tahun_dokumen, tipe_dokumen, no_aset, subreg, profit_center, profit_center_text, type_user, nipp, file_name, file_path, file_size) 
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                    $stmt_insert = $con->prepare($insert_query);
+                    if ($stmt_insert) {
+                      $stmt_insert->bind_param("iisssssssssi",
+                        $first_id,
+                        $tahun_dokumen,
+                        $tipe_dokumen,
+                        $combined_nomor_assets,
+                        $subreg,
+                        $userProfitCenter,
+                        $profit_center_text,
+                        $type_user,
+                        $nipp,
+                        $new_filename,
+                        $file_path,
+                        $compressed_size
+                      );
+
+                      if ($stmt_insert->execute()) {
+                        $success_count = 1;
+                      }
+                      $stmt_insert->close();
                     }
                 }
-                $stmt->close();
-            }
-            
-            // Insert 1 dokumen dengan semua nomor aset yang digabung
-            if ($first_id !== null && !empty($all_nomor_assets)) {
-                $type_user = isset($_SESSION['Type_User']) ? $_SESSION['Type_User'] : '';
-                $profit_center_text = '';
-                $subreg = $first_usulan_data['subreg'];
                 
-                // Get profit_center_text dan subreg dari session user (yang upload) berdasarkan userProfitCenter
-                $qimp = $con->prepare("SELECT profit_center_text, subreg FROM import_dat WHERE profit_center = ? LIMIT 1");
-                if ($qimp) {
-                  $qimp->bind_param("s", $userProfitCenter);
-                  $qimp->execute();
-                  $rimp = $qimp->get_result();
-                  if ($rimp && $rimp->num_rows > 0) {
-                    $rowimp = $rimp->fetch_assoc();
-                    $profit_center_text = $rowimp['profit_center_text'];
-                    // Gunakan subreg dari session user juga
-                    $subreg = $rowimp['subreg'];
-                  }
-                  $qimp->close();
+                if ($success_count > 0) {
+                    $_SESSION['success_message'] = "✅ Berhasil upload dokumen!";
+                } else {
+                    $_SESSION['warning_message'] = "Gagal menyimpan dokumen ke database!";
                 }
-
-                // Gabungkan semua nomor aset dengan semicolon
-                $combined_nomor_assets = implode(';', $all_nomor_assets);
-                
-                // Insert 1 dokumen dengan semua nomor aset
-                $insert_query = "INSERT INTO dokumen_penghapusan 
-                         (usulan_id, tahun_dokumen, tipe_dokumen, no_aset, subreg, profit_center, profit_center_text, type_user, nipp, file_name, file_path, file_size) 
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-                $stmt_insert = $con->prepare($insert_query);
-                if ($stmt_insert) {
-                  $stmt_insert->bind_param("iisssssssssi",
-                    $first_id,
-                    $tahun_dokumen,
-                    $tipe_dokumen,
-                    $combined_nomor_assets,
-                    $subreg,
-                    $userProfitCenter,
-                    $profit_center_text,
-                    $type_user,
-                    $nipp,
-                    $new_filename,
-                    $file_path,
-                    $file['size']
-                  );
-
-                  if ($stmt_insert->execute()) {
-                    $success_count = 1;
-                  }
-                  $stmt_insert->close();
-                }
-            }
-            
-            if ($success_count > 0) {
-                $_SESSION['success_message'] = "✅ Berhasil upload dokumen!";
-            } else {
-                $_SESSION['warning_message'] = "Gagal menyimpan dokumen ke database!";
             }
         }
     }
@@ -814,7 +823,182 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
 
 
 // ========================================================
-// AJAX HANDLER: GET Detail Aset by nomor_asset_utama
+// HANDLER GET: View / Download Dokumen (support gzip & base64)
+// ========================================================
+if (isset($_GET['action']) && $_GET['action'] === 'view_dokumen' && isset($_GET['id_dok'])) {
+    $id_dok = intval($_GET['id_dok']);
+    $nipp_sess = trim((string)($_SESSION['nipp'] ?? ''));
+    $typeUser = (string)($_SESSION['Type_User'] ?? '');
+    $sessionCabang = trim($_SESSION['Cabang'] ?? '');
+
+    $q = $con->prepare("SELECT file_path, file_name, nipp, subreg, profit_center FROM dokumen_penghapusan WHERE id_dokumen = ? LIMIT 1");
+    $q->bind_param("i", $id_dok);
+    $q->execute();
+    $res = $q->get_result();
+    if (!$res || $res->num_rows === 0) {
+        http_response_code(404);
+        echo 'Dokumen tidak ditemukan.';
+        exit();
+    }
+    $dok = $res->fetch_assoc();
+
+    // Check permissions
+    $isOwner = (trim((string)$dok['nipp']) === $nipp_sess);
+    $isApprover = stripos($typeUser, 'Sub Regional') !== false || stripos($typeUser, 'Cabang') !== false;
+
+    $canView = false;
+    if ($isOwner || $isApprover) {
+        $canView = true;
+    }
+
+    if (!$canView) {
+        http_response_code(403);
+        echo 'Akses ditolak.';
+        exit();
+    }
+
+    $filePathDb = $dok['file_path'] ?? '';
+    $fileName = !empty($dok['file_name']) ? basename($dok['file_name']) : 'dokumen.pdf';
+
+    // Check if file_path is gzip-compressed data URI
+    if (!empty($filePathDb) && strpos($filePathDb, 'data:') === 0) {
+        // Check if gzip-compressed
+        if (strpos($filePathDb, ';gzip,') !== false) {
+            // Format: data:application/pdf;base64;gzip,<compressed_base64>
+            if (preg_match('#^data:([^;]+);base64;gzip,(.+)$#', $filePathDb, $m)) {
+                $mime = $m[1];
+                $b64_compressed = $m[2];
+                $compressed_data = base64_decode($b64_compressed, true);
+                if ($compressed_data === false) {
+                    http_response_code(500);
+                    echo 'Gagal decode data.';
+                    exit();
+                }
+
+                // Decompress gzip
+                $data = @gzdecode($compressed_data);
+                if ($data === false) {
+                    http_response_code(500);
+                    echo 'Gagal decompress data.';
+                    exit();
+                }
+
+                header('Content-Type: ' . $mime);
+                header('Content-Disposition: inline; filename="' . $fileName . '"');
+                header('Content-Length: ' . strlen($data));
+                header('Cache-Control: no-cache');
+                echo $data;
+                exit();
+            }
+        } else {
+            // Format lama: data:application/pdf;base64,<base64>
+            if (preg_match('#^data:([^;]+);base64,(.+)$#', $filePathDb, $m)) {
+                $mime = $m[1];
+                $b64 = $m[2];
+                $data = base64_decode($b64, true);
+                if ($data === false) {
+                    http_response_code(500);
+                    echo 'Gagal decode data.';
+                    exit();
+                }
+                header('Content-Type: ' . $mime);
+                header('Content-Disposition: inline; filename="' . $fileName . '"');
+                header('Content-Length: ' . strlen($data));
+                header('Cache-Control: no-cache');
+                echo $data;
+                exit();
+            }
+        }
+    }
+
+    http_response_code(404);
+    echo 'Format dokumen tidak didukung.';
+    exit();
+}
+
+// ========================================================
+// HANDLER GET: Download Dokumen (same as view_dokumen)
+// ========================================================
+if (isset($_GET['action']) && $_GET['action'] === 'download_dokumen' && isset($_GET['id'])) {
+    $id_dok = intval($_GET['id']);
+    $nipp_sess = trim((string)($_SESSION['nipp'] ?? ''));
+    $typeUser = (string)($_SESSION['Type_User'] ?? '');
+
+    $q = $con->prepare("SELECT file_path, file_name, nipp FROM dokumen_penghapusan WHERE id_dokumen = ? LIMIT 1");
+    $q->bind_param("i", $id_dok);
+    $q->execute();
+    $res = $q->get_result();
+    if (!$res || $res->num_rows === 0) {
+        http_response_code(404);
+        echo 'Dokumen tidak ditemukan.';
+        exit();
+    }
+    $dok = $res->fetch_assoc();
+
+    // Check permissions (owner or approver)
+    $isOwner = (trim((string)$dok['nipp']) === $nipp_sess);
+    $isApprover = stripos($typeUser, 'Sub Regional') !== false || stripos($typeUser, 'Cabang') !== false;
+    $canView = $isOwner || $isApprover;
+
+    if (!$canView) {
+        http_response_code(403);
+        echo 'Akses ditolak.';
+        exit();
+    }
+
+    $filePathDb = $dok['file_path'] ?? '';
+    $fileName = !empty($dok['file_name']) ? basename($dok['file_name']) : 'dokumen.pdf';
+
+    if (!empty($filePathDb) && strpos($filePathDb, 'data:') === 0) {
+        // Same logic as view_dokumen
+        if (strpos($filePathDb, ';gzip,') !== false) {
+            if (preg_match('#^data:([^;]+);base64;gzip,(.+)$#', $filePathDb, $m)) {
+                $mime = $m[1];
+                $b64_compressed = $m[2];
+                $compressed_data = base64_decode($b64_compressed, true);
+                if ($compressed_data === false) {
+                    http_response_code(500);
+                    echo 'Gagal decode data.';
+                    exit();
+                }
+                $data = @gzdecode($compressed_data);
+                if ($data === false) {
+                    http_response_code(500);
+                    echo 'Gagal decompress data.';
+                    exit();
+                }
+                header('Content-Type: application/pdf');
+                header('Content-Disposition: attachment; filename="' . $fileName . '"');
+                header('Content-Length: ' . strlen($data));
+                echo $data;
+                exit();
+            }
+        } else {
+            if (preg_match('#^data:([^;]+);base64,(.+)$#', $filePathDb, $m)) {
+                $mime = $m[1];
+                $b64 = $m[2];
+                $data = base64_decode($b64, true);
+                if ($data === false) {
+                    http_response_code(500);
+                    echo 'Gagal decode data.';
+                    exit();
+                }
+                header('Content-Type: application/pdf');
+                header('Content-Disposition: attachment; filename="' . $fileName . '"');
+                header('Content-Length: ' . strlen($data));
+                echo $data;
+                exit();
+            }
+        }
+    }
+
+    http_response_code(404);
+    echo 'Dokumen tidak dapat diakses.';
+    exit();
+}
+
+// ========================================================
+// AJAX: Get Detail Aset by nomor_asset_utama
 // ========================================================
 if (isset($_GET['action']) && $_GET['action'] === 'get_detail_aset' && isset($_GET['no_aset'])) {
     header('Content-Type: application/json');
@@ -863,6 +1047,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'get_detail_aset' && isset($_G
     echo json_encode(['status' => 'success', 'data' => $rows_da]);
     exit();
 }
+
 
 // ========================================================
 // AJAX: Get dokumen uploaded for a usulan
@@ -1810,7 +1995,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                             <button type="button"
                                                     class="btn btn-sm btn-outline-secondary"
                                                     style="margin-right: 4px; font-size: 0.8rem; padding: 2px 8px;"
-                                                    onclick="openDokumen(<?= $dok['id_dokumen'] ?>, '<?= htmlspecialchars($_SERVER['PHP_SELF'] . '?action=download_dokumen&id=' . $dok['id_dokumen']) ?>')">
+                                                    onclick="openDokumen(<?= $dok['id_dokumen'] ?>, '<?= htmlspecialchars($_SERVER['PHP_SELF'] . '?action=view_dokumen&id_dok=' . $dok['id_dokumen']) ?>')">
                                               Lihat Dokumen
                                             </button>
                                             <!-- Detail Aset -->
@@ -2672,6 +2857,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
               const titleEl = modalEl ? modalEl.querySelector('.modal-title') : null;
               
               if (!iframe || !modalEl) {
+                  // Fallback to direct download
                   if (downloadUrl) window.open(downloadUrl, '_blank');
                   return;
               }
@@ -2680,12 +2866,13 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
               iframe.src = '';
               if (titleEl) titleEl.textContent = 'Memuat dokumen...';
 
-              // Gunakan download URL yang sudah disiapkan
+              // Gunakan download URL untuk view dokumen
               let src = '';
               if (downloadUrl && downloadUrl.length > 0) {
-                  src = downloadUrl;
+                  // Replace action=download_dokumen dengan action=view_dokumen
+                  src = downloadUrl.replace('action=download_dokumen', 'action=view_dokumen');
               } else if (dokumenId && parseInt(dokumenId) > 0) {
-                  src = window.location.pathname + '?action=download_dokumen&id=' + encodeURIComponent(dokumenId);
+                  src = window.location.pathname + '?action=view_dokumen&id_dok=' + encodeURIComponent(dokumenId);
               }
 
               if (!src) {

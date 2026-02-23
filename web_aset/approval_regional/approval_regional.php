@@ -500,27 +500,58 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && $_POST['action'] === 'delete_draft')
       $res = $stmt->get_result();
       if ($row = $res->fetch_assoc()) {
         $name = $row['file_name'] ?? 'dokumen.pdf';
-        $file_path = $row['file_path'] ?? '';
+        $file_path_db = $row['file_path'] ?? '';
         
-        // If file_path is a data URI (base64), extract and decode
-        if (strpos($file_path, 'data:') === 0) {
-          // Format: data:application/pdf;base64,<base64data>
-          $parts = explode(',', $file_path, 2);
-          $base64 = isset($parts[1]) ? $parts[1] : '';
-        } else {
-          // Legacy: stored as plain base64
-          $base64 = $file_path;
-        }
-        
-        if ($base64 !== '') {
-          $bin = base64_decode($base64);
-          if ($bin !== false) {
-            header('Content-Description: File Transfer');
-            header('Content-Type: application/pdf');
-            header('Content-Disposition: inline; filename="' . basename($name) . '"');
-            header('Content-Length: ' . strlen($bin));
-            echo $bin;
-            exit();
+        // Check if file_path is gzip-compressed data URI
+        if (!empty($file_path_db) && strpos($file_path_db, 'data:') === 0) {
+          // Check if gzip-compressed
+          if (strpos($file_path_db, ';gzip,') !== false) {
+            // Format: data:application/pdf;base64;gzip,<compressed_base64>
+            if (preg_match('#^data:([^;]+);base64;gzip,(.+)$#', $file_path_db, $m)) {
+              $mime = $m[1];
+              $b64_compressed = $m[2];
+              $compressed_data = base64_decode($b64_compressed, true);
+              if ($compressed_data === false) {
+                http_response_code(500);
+                echo 'Gagal decode data.';
+                exit();
+              }
+
+              // Decompress gzip
+              $data = @gzdecode($compressed_data);
+              if ($data === false) {
+                http_response_code(500);
+                echo 'Gagal decompress data.';
+                exit();
+              }
+
+              header('Content-Description: File Transfer');
+              header('Content-Type: ' . $mime);
+              header('Content-Disposition: inline; filename="' . basename($name) . '"');
+              header('Content-Length: ' . strlen($data));
+              header('Cache-Control: no-cache');
+              echo $data;
+              exit();
+            }
+          } else {
+            // Format lama: data:application/pdf;base64,<base64>
+            if (preg_match('#^data:([^;]+);base64,(.+)$#', $file_path_db, $m)) {
+              $mime = $m[1];
+              $b64 = $m[2];
+              $data = base64_decode($b64, true);
+              if ($data === false) {
+                http_response_code(500);
+                echo 'Gagal decode data.';
+                exit();
+              }
+              header('Content-Description: File Transfer');
+              header('Content-Type: ' . $mime);
+              header('Content-Disposition: inline; filename="' . basename($name) . '"');
+              header('Content-Length: ' . strlen($data));
+              header('Cache-Control: no-cache');
+              echo $data;
+              exit();
+            }
           }
         }
       }
@@ -617,9 +648,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         exit();
       }
 
-      // Encode file ke base64 untuk disimpan di database (sama seperti approval_subreg)
-      $base64 = base64_encode($file_data);
-      $file_path = 'data:application/pdf;base64,' . $base64;
+      // Compress dengan GZIP untuk mengurangi ukuran file di database
+      $compressed_data = @gzencode($file_data, 9);
+      if ($compressed_data === false) {
+        $_SESSION['warning_message'] = "Gagal mengompres file dokumen.";
+        header("Location: " . $_SERVER['PHP_SELF'] . "#upload");
+        exit();
+      }
+
+      // Encode file ke base64 untuk disimpan di database
+      $base64 = base64_encode($compressed_data);
+      $file_path = 'data:application/pdf;base64;gzip,' . $base64;
       
       // Simpan nama file asli untuk display
       $new_filename = basename($file['name']);
@@ -680,6 +719,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
               $stmt_insert = $con->prepare($insert_query);
               if ($stmt_insert) {
                 // bind: int, int, string x8, string, string, int
+                $compressed_size = strlen($compressed_data);
                 $bind_result = $stmt_insert->bind_param("iisssssssssi",
                   $first_usulan_id,
                   $tahun_dokumen,
@@ -692,7 +732,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
                   $nipp,
                   $new_filename,
                   $file_path,
-                  $file['size']
+                  $compressed_size
                 );
 
                 if (!$bind_result) {
