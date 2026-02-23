@@ -452,7 +452,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         $_SESSION['success_message'] = "⚠️ Gagal menghapus usulan.";
     }
     $del->close();
-    header("Location: " . $_SERVER['PHP_SELF'] . "#lengkapi");
+    header("Location: " . $_SERVER['PHP_SELF'] . "#dokumen");
     exit();
 }
 
