@@ -2865,13 +2865,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                   </ul> -->
                                 </div>
                               </div>
-                            </div>
-                          </div>
-                        </div>
-                        <!-- End Tab Summary -->
-                      
-                    <!-- End Tab Content -->  
-                  
+                          
                </div> <!-- End card-body -->
              <!--end::Row-->
            </div>
