@@ -151,7 +151,7 @@ $query_regional_pending = "SELECT up.*,
            id.profit_center_text
            FROM usulan_penghapusan up 
            LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama 
-           WHERE (COALESCE(up.status_approval_subreg, '') LIKE 'approved%' OR up.status = 'approved')
+          WHERE COALESCE(up.status_approval_subreg, '') LIKE 'approved%'
            AND COALESCE(up.status_approval_regional, 'pending') = 'pending'";
 
 // Jika kita punya informasi profit center (cabang) dari session, batasi hasil ke profit_center/subreg terkait
@@ -179,8 +179,8 @@ $stmt_regional->close();
 
 // If scoped query returned nothing, try a fallback unscoped query to check data presence
 $regional_fallback_used = false;
-if (empty($regional_pending_data)) {
-  $fallback_sql = "SELECT up.*, id.keterangan_asset as nama_aset, id.asset_class_name as kategori_aset, id.subreg, id.profit_center_text FROM usulan_penghapusan up LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama WHERE (COALESCE(up.status_approval_subreg, '') LIKE 'approved%' OR up.status = 'approved') AND COALESCE(up.status_approval_regional, 'pending') = 'pending' ORDER BY up.created_at DESC";
+  if (empty($regional_pending_data)) {
+  $fallback_sql = "SELECT up.*, id.keterangan_asset as nama_aset, id.asset_class_name as kategori_aset, id.subreg, id.profit_center_text FROM usulan_penghapusan up LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama WHERE COALESCE(up.status_approval_subreg, '') LIKE 'approved%' AND COALESCE(up.status_approval_regional, 'pending') = 'pending' ORDER BY up.created_at DESC";
   $res_fb = mysqli_query($con, $fallback_sql);
   if ($res_fb && mysqli_num_rows($res_fb) > 0) {
     $regional_fallback_used = true;
@@ -197,7 +197,7 @@ if (empty($regional_pending_data)) {
 // Query untuk data Upload Dokumen (HANYA approval regional yang pending)
 // ========================================================
 // Upload listing for Regional: show usulan that passed SubReg approval and awaiting Regional approval
-$uploadWhereClause = "WHERE (COALESCE(up.status_approval_subreg, '') LIKE 'approved%' OR up.status = 'approved') AND COALESCE(up.status_approval_regional, 'pending') = 'pending'";
+$uploadWhereClause = "WHERE COALESCE(up.status_approval_subreg, '') LIKE 'approved%' AND COALESCE(up.status_approval_regional, 'pending') = 'pending'";
 // If we have a profit center in session, scope to that profit center / subreg
 if (!empty($userProfitCenter)) {
   $uploadWhereClause .= " AND (id.profit_center = ? OR id.subreg LIKE ?)";
@@ -233,8 +233,8 @@ while ($row = $result_upload->fetch_assoc()) {
 $stmt_upload->close();
 
 // If upload_data is empty but regional listing used fallback, try unscoped fallback for upload list as well
-if (empty($upload_data) && !empty($regional_fallback_used)) {
-  $fallback_upload_sql = "SELECT DISTINCT up.id, up.*, id.keterangan_asset as nama_aset, id.profit_center_text, id.subreg, (SELECT COUNT(*) FROM dokumen_penghapusan WHERE usulan_id = up.id) as jumlah_dokumen FROM usulan_penghapusan up LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama WHERE (COALESCE(up.status_approval_subreg, '') LIKE 'approved%' OR up.status = 'approved') AND COALESCE(up.status_approval_regional, 'pending') = 'pending' ORDER BY up.updated_at DESC";
+  if (empty($upload_data) && !empty($regional_fallback_used)) {
+  $fallback_upload_sql = "SELECT DISTINCT up.id, up.*, id.keterangan_asset as nama_aset, id.profit_center_text, id.subreg, (SELECT COUNT(*) FROM dokumen_penghapusan WHERE usulan_id = up.id) as jumlah_dokumen FROM usulan_penghapusan up LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama WHERE COALESCE(up.status_approval_subreg, '') LIKE 'approved%' AND COALESCE(up.status_approval_regional, 'pending') = 'pending' ORDER BY up.updated_at DESC";
   $res_fu = mysqli_query($con, $fallback_upload_sql);
   if ($res_fu) {
     while ($r = mysqli_fetch_assoc($res_fu)) {
@@ -250,7 +250,7 @@ $count_pending = 0;
 $count_approved = 0;
 $count_rejected = 0;
 // Build counts using same logic as listing: accept approved variants or status = 'approved'
-$count_sql_base = "SELECT COALESCE(up.status_approval_regional, 'pending') AS status_key, COUNT(*) AS cnt FROM usulan_penghapusan up LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama WHERE (COALESCE(up.status_approval_subreg, '') LIKE 'approved%' OR up.status = 'approved')";
+$count_sql_base = "SELECT COALESCE(up.status_approval_regional, 'pending') AS status_key, COUNT(*) AS cnt FROM usulan_penghapusan up LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama WHERE COALESCE(up.status_approval_subreg, '') LIKE 'approved%'";
 if (!empty($regional_fallback_used)) {
   // Fallback used: compute counts without scoping so counts match displayed fallback rows
   $count_sql = $count_sql_base . " GROUP BY COALESCE(up.status_approval_regional, 'pending')";
@@ -488,6 +488,49 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && $_POST['action'] === 'delete_draft')
     exit();
 }
 
+  // ========================================================
+  // HANDLER: Download Dokumen (serve from DB blob)
+  // ========================================================
+  if (isset($_GET['action']) && $_GET['action'] === 'download_dokumen' && isset($_GET['id'])) {
+    $id = intval($_GET['id']);
+    $stmt = $con->prepare("SELECT file_name, file_path FROM dokumen_penghapusan WHERE id_dokumen = ? LIMIT 1");
+    if ($stmt) {
+      $stmt->bind_param("i", $id);
+      $stmt->execute();
+      $res = $stmt->get_result();
+      if ($row = $res->fetch_assoc()) {
+        $name = $row['file_name'] ?? 'dokumen.pdf';
+        $file_path = $row['file_path'] ?? '';
+        
+        // If file_path is a data URI (base64), extract and decode
+        if (strpos($file_path, 'data:') === 0) {
+          // Format: data:application/pdf;base64,<base64data>
+          $parts = explode(',', $file_path, 2);
+          $base64 = isset($parts[1]) ? $parts[1] : '';
+        } else {
+          // Legacy: stored as plain base64
+          $base64 = $file_path;
+        }
+        
+        if ($base64 !== '') {
+          $bin = base64_decode($base64);
+          if ($bin !== false) {
+            header('Content-Description: File Transfer');
+            header('Content-Type: application/pdf');
+            header('Content-Disposition: inline; filename="' . basename($name) . '"');
+            header('Content-Length: ' . strlen($bin));
+            echo $bin;
+            exit();
+          }
+        }
+      }
+      $stmt->close();
+    }
+    http_response_code(404);
+    echo 'Dokumen tidak ditemukan';
+    exit();
+  }
+
 // Handle cancel draft dari tombol di tabel (sama dengan delete_draft tapi dengan pesan berbeda)
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] === 'cancel_draft') {
     $draft_id = intval($_POST['draft_id']);
@@ -532,46 +575,78 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
     $tipe_dokumen = $_POST['tipe_dokumen'];
     $nipp = $_SESSION['nipp'];
     
-    // Handle file upload
+    // Validasi input tidak kosong
+    if (empty($usulan_ids) || empty($tahun_dokumen) || empty($tipe_dokumen)) {
+      $_SESSION['warning_message'] = "Semua field harus diisi!";
+      header("Location: " . $_SERVER['PHP_SELF'] . "#upload");
+      exit();
+    }
+    
+    // Handle file upload (store file content in DB only)
     if (isset($_FILES['file_dokumen']) && $_FILES['file_dokumen']['error'] === UPLOAD_ERR_OK) {
-        $file = $_FILES['file_dokumen'];
-        $upload_dir = '../../uploads/dokumen_penghapusan/';
-        
-        if (!file_exists($upload_dir)) {
-            mkdir($upload_dir, 0777, true);
-        }
-        
-        // Validate file
-        $allowed_ext = ['pdf'];
-        $file_ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
-        
-        if (!in_array($file_ext, $allowed_ext)) {
-            $_SESSION['warning_message'] = "Format file harus PDF!";
-            header("Location: " . $_SERVER['PHP_SELF'] . "#upload");
-            exit();
-        }
-        
-        if ($file['size'] > 5 * 1024 * 1024) {
-            $_SESSION['warning_message'] = "Ukuran file maksimal 5MB!";
-            header("Location: " . $_SERVER['PHP_SELF'] . "#upload");
-            exit();
-        }
-        
-        // Generate filename
-        $new_filename = 'DOK_' . date('YmdHis') . '_' . uniqid() . '.pdf';
-        $file_path = $upload_dir . $new_filename;
-        
-        if (move_uploaded_file($file['tmp_name'], $file_path)) {
+      $file = $_FILES['file_dokumen'];
+
+      // Validate file
+      $allowed_ext = ['pdf'];
+      $file_ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+
+      if (!in_array($file_ext, $allowed_ext)) {
+        $_SESSION['warning_message'] = "Format file harus PDF!";
+        header("Location: " . $_SERVER['PHP_SELF'] . "#upload");
+        exit();
+      }
+
+      if ($file['size'] > 5 * 1024 * 1024) {
+        $_SESSION['warning_message'] = "Ukuran file maksimal 5MB!";
+        header("Location: " . $_SERVER['PHP_SELF'] . "#upload");
+        exit();
+      }
+
+      // Read file content into memory untuk disimpan di database
+      $file_data = @file_get_contents($file['tmp_name']);
+      if ($file_data === false) {
+        $_SESSION['warning_message'] = "Gagal membaca file upload.";
+        header("Location: " . $_SERVER['PHP_SELF'] . "#upload");
+        exit();
+      }
+
+      // Validasi file_content tidak kosong
+      if (empty($file_data)) {
+        $_SESSION['warning_message'] = "File dokumen kosong, tidak dapat diupload!";
+        header("Location: " . $_SERVER['PHP_SELF'] . "#upload");
+        exit();
+      }
+
+      // Encode file ke base64 untuk disimpan di database (sama seperti approval_subreg)
+      $base64 = base64_encode($file_data);
+      $file_path = 'data:application/pdf;base64,' . $base64;
+      
+      // Simpan nama file asli untuk display
+      $new_filename = basename($file['name']);
+
+      // Proceed to associate the uploaded data with selected usulan
+      if (true) {
             // Split usulan IDs jika multiple
             $ids = explode(',', $usulan_ids);
-            $success_count = 0;
+            $ids = array_map('trim', array_filter($ids));
+            
+            if (empty($ids)) {
+                $_SESSION['warning_message'] = "Tidak ada usulan yang dipilih!";
+                header("Location: " . $_SERVER['PHP_SELF'] . "#upload");
+                exit();
+            }
+            
+            // Collect all nomor_asset_utama from selected usulan
+            $combined_nomor_assets = [];
+            $first_usulan_id = $ids[0];
+            $subreg = '';
             
             foreach ($ids as $id) {
-                $id = trim($id);
-                if (empty($id)) continue;
+                $id = intval($id);
+                if ($id <= 0) continue;
                 
                 // Get usulan data
-                $query = "SELECT nomor_asset_utama, profit_center, subreg FROM usulan_penghapusan WHERE id = ?";
+                $query = "SELECT nomor_asset_utama, subreg FROM usulan_penghapusan WHERE id = ?";
                 $stmt = $con->prepare($query);
                 $stmt->bind_param("i", $id);
                 $stmt->execute();
@@ -579,65 +654,64 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
                 
                 if ($result->num_rows > 0) {
                     $usulan = $result->fetch_assoc();
+                    $combined_nomor_assets[] = $usulan['nomor_asset_utama'];
                     
-                    // Prepare additional metadata and insert dokumen for setiap aset
-                    $type_user = isset($_SESSION['Type_User']) ? $_SESSION['Type_User'] : '';
-                    $profit_center_text = '';
-                    if (!empty($usulan['nomor_asset_utama'])) {
-                      $qimp = $con->prepare("SELECT profit_center_text, subreg FROM import_dat WHERE nomor_asset_utama = ? LIMIT 1");
-                      if ($qimp) {
-                        $qimp->bind_param("s", $usulan['nomor_asset_utama']);
-                        $qimp->execute();
-                        $rimp = $qimp->get_result();
-                        if ($rimp && $rimp->num_rows > 0) {
-                          $rowimp = $rimp->fetch_assoc();
-                          $profit_center_text = $rowimp['profit_center_text'];
-                          if (empty($usulan['subreg'])) {
-                            $usulan['subreg'] = $rowimp['subreg'];
-                          }
-                        }
-                        $qimp->close();
-                      }
-                    }
-
-                    // Insert dokumen untuk setiap aset, termasuk profit_center_text dan type_user
-                    $insert_query = "INSERT INTO dokumen_penghapusan 
-                             (usulan_id, tahun_dokumen, tipe_dokumen, no_aset, subreg, profit_center, profit_center_text, type_user, nipp, file_name, file_path, file_size) 
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-                    $stmt_insert = $con->prepare($insert_query);
-                    if ($stmt_insert) {
-                      $stmt_insert->bind_param("iisssssssssi",
-                        $id,
-                        $tahun_dokumen,
-                        $tipe_dokumen,
-                        $usulan['nomor_asset_utama'],
-                        $usulan['subreg'],
-                        $usulan['profit_center'],
-                        $profit_center_text,
-                        $type_user,
-                        $nipp,
-                        $new_filename,
-                        $file_path,
-                        $file['size']
-                      );
-
-                      if ($stmt_insert->execute()) {
-                        $success_count++;
-                      }
-                      $stmt_insert->close();
+                    // Store subreg dari first usulan
+                    if (empty($subreg)) {
+                        $subreg = $usulan['subreg'] ?? '';
                     }
                 }
                 $stmt->close();
             }
             
-            if ($success_count > 0) {
-                $_SESSION['success_message'] = "✅ Berhasil upload dokumen untuk " . $success_count . " aset!";
+            // Gabung semua nomor aset dengan semicolon
+            $combined_no_aset = implode(';', $combined_nomor_assets);
+            
+            // Insert 1 dokumen untuk semua aset yang dipilih (store file content in file_path column)
+            if (!empty($combined_no_aset)) {
+              // Use session user's profit_center and profit_center_text (KANTOR PUSAT / CABANG USER)
+              $profit_center = isset($_SESSION['Cabang']) ? $_SESSION['Cabang'] : '';
+              $profit_center_text = isset($_SESSION['profit_center_text']) ? $_SESSION['profit_center_text'] : '';
+              $type_user = isset($_SESSION['Type_User']) ? $_SESSION['Type_User'] : '';
+              
+              $insert_query = "INSERT INTO dokumen_penghapusan 
+                   (usulan_id, tahun_dokumen, tipe_dokumen, no_aset, subreg, profit_center, profit_center_text, type_user, nipp, file_name, file_path, file_size) 
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+              $stmt_insert = $con->prepare($insert_query);
+              if ($stmt_insert) {
+                // bind: int, int, string x8, string, string, int
+                $bind_result = $stmt_insert->bind_param("iisssssssssi",
+                  $first_usulan_id,
+                  $tahun_dokumen,
+                  $tipe_dokumen,
+                  $combined_no_aset,
+                  $subreg,
+                  $profit_center,
+                  $profit_center_text,
+                  $type_user,
+                  $nipp,
+                  $new_filename,
+                  $file_path,
+                  $file['size']
+                );
+
+                if (!$bind_result) {
+                  $_SESSION['warning_message'] = "Error bind parameter: " . $stmt_insert->error;
+                } elseif ($stmt_insert->execute()) {
+                  $_SESSION['success_message'] = "✅ Berhasil upload dokumen untuk " . count($ids) . " aset!";
+                } else {
+                  $_SESSION['warning_message'] = "Gagal menyimpan dokumen ke database: " . $stmt_insert->error;
+                }
+                $stmt_insert->close();
+              } else {
+                $_SESSION['warning_message'] = "Gagal menyiapkan query database: " . $con->error;
+              }
             } else {
-                $_SESSION['warning_message'] = "Gagal menyimpan dokumen ke database!";
+              $_SESSION['warning_message'] = "Tidak ada aset yang ditemukan untuk usulan yang dipilih!";
             }
-        } else {
-            $_SESSION['warning_message'] = "Gagal upload file!";
-        }
+          }
+    } else {
+      $_SESSION['warning_message'] = "Tidak ada file yang dipilih atau upload gagal!";
     }
     
     header("Location: " . $_SERVER['PHP_SELF'] . "#upload");
@@ -649,40 +723,73 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] === 'delete_dokumen') {
     $dokumen_id = intval($_POST['dokumen_id']);
     $user_nipp = $_SESSION['nipp'];
+    $user_type = isset($_SESSION['Type_User']) ? $_SESSION['Type_User'] : '';
     
-    // Get file path dan cek ownership
-    $q = $con->prepare("SELECT dp.file_path, dp.usulan_id 
+    // Return JSON response
+    header('Content-Type: application/json');
+    
+    // Check access: allow delete jika:
+    // 1. User adalah creator document (created_by = ?)
+    // 2. User adalah regional reviewer (Type_User = 'Regional')
+    $q = $con->prepare("SELECT dp.file_path, dp.usulan_id, dp.profit_center 
                         FROM dokumen_penghapusan dp 
                         JOIN usulan_penghapusan up ON dp.usulan_id = up.id 
-                        WHERE dp.id_dokumen = ? AND up.created_by = ?");
-    $q->bind_param("is", $dokumen_id, $user_nipp);
+                        WHERE dp.id_dokumen = ?");
+    $q->bind_param("i", $dokumen_id);
     $q->execute();
     $res = $q->get_result();
     
     if ($res->num_rows > 0) {
-        $dok = $res->fetch_assoc();
-        $file_path = $dok['file_path'];
-        
-        // Delete dari database
+      $dok = $res->fetch_assoc();
+      $doc_creator_nipp = null;
+      
+      // Get creator info
+      $q2 = $con->prepare("SELECT up.created_by FROM dokumen_penghapusan dp 
+                           JOIN usulan_penghapusan up ON dp.usulan_id = up.id 
+                           WHERE dp.id_dokumen = ?");
+      $q2->bind_param("i", $dokumen_id);
+      $q2->execute();
+      $res2 = $q2->get_result();
+      if ($res2->num_rows > 0) {
+        $creator_data = $res2->fetch_assoc();
+        $doc_creator_nipp = $creator_data['created_by'];
+      }
+      $q2->close();
+      
+      // Determine if user has permission to delete
+      $has_permission = false;
+      
+      // Allow if creator
+      if ($doc_creator_nipp === $user_nipp) {
+        $has_permission = true;
+      }
+      
+      // Allow if regional reviewer
+      if ($user_type === 'Regional' || strpos($user_type, 'Regional') !== false) {
+        $has_permission = true;
+      }
+      
+      if ($has_permission) {
+        // Delete dari database only (file stored in DB as blob)
         $del = $con->prepare("DELETE FROM dokumen_penghapusan WHERE id_dokumen = ?");
         $del->bind_param("i", $dokumen_id);
-        
-        if ($del->execute()) {
-            // Delete file dari server
-            if (file_exists($file_path)) {
-                unlink($file_path);
-            }
-            $_SESSION['success_message'] = "✅ Dokumen berhasil dihapus.";
+        if ($del->execute() && $del->affected_rows > 0) {
+          // Optional: delete file from filesystem if path still exists
+          if (!empty($dok['file_path']) && file_exists($dok['file_path'])) {
+            unlink($dok['file_path']);
+          }
+          echo json_encode(['success' => true]);
         } else {
-            $_SESSION['error_message'] = "❌ Gagal menghapus dokumen.";
+          echo json_encode(['success' => false, 'error' => 'Gagal menghapus dokumen.']);
         }
         $del->close();
+      } else {
+        echo json_encode(['success' => false, 'error' => 'Anda tidak memiliki akses untuk menghapus dokumen ini.']);
+      }
     } else {
-        $_SESSION['error_message'] = "❌ Dokumen tidak ditemukan atau Anda tidak memiliki akses.";
+      echo json_encode(['success' => false, 'error' => 'Dokumen tidak ditemukan.']);
     }
     $q->close();
-    
-    header("Location: " . $_SERVER['PHP_SELF'] . "#upload");
     exit();
 }
 
@@ -823,39 +930,46 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
 if (isset($_GET['action']) && $_GET['action'] === 'get_detail_aset' && isset($_GET['no_aset'])) {
     header('Content-Type: application/json');
     $no_aset = trim($_GET['no_aset']);
-
-    // Ambil data dari import_dat
-    $stmt_da = $con->prepare(
-          "SELECT id.nomor_asset_utama, id.keterangan_asset, id.profit_center,
-              id.subreg, id.profit_center_text,
-              up.mekanisme_penghapusan, up.status AS status_penghapusan
-           FROM import_dat id
-           LEFT JOIN usulan_penghapusan up
-             ON id.nomor_asset_utama = up.nomor_asset_utama
-           WHERE id.nomor_asset_utama = ?
-           LIMIT 10"
-    );
-          $stmt_da->bind_param("s", $no_aset);
-    $stmt_da->execute();
-    $res_da = $stmt_da->get_result();
+    
+    // Split aset jika ada multiple (separated by semicolon)
+    $aset_list = array_filter(array_map('trim', explode(';', $no_aset)));
+    
     $rows_da = [];
-    while ($r = $res_da->fetch_assoc()) {
-        // Format status penghapusan jadi label lebih rapi
-        $status_map = [
-            'draft'           => 'Draft',
-            'lengkapi_dokumen'=> 'Lengkapi Data',
-            'dokumen_lengkap' => 'Siap Upload',
-            'submitted'       => 'Submitted',
-            'approved_subreg' => 'Approved SubReg',
-            'approved'        => 'Approved',
-            'rejected'        => 'Rejected',
-        ];
-        $r['status_penghapusan'] = isset($r['status_penghapusan']) && $r['status_penghapusan']
+    
+    // Query untuk setiap aset
+    foreach ($aset_list as $single_aset) {
+        // Ambil data dari import_dat
+        $stmt_da = $con->prepare(
+              "SELECT id.nomor_asset_utama, id.keterangan_asset, id.profit_center,
+                  id.subreg, id.profit_center_text,
+                  up.mekanisme_penghapusan, up.status AS status_penghapusan
+               FROM import_dat id
+               LEFT JOIN usulan_penghapusan up
+                 ON id.nomor_asset_utama = up.nomor_asset_utama
+               WHERE id.nomor_asset_utama = ?
+               LIMIT 10"
+        );
+              $stmt_da->bind_param("s", $single_aset);
+        $stmt_da->execute();
+        $res_da = $stmt_da->get_result();
+        while ($r = $res_da->fetch_assoc()) {
+            // Format status penghapusan jadi label lebih rapi
+            $status_map = [
+                'draft'           => 'Draft',
+                'lengkapi_dokumen'=> 'Lengkapi Data',
+                'dokumen_lengkap' => 'Siap Upload',
+                'submitted'       => 'Submitted',
+                'approved_subreg' => 'Approved SubReg',
+                'approved'        => 'Approved',
+                'rejected'        => 'Rejected',
+            ];
+            $r['status_penghapusan'] = isset($r['status_penghapusan']) && $r['status_penghapusan']
             ? ($status_map[$r['status_penghapusan']] ?? ucfirst($r['status_penghapusan']))
             : '';
-        $rows_da[] = $r;
+            $rows_da[] = $r;
+        }
+        $stmt_da->close();
     }
-    $stmt_da->close();
 
     echo json_encode(['status' => 'success', 'data' => $rows_da]);
     exit();
@@ -900,6 +1014,90 @@ if (isset($_GET['action']) && $_GET['action'] === 'get_approval_history' && isse
     while ($r = $res_h->fetch_assoc()) $rows[] = $r;
     $stmt_h->close();
     echo json_encode(['success' => true, 'data' => $rows]);
+    exit();
+}
+
+  // AJAX: Serve foto for a usulan (returns JSON with usable src)
+  if (isset($_GET['action']) && $_GET['action'] === 'get_foto' && isset($_GET['usulan_id'])) {
+    header('Content-Type: application/json');
+    $uid = intval($_GET['usulan_id']);
+    $stmt_f = $con->prepare("SELECT foto_path FROM usulan_penghapusan WHERE id = ? LIMIT 1");
+    $stmt_f->bind_param("i", $uid);
+    $stmt_f->execute();
+    $res_f = $stmt_f->get_result();
+    $rowf = $res_f->fetch_assoc();
+    $stmt_f->close();
+
+    if (!$rowf || empty($rowf['foto_path'])) {
+      echo json_encode(['success' => false, 'message' => 'No photo found']);
+      exit();
+    }
+
+    $foto = $rowf['foto_path'];
+    // If stored as data URI, return directly
+    if (strpos($foto, 'data:') === 0) {
+      echo json_encode(['success' => true, 'src' => $foto]);
+      exit();
+    }
+
+    // If it's an absolute URL or starts with '/', return as-is
+    if (preg_match('#^(https?:)?//#i', $foto) || strpos($foto, '/') === 0) {
+      echo json_encode(['success' => true, 'src' => $foto]);
+      exit();
+    }
+
+    // Otherwise assume it's a relative path stored in DB; return a URL relative to this script
+    $src = '../../' . ltrim($foto, '/\\');
+    echo json_encode(['success' => true, 'src' => $src]);
+    exit();
+  }
+
+// ========================================================
+// AJAX: Get dokumen uploaded for a usulan
+// ========================================================
+if (isset($_GET['action']) && $_GET['action'] === 'get_dokumen_by_usulan' && isset($_GET['usulan_id'])) {
+    header('Content-Type: application/json');
+    $usulan_id = intval($_GET['usulan_id']);
+    
+    try {
+        $query = "
+            SELECT 
+                dp.id_dokumen,
+                dp.tahun_dokumen,
+                dp.no_aset,
+                dp.tipe_dokumen,
+                dp.file_name,
+                dp.uploaded_at
+            FROM dokumen_penghapusan dp
+            WHERE dp.usulan_id = ?
+            ORDER BY dp.uploaded_at DESC
+        ";
+        
+        if (!($stmt = $con->prepare($query))) {
+            throw new Exception('Prepare error: ' . $con->error);
+        }
+        
+        if (!$stmt->bind_param('i', $usulan_id)) {
+            throw new Exception('Bind param error: ' . $stmt->error);
+        }
+        
+        if (!$stmt->execute()) {
+            throw new Exception('Execute error: ' . $stmt->error);
+        }
+        
+        $result = $stmt->get_result();
+        
+        $dokumen = [];
+        while ($row = $result->fetch_assoc()) {
+            $dokumen[] = $row;
+        }
+        $stmt->close();
+        
+        echo json_encode(['success' => true, 'data' => $dokumen]);
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+    }
     exit();
 }
 
@@ -1533,6 +1731,63 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                 echo '<div class="alert alert-danger alert-dismissible fade show"><i class="bi bi-x-circle me-2"></i>' . htmlspecialchars($_SESSION['error_message']) . '<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>';
                                 unset($_SESSION['error_message']);
                             }
+                            
+                            // Initialize semua_dokumen untuk digunakan di bawah
+                            $semua_dokumen = [];
+                            $seen_dok_ids = [];
+                            
+                            // Get user type untuk check if regional reviewer
+                            $user_type = isset($_SESSION['Type_User']) ? $_SESSION['Type_User'] : '';
+                            $is_regional = ($user_type === 'Regional' || strpos($user_type, 'Regional') !== false);
+                            
+                            if ($is_regional) {
+                              // Regional users: Get ALL documents (full access to view all uploaded documents)
+                              $q_all_dok = $con->prepare(
+                                  "SELECT dp.id_dokumen, dp.tahun_dokumen, dp.profit_center, dp.subreg,
+                                          dp.tipe_dokumen, dp.profit_center_text, dp.file_path, dp.file_name,
+                                          dp.no_aset,
+                                          up.nomor_asset_utama, up.id as usulan_id
+                                   FROM dokumen_penghapusan dp
+                                   JOIN usulan_penghapusan up ON dp.usulan_id = up.id
+                                   WHERE COALESCE(up.status_approval_subreg, '') LIKE 'approved%'
+                                   GROUP BY dp.id_dokumen
+                                   ORDER BY dp.id_dokumen DESC"
+                              );
+                              $q_all_dok->execute();
+                              $r_all_dok = $q_all_dok->get_result();
+                              while ($d = $r_all_dok->fetch_assoc()) {
+                                  if (in_array($d['id_dokumen'], $seen_dok_ids)) continue;
+                                  $seen_dok_ids[] = $d['id_dokumen'];
+                                  $semua_dokumen[] = $d;
+                              }
+                              $q_all_dok->close();
+                            } else {
+                              // Non-regional users: Get documents dari upload_data (current behavior)
+                              foreach ($upload_data as $usulan) {
+                                  $nomor_ua = $usulan['nomor_asset_utama'];
+                                  $q_dok = $con->prepare(
+                                      "SELECT dp.id_dokumen, dp.tahun_dokumen, dp.profit_center, dp.subreg,
+                                              dp.tipe_dokumen, dp.profit_center_text, dp.file_path, dp.file_name,
+                                              dp.no_aset,
+                                              up.nomor_asset_utama, up.id as usulan_id
+                                       FROM dokumen_penghapusan dp
+                                       JOIN usulan_penghapusan up ON dp.usulan_id = up.id
+                                       WHERE dp.usulan_id = ?
+                                          OR (dp.no_aset LIKE CONCAT('%', ?, '%') AND dp.no_aset LIKE '%-%')
+                                       GROUP BY dp.id_dokumen
+                                       ORDER BY dp.id_dokumen DESC"
+                                  );
+                                  $q_dok->bind_param("is", $usulan['id'], $nomor_ua);
+                                  $q_dok->execute();
+                                  $r_dok = $q_dok->get_result();
+                                  while ($d = $r_dok->fetch_assoc()) {
+                                      if (in_array($d['id_dokumen'], $seen_dok_ids)) continue;
+                                      $seen_dok_ids[] = $d['id_dokumen'];
+                                      $semua_dokumen[] = $d;
+                                  }
+                                  $q_dok->close();
+                              }
+                            }
                             ?>
                             <div class="card mb-0" style="border: 1px solid #dee2e6; border-radius: 4px;">
                               <div class="card-header" style="background: #fff; border-bottom: 1px solid #dee2e6; padding: 12px 20px;">
@@ -1620,34 +1875,12 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                 <?php endif; ?>
                               </div>
                             </div>
-                            <?php if (!empty($upload_data)): ?>
+                            <?php if (!empty($upload_data) || !empty($semua_dokumen)): ?>
 
                      <!-- TABEL PREVIEW DOKUMEN-->
-                            <?php
-                            
-                            $semua_dokumen = [];
-                            foreach ($upload_data as $usulan) {
-                                $q_dok = $con->prepare(
-                                    "SELECT dp.id_dokumen, dp.tahun_dokumen, dp.profit_center, dp.subreg,
-                                            dp.tipe_dokumen, dp.profit_center_text, dp.file_path, dp.file_name,
-                                            up.nomor_asset_utama, up.id as usulan_id
-                                     FROM dokumen_penghapusan dp
-                                     JOIN usulan_penghapusan up ON dp.usulan_id = up.id
-                                     WHERE dp.usulan_id = ?
-                                     ORDER BY dp.id_dokumen DESC"
-                                );
-                                $q_dok->bind_param("i", $usulan['id']);
-                                $q_dok->execute();
-                                $r_dok = $q_dok->get_result();
-                                while ($d = $r_dok->fetch_assoc()) {
-                                    $semua_dokumen[] = $d;
-                                }
-                                $q_dok->close();
-                            }
-                            ?>
-                            <div class="card mt-3" style="border: none;">
-                              <div class="card-header" style="background: #5a6268; color: white; padding: 10px 16px; border-radius: 4px 4px 0 0;">
-                                <strong>Preview Dokumen</strong>
+                            <div class="card mt-3" style="border: 1px solid #28a745; box-shadow: 0 1px 3px rgba(40, 167, 69, 0.1);">
+                              <div class="card-header" style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white; padding: 12px 20px; border-radius: 4px 4px 0 0;">
+                                <strong><i class="bi bi-file-earmark-pdf me-2"></i>Preview Dokumen Terupload (<?= count($semua_dokumen) ?>)</strong>
                               </div>
                               <div class="card-body p-0">
                                 <div class="table-responsive">
@@ -1666,7 +1899,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                     <tbody>
                                       <?php if (empty($semua_dokumen)): ?>
                                         <tr>
-                                          <td colspan="7" class="text-center text-muted py-3">
+                                          <td colspan="8" class="text-center text-muted py-3">
                                             Belum ada dokumen yang diupload
                                           </td>
                                         </tr>
@@ -1681,17 +1914,17 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                           <td><?= htmlspecialchars($dok['profit_center_text'] ?? '') ?></td>
                                           <td style="white-space: nowrap;">
                                             <!-- Lihat Dokumen -->
-                                            <a href="<?= htmlspecialchars($dok['file_path'] ?? '#') ?>"
-                                               target="_blank"
-                                               class="btn btn-sm btn-outline-secondary"
-                                               style="margin-right: 4px; font-size: 0.8rem; padding: 2px 8px;">
+                                            <button type="button"
+                                                    class="btn btn-sm btn-outline-secondary"
+                                                    style="margin-right: 4px; font-size: 0.8rem; padding: 2px 8px;"
+                                                    onclick="openDokumen(<?= $dok['id_dokumen'] ?>, '<?= htmlspecialchars($_SERVER['PHP_SELF'] . '?action=download_dokumen&id=' . $dok['id_dokumen']) ?>')">
                                               Lihat Dokumen
-                                            </a>
+                                            </button>
                                             <!-- Detail Aset -->
                                             <button type="button"
                                                     class="btn btn-sm btn-outline-info"
                                                     style="margin-right: 4px; font-size: 0.8rem; padding: 2px 8px;"
-                                                    onclick="showDetailAset('<?= htmlspecialchars(addslashes($dok['nomor_asset_utama'])) ?>')">
+                                                    onclick="showDetailAset('<?= htmlspecialchars(addslashes($dok['no_aset'] ?? $dok['nomor_asset_utama'] ?? '')) ?>')">
                                               Detail Aset
                                             </button>
                                             <!-- Hapus -->
@@ -1853,6 +2086,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                             <th>Nama Aset</th>
                                             <th>Kategori</th>
                                             <th>Profit Center</th>
+                                            <th>Kondisi Fisik</th>
                                           </tr>
                                         </thead>
                                         <tbody>
@@ -1873,6 +2107,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                             <td><?= htmlspecialchars(str_replace('AUC-', '', $ua['nama_aset'] ?? '-')) ?></td>
                                             <td><?= htmlspecialchars($ua['kategori_aset'] ?? '-') ?></td>
                                             <td><?= htmlspecialchars($ua['profit_center'] ?? '') . (!empty($ua['profit_center_text']) ? ' - ' . htmlspecialchars($ua['profit_center_text']) : '') ?></td>
+                                            <td><?= !empty($ua['fisik_aset']) ? htmlspecialchars($ua['fisik_aset']) : '-' ?></td>
                                           </tr>                                       
                                           <?php endforeach; ?>
                                         </tbody>
@@ -2017,66 +2252,98 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                           <!-- Modal: Detail Data Aset dengan Mekanisme Penghapusan -->
                           <div class="modal fade" id="modalDetailAset" tabindex="-1" aria-hidden="true">
                             <div class="modal-dialog modal-xl modal-dialog-centered">
-                              <div class="modal-content border-0 shadow-sm" style="border-radius:6px; overflow:hidden;">
+                              <div class="modal-content" style="border-radius: 6px; overflow: hidden;">
                                 <!-- Header -->
-                                <div class="modal-header bg-primary text-white">
+                                <div class="modal-header" style="background: #fff; border-bottom: 2px solid #0d6efd; padding: 14px 20px;">
                                   <div>
                                     <div class="d-flex align-items-center mb-1">
-                                      <i class="bi bi-table me-2" style="font-size:1.1rem;"></i>
-                                      <h5 class="modal-title mb-0 fw-bold">Detail Data Aset</h5>
+                                      <i class="bi bi-table me-2" style="color: #0d6efd; font-size: 1.1rem;"></i>
+                                      <h5 class="modal-title mb-0 fw-bold" style="color: #0d6efd;">Detail Data Aset</h5>
                                     </div>
-                                    <div style="font-size:0.9rem; opacity:0.95;">
+                                    <div style="font-size: 0.875rem; color: #555;">
                                       Profit Center: <strong id="detailAsetPC">-</strong>
                                       &nbsp;|&nbsp; Subreg: <strong id="detailAsetSubreg">-</strong>
                                     </div>
                                   </div>
+                                  <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                                 </div>
                                 <!-- Body — tabel data aset -->
-                                <div class="modal-body p-3">
-                                  <style>
-                                    /* Limit table height and allow scrolling inside modal */
-                                    #modalDetailAset .table-responsive{ max-height:420px; overflow:auto; }
-                                    #modalDetailAset .table thead th { position: sticky; top:0; background:#fff; z-index:1; }
-                                    /* Tighter header and close button */
-                                    #modalDetailAset .modal-header { padding: 12px 18px; }
-                                    #modalDetailAset .modal-header .btn { padding:6px 8px; border-radius:6px; }
-                                    /* Simplified column sizing for compact 4-column layout */
-                                    #modalDetailAset td, #modalDetailAset th { vertical-align: middle; }
-                                    #modalDetailAset td:nth-child(1), #modalDetailAset th:nth-child(1) { white-space:nowrap; width:220px; }
-                                    #modalDetailAset td:nth-child(2), #modalDetailAset th:nth-child(2) { width:40%; }
-                                    #modalDetailAset td:nth-child(3), #modalDetailAset th:nth-child(3) { text-align:center; width:160px; white-space:nowrap; }
-                                    #modalDetailAset td:nth-child(4), #modalDetailAset th:nth-child(4) { text-align:center; width:160px; white-space:nowrap; }
-                                    /* Make asset name link color subtle and wrap nicely */
-                                    #modalDetailAset td a { color:#0d6efd; text-decoration:none; }
-                                    #modalDetailAset td a:hover { text-decoration:underline; }
-                                  </style>
+                                <div class="modal-body p-0">
                                   <div class="table-responsive">
-                                    <table class="table mb-0 table-striped table-hover align-middle" style="border-collapse: collapse;">
+                                    <table class="table mb-0" style="border-collapse: collapse;">
                                       <thead class="table-light">
-                                          <tr>
-                                              <th>Nomor Aset</th>
-                                              <th>Nama Aset</th>
-                                              <th>Status Subreg</th>
-                                              <th>Mekanisme Penghapusan</th>
-                                          </tr>
+                                        <tr>
+                                          <th style="width: 50px;">No</th>
+                                          <th style="width: 180px;">Nomor Aset</th>
+                                          <th>Nama Aset</th>
+                                          <th style="width: 150px;">Mekanisme</th>
+                                          <th style="width: 120px;">Status</th>
+                                        </tr>
                                       </thead>
                                       <tbody id="detailAsetTbody">
                                         <tr>
-                                          <td colspan="4" class="text-center py-3 text-muted">Memuat data...</td>
+                                          <td colspan="5" class="text-center py-3 text-muted">Memuat data...</td>
                                         </tr>
                                       </tbody>
                                     </table>
                                   </div>
                                 </div>
                                 <!-- Footer -->
-                                <div class="modal-footer bg-light" style="justify-content: space-between;">
-                                  <div class="text-muted" id="detailAsetTotal" style="font-size:0.9rem;"></div>
-                                  <button type="button" class="btn btn-outline-secondary btn-sm px-4" data-bs-dismiss="modal">Tutup</button>
+                                <div class="modal-footer" style="background: #f8f9fa; border-top: 1px solid #dee2e6; padding: 10px 20px; justify-content: space-between;">
+                                  <span id="detailAsetTotal" style="font-size: 0.875rem; color: #555;"></span>
+                                  <button type="button" class="btn btn-secondary btn-sm px-4"
+                                          data-bs-dismiss="modal"
+                                          style="background: #6c757d; border: none; border-radius: 4px;">
+                                    Tutup
+                                  </button>
                                 </div>
                               </div>
                             </div>
                           </div>
                           <!-- End Modal Detail Aset -->
+
+                          <!-- Modal: View Dokumen -->
+                          <div class="modal fade" id="modalViewDokumen" tabindex="-1" aria-hidden="true">
+                            <div class="modal-dialog modal-xl modal-dialog-centered" style="max-width:1000px;">
+                              <div class="modal-content">
+                                <div class="modal-header bg-secondary text-white">
+                                  <h5 class="modal-title">Viewer Dokumen</h5>
+                                  <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                                </div>
+                                <div class="modal-body p-0" style="min-height:60vh;">
+                                  <iframe id="modalDokumenIframe" src="" frameborder="0" style="width:100%;height:70vh;"></iframe>
+                                </div>
+                                <div class="modal-footer">
+                                  <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Tutup</button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <!-- Modal: Confirm Delete Dokumen -->
+                          <div class="modal fade" id="modalConfirmDeleteDokumen" tabindex="-1" aria-hidden="true">
+                            <div class="modal-dialog modal-dialog-centered" style="max-width:480px;">
+                              <div class="modal-content border-0 shadow-lg overflow-hidden">
+                                <div class="modal-header bg-danger text-white">
+                                  <h5 class="modal-title"><i class="bi bi-trash-fill me-2"></i>Konfirmasi Hapus Dokumen</h5>
+                                  <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                                </div>
+                                <div class="modal-body">
+                                  <p class="mb-2">Apakah Anda yakin ingin menghapus dokumen berikut?</p>
+                                  <div class="p-2 bg-light rounded border" style="word-break: break-word;">
+                                    <small id="deleteDokumenName" style="font-weight: 500;">-</small>
+                                  </div>
+                                  <input type="hidden" id="deleteDokumenId">
+                                </div>
+                                <div class="modal-footer">
+                                  <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
+                                  <button type="button" class="btn btn-danger" onclick="submitDeleteDokumen()">
+                                    <i class="bi bi-trash me-1"></i> Ya, Hapus
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
 
                           <!-- JavaScript for Upload Tab -->
                           <script>
@@ -2110,6 +2377,44 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                               });
                             }
                           });
+
+                          /** Buka dokumen di modal viewer */
+                          function openDokumen(dokumenId, downloadUrl) {
+                            try {
+                              const modalEl = document.getElementById('modalViewDokumen');
+                              const iframe = document.getElementById('modalDokumenIframe');
+                              const titleEl = modalEl ? modalEl.querySelector('.modal-title') : null;
+                              
+                              if (!iframe || !modalEl) {
+                                if (downloadUrl) window.open(downloadUrl, '_blank');
+                                return;
+                              }
+
+                              // Reset iframe
+                              iframe.src = '';
+                              if (titleEl) titleEl.textContent = 'Memuat dokumen...';
+
+                              // Gunakan download URL yang sudah disiapkan
+                              let src = '';
+                              if (downloadUrl && downloadUrl.length > 0) {
+                                src = downloadUrl;
+                              } else if (dokumenId && parseInt(dokumenId) > 0) {
+                                src = window.location.pathname + '?action=download_dokumen&id=' + encodeURIComponent(dokumenId);
+                              }
+
+                              if (!src) {
+                                alert('Dokumen tidak tersedia');
+                                return;
+                              }
+
+                              iframe.src = src;
+                              if (titleEl) titleEl.textContent = 'Dokumen';
+                              new bootstrap.Modal(modalEl, {backdrop: true}).show();
+                            } catch (err) {
+                              console.error('openDokumen error:', err);
+                              alert('Terjadi kesalahan saat membuka dokumen');
+                            }
+                          }
 
                           /** Buka modal picker aset */
                           function openAsetPickerUpload() {
@@ -2159,27 +2464,30 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                 json.data.forEach(function(r, i) {
                                   const tr = document.createElement('tr');
                                   tr.style.background = (i % 2 === 0) ? '#f8f9fa' : '#fff';
-
-                                  // Badge untuk mekanisme
+                                  
+                                  // Badge untuk mekanisme (dengan fallback property names)
                                   let mekanismeBadge = '-';
-                                  if (r.mekanisme_penghapusan) {
-                                    const badgeClass = r.mekanisme_penghapusan.toLowerCase().includes('jual') ? 'success' : 'warning';
-                                    mekanismeBadge = '<span class="badge bg-' + badgeClass + '">' + escHtml(r.mekanisme_penghapusan) + '</span>';
+                                  const mekanismeVal = r.mekanisme_penghapusan || r.mekanisme || r.mekanisme_penghapusan_text || '';
+                                  if (mekanismeVal) {
+                                    const badgeClass = mekanismeVal === 'Jual Lelang' ? 'success' : 'warning';
+                                    mekanismeBadge = '<span class="badge bg-' + badgeClass + '">' + escHtml(mekanismeVal) + '</span>';
                                   }
 
-                                  // Status dari SubReg (fallback ke status_penghapusan jika tidak ada)
-                                  let statusText = r.status_approval_subreg || r.status_penghapusan || '-';
-                                  let statusClass = 'secondary';
-                                  if (statusText && statusText.toLowerCase().includes('approved')) statusClass = 'success';
-                                  else if (statusText && statusText.toLowerCase().includes('reject')) statusClass = 'danger';
-                                  else if (statusText && (statusText.toLowerCase().includes('lengkapi') || statusText.toLowerCase().includes('pending'))) statusClass = 'warning';
-                                  const statusBadge = '<span class="badge bg-' + statusClass + '">' + escHtml(statusText) + '</span>';
-
+                                  // Badge untuk status (dengan fallback property names)
+                                  let statusBadge = '-';
+                                  const statusVal = r.status_penghapusan || r.status_penghapusan_text || r.status || '';
+                                  if (statusVal) {
+                                    const statusClass = statusVal === 'Siap Upload' ? 'info' :
+                                                       statusVal === 'Lengkapi Data' ? 'warning' : 'secondary';
+                                    statusBadge = '<span class="badge bg-' + statusClass + '">' + escHtml(statusVal) + '</span>';
+                                  }
+                                  
                                   tr.innerHTML =
-                                    '<td style="padding: 10px 12px; font-weight:500;">' + escHtml(r.nomor_asset_utama || '') + '</td>' +
-                                    '<td style="padding: 10px 12px; color: #0d6efd;">' + escHtml(r.keterangan_asset || r.nama_aset || '-') + '</td>' +
-                                    '<td style="padding: 10px 12px;">' + statusBadge + '</td>' +
-                                    '<td style="padding: 10px 12px;">' + mekanismeBadge + '</td>';
+                                    '<td style="padding: 10px 16px; color: #555;">' + (i + 1) + '</td>' +
+                                    '<td style="padding: 10px 16px; font-weight: 500;">' + escHtml(r.nomor_asset_utama || '') + '</td>' +
+                                    '<td style="padding: 10px 16px; color: #0d6efd;">' + escHtml(r.keterangan_asset || r.nama_aset || '-') + '</td>' +
+                                    '<td style="padding: 10px 16px;">' + mekanismeBadge + '</td>' +
+                                    '<td style="padding: 10px 16px;">' + statusBadge + '</td>';
                                   tbody.appendChild(tr);
                                 });
                               } else {
@@ -2878,15 +3186,44 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
           modal.show();
       }
 
-// ============================================================
-// Function untuk konfirmasi delete dokumen
-// ============================================================
       function confirmDeleteDokumen(dokumenId, fileName) {
           document.getElementById('deleteDokumenId').value = dokumenId;
           document.getElementById('deleteDokumenName').textContent = fileName;
           
           const modal = new bootstrap.Modal(document.getElementById('modalConfirmDeleteDokumen'));
           modal.show();
+      }
+
+      function submitDeleteDokumen() {
+          const dokumenId = document.getElementById('deleteDokumenId').value;
+          if (!dokumenId) {
+              alert('ID Dokumen tidak valid');
+              return;
+          }
+
+          const body = new URLSearchParams();
+          body.append('action', 'delete_dokumen');
+          body.append('dokumen_id', dokumenId);
+          body.append('csrf_token', '<?= $_SESSION['csrf_token'] ?? '' ?>');
+
+          fetch(location.pathname, {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: body.toString()
+          }).then(res => res.json())
+            .then(json => {
+              try { bootstrap.Modal.getInstance(document.getElementById('modalConfirmDeleteDokumen')).hide(); } catch(e){}
+              if (json.success) {
+                  // Show success message and reload
+                  alert(json.message || 'Dokumen berhasil dihapus');
+                  location.reload();
+              } else {
+                  alert('Gagal menghapus dokumen: ' + (json.error || 'Unknown error'));
+              }
+            }).catch(err => {
+              alert('Error: ' + err.message);
+            });
       }
 
       // Approve / Reject via confirm modal (Regional)
@@ -3415,13 +3752,13 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                 <textarea id="modalRejectNote" class="form-control" rows="3" placeholder="Tuliskan alasan jika menolak usulan (akan disimpan di riwayat)."></textarea>
               </div>
 
-              <!-- Approval History -->
+              <!-- Dokumen Terupload -->
               <div class="card mt-3">
                 <div class="card-header bg-light">
-                  <strong><i class="bi bi-clock-history me-2"></i>Riwayat Persetujuan</strong>
+                  <strong><i class="bi bi-file-earmark-pdf me-2"></i>Dokumen Terupload</strong>
                 </div>
-                <div class="card-body" id="approvalHistoryContainer">
-                  <p class="text-muted">Memuat riwayat...</p>
+                <div class="card-body" id="dokumentContainer">
+                  <p class="text-muted">Memuat dokumen...</p>
                 </div>
               </div>
             </div>
@@ -3499,38 +3836,50 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
             const fotoSmall = fotoUploadSection ? fotoUploadSection.querySelector('small') : null;
 
             if (usulan.foto_path) {
-              // Normalize path: if it's not absolute or starting with '/', make it relative to this page like SubReg does
-              let src = usulan.foto_path;
-              const isAbsolute = /^(https?:)?\/\//i.test(src) || src.charAt(0) === '/';
-              if (!isAbsolute) src = '../../' + src;
               const previewImg = document.getElementById('fotoPreviewImage');
-              if (previewImg) {
-                previewImg.onerror = function(e) {
-                  console.error('Failed loading fotoPreviewImage:', previewImg.src, e);
-                  // hide preview on error
-                  try { document.getElementById('fotoPreview').style.display = 'none'; } catch(e){}
-                };
-                previewImg.src = src;
-              }
-              document.getElementById('fotoPreview').style.display = 'block';
-              // If owner, allow file input (for replace). If not owner, hide file input.
-              if (isOwner) {
-                if (fotoInputEl) fotoInputEl.style.display = '';
-                if (fotoSmall) fotoSmall.style.display = '';
-                fotoUploadSection.style.display = 'block';
+              let src = usulan.foto_path || '';
+
+              // If stored as a data URI (base64), use directly
+              if (src.indexOf('data:') === 0) {
+                if (previewImg) previewImg.src = src;
+                document.getElementById('fotoPreview').style.display = 'block';
+                if (isOwner) { fotoUploadSection.style.display = 'block'; }
+                else { if (fotoInputEl) fotoInputEl.style.display = 'none'; if (fotoSmall) fotoSmall.style.display = 'none'; }
               } else {
-                if (fotoInputEl) fotoInputEl.style.display = 'none';
-                if (fotoSmall) fotoSmall.style.display = 'none';
-                fotoUploadSection.style.display = 'block';
+                // Detect absolute URLs or root paths
+                const isAbsolute = /^(https?:)?\/\//i.test(src) || src.charAt(0) === '/';
+                if (isAbsolute) {
+                  if (previewImg) previewImg.src = src;
+                  document.getElementById('fotoPreview').style.display = 'block';
+                  if (isOwner) fotoUploadSection.style.display = 'block'; else { if (fotoInputEl) fotoInputEl.style.display = 'none'; if (fotoSmall) fotoSmall.style.display = 'none'; }
+                } else {
+                  // Resolve via server endpoint (handles DB-stored values and returns usable src)
+                  fetch(location.pathname + '?action=get_foto&usulan_id=' + encodeURIComponent(usulan.id), { credentials: 'same-origin' })
+                    .then(r => r.json())
+                    .then(payload => {
+                      if (payload && payload.success && payload.src) {
+                        if (previewImg) previewImg.src = payload.src;
+                        document.getElementById('fotoPreview').style.display = 'block';
+                      } else {
+                        if (previewImg) previewImg.src = '../../' + src;
+                        document.getElementById('fotoPreview').style.display = 'block';
+                      }
+                      if (isOwner) fotoUploadSection.style.display = 'block'; else { if (fotoInputEl) fotoInputEl.style.display = 'none'; if (fotoSmall) fotoSmall.style.display = 'none'; }
+                    }).catch(err => {
+                      if (previewImg) previewImg.src = '../../' + src;
+                      document.getElementById('fotoPreview').style.display = 'block';
+                      if (isOwner) fotoUploadSection.style.display = 'block'; else { if (fotoInputEl) fotoInputEl.style.display = 'none'; if (fotoSmall) fotoSmall.style.display = 'none'; }
+                    });
+                }
               }
             } else {
               // No foto uploaded: hide section for non-owners; owners keep ability to upload
               if (isOwner) {
-              if (fotoInputEl) fotoInputEl.style.display = '';
-              if (fotoSmall) fotoSmall.style.display = '';
-              document.getElementById('fotoPreview').style.display = 'none';
-              fotoUploadSection.style.display = 'block';
-            } else {
+                if (fotoInputEl) fotoInputEl.style.display = '';
+                if (fotoSmall) fotoSmall.style.display = '';
+                document.getElementById('fotoPreview').style.display = 'none';
+                fotoUploadSection.style.display = 'block';
+              } else {
                 if (fotoUploadSection) fotoUploadSection.style.display = 'none';
               }
             }
@@ -3552,40 +3901,82 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                 if (id) rejectUsulan(id);
             };
 
-            // Load approval history for this usulan and render (improved error reporting)
-            fetch(location.pathname + '?action=get_approval_history&usulan_id=' + (usulan.id || usulanId), { credentials: 'same-origin' })
-              .then(async r => {
+            // Load dokumen untuk usulan ini
+            fetch(location.pathname + '?action=get_dokumen_by_usulan&usulan_id=' + (usulan.id || usulanId), { credentials: 'same-origin' })
+              .then(r => {
+                // Check if response is OK
                 if (!r.ok) {
-                  const txt = await r.text();
-                  console.error('get_approval_history HTTP error', r.status, txt);
-                  throw new Error('HTTP ' + r.status);
+                  throw new Error('HTTP ' + r.status + ': ' + r.statusText);
                 }
-                try {
-                  return await r.json();
-                } catch (e) {
-                  const txt = await r.text();
-                  console.error('get_approval_history invalid JSON', txt);
-                  throw e;
-                }
+                // Get response text first to debug
+                return r.text().then(text => {
+                  try {
+                    return JSON.parse(text);
+                  } catch (e) {
+                    throw new Error('Invalid JSON response: ' + text.substring(0, 200));
+                  }
+                });
               })
               .then(payload => {
-                const container = document.getElementById('approvalHistoryContainer');
-                container.innerHTML = '';
-                if (!payload.success || !payload.data || payload.data.length === 0) {
-                  container.innerHTML = '<p class="text-muted">Belum ada riwayat persetujuan.</p>';
+                const container = document.getElementById('dokumentContainer');
+                if (!payload.success || !Array.isArray(payload.data) || payload.data.length === 0) {
+                  container.innerHTML = '<p class="text-muted">Belum ada dokumen yang diupload untuk usulan ini.</p>';
                   return;
                 }
-                const list = document.createElement('div');
-                payload.data.forEach(h => {
-                  const item = document.createElement('div');
-                  item.className = 'mb-2';
-                  item.innerHTML = '<strong>' + (h.actor_name || h.actor_nipp || h.actor_role) + '</strong> &middot; <small class="text-muted">' + h.created_at + '</small><br><div>' + (h.note ? h.note : '') + '</div>';
-                  list.appendChild(item);
+                
+                // Buat table untuk dokumen
+                const table = document.createElement('table');
+                table.className = 'table table-sm table-hover mb-0';
+                table.style.fontSize = '0.85rem';
+                
+                const thead = document.createElement('thead');
+                thead.style.background = '#f8f9fa';
+                thead.innerHTML = `
+                  <tr>
+                    <th style="width: 50px;">ID</th>
+                    <th>Nama File</th>
+                    <th style="width: 80px;">Tahun</th>
+                    <th style="width: 150px;">Nomor Aset</th>
+                    <th style="width: 180px;">Aksi</th>
+                  </tr>
+                `;
+                
+                const tbody = document.createElement('tbody');
+                payload.data.forEach((dok, idx) => {
+                  const tr = document.createElement('tr');
+                  tr.style.background = idx % 2 === 0 ? '#fff' : '#f8f9fa';
+                  
+                  // Parse nomor aset
+                  const no_aset_raw = dok.no_aset || '';
+                  const no_list = no_aset_raw.split(';').filter(n => n.trim());
+                  let asetDisplay = no_aset_raw;
+                  if (no_list.length > 1) {
+                    asetDisplay = `<span class="badge bg-info text-dark">${no_list.length} aset</span><br><small>${no_list.join(' | ')}</small>`;
+                  }
+                  
+                  tr.innerHTML = `
+                    <td><strong>${dok.id_dokumen}</strong></td>
+                    <td>${dok.file_name || '-'}</td>
+                    <td>${dok.tahun_dokumen || '-'}</td>
+                    <td>${asetDisplay}</td>
+                    <td style="white-space: nowrap;">
+                      <button type="button" class="btn btn-sm btn-outline-secondary" style="font-size: 0.75rem; padding: 2px 6px;"
+                              onclick="openDokumen(${dok.id_dokumen}, '<?= htmlspecialchars($_SERVER['PHP_SELF'] . '?action=download_dokumen&id=') ?>' + ${dok.id_dokumen})">
+                        <i class="bi bi-eye"></i> Lihat
+                      </button>
+                    </td>
+                  `;
+                  tbody.appendChild(tr);
                 });
-                container.appendChild(list);
+                
+                table.appendChild(thead);
+                table.appendChild(tbody);
+                container.innerHTML = '';
+                container.appendChild(table);
               }).catch(err => {
-                console.error('Failed loading approval history', err);
-                document.getElementById('approvalHistoryContainer').innerHTML = '<p class="text-muted">Gagal memuat riwayat.</p>';
+                const container = document.getElementById('dokumentContainer');
+                container.innerHTML = '<p class="text-muted text-danger"><i class="bi bi-exclamation-circle"></i> Gagal memuat dokumen: ' + err.message + '</p>';
+                console.error('Dokumen fetch error:', err);
               });
 
             // Save (submit the lengkapi form)

@@ -327,15 +327,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
     $kajian_ekonomis = $_POST['kajian_ekonomis'];
     $kajian_risiko = $_POST['kajian_risiko'];
     
-    // Handle file upload foto
+    // Handle file upload foto: store image into DB only (data URI base64), do NOT write to local filesystem
     $foto_path = null;
     if (isset($_FILES['foto']) && $_FILES['foto']['error'] === UPLOAD_ERR_OK) {
       $file = $_FILES['foto'];
-
-      $upload_dir = __DIR__ . '/../../uploads/foto_aset/';
-      if (!file_exists($upload_dir)) {
-        mkdir($upload_dir, 0777, true);
-      }
 
       if ($file['size'] > 5 * 1024 * 1024) {
         $pesan = "Ukuran foto terlalu besar. Maksimal 5MB.";
@@ -350,19 +345,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
           $pesan = "Tipe file tidak didukung. Gunakan JPG, JPEG, atau PNG.";
           $tipe_pesan = "danger";
         } else {
-          $file_ext = pathinfo($file['name'], PATHINFO_EXTENSION);
-          $new_filename = 'foto_' . $usulan_id . '_' . time() . '.' . $file_ext;
-          $dest_path = $upload_dir . $new_filename;
-
-          if (move_uploaded_file($file['tmp_name'], $dest_path)) {
-            $foto_path = 'uploads/foto_aset/' . $new_filename;
-          } else {
-            $pesan = "Gagal mengupload foto.";
+          $data = @file_get_contents($file['tmp_name']);
+          if ($data === false) {
+            $pesan = "Gagal membaca file foto.";
             $tipe_pesan = "danger";
+          } else {
+            $base64 = base64_encode($data);
+            $foto_path = 'data:' . $mime_type . ';base64,' . $base64;
           }
         }
       }
     }
+
+
     if ($tipe_pesan !== 'danger') {
       if ($foto_path !== null) {
         $stmt = $con->prepare("UPDATE usulan_penghapusan SET 
@@ -457,7 +452,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         $_SESSION['success_message'] = "⚠️ Gagal menghapus usulan.";
     }
     $del->close();
-    header("Location: " . $_SERVER['PHP_SELF'] . "#dokumen");
+    header("Location: " . $_SERVER['PHP_SELF'] . "#lengkapi");
     exit();
 }
 
@@ -471,16 +466,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
     $nipp = $_SESSION['nipp'];
     $type_user = isset($_SESSION['Type_User']) ? $_SESSION['Type_User'] : '';
     
-    if (isset($_FILES['file_dokumen']) && $_FILES['file_dokumen']['error'] === UPLOAD_ERR_OK) {
-        $file = $_FILES['file_dokumen'];
-        $upload_dir = realpath(__DIR__ . '/../../uploads/dokumen_penghapusan') 
-                      ? realpath(__DIR__ . '/../../uploads/dokumen_penghapusan') . '/'
-                      : __DIR__ . '/../../uploads/dokumen_penghapusan/';
-        
-        if (!file_exists($upload_dir)) {
-            mkdir($upload_dir, 0777, true);
-        }
-        
+    // Ambil file dari form (input name="file_dokumen")
+    $file = isset($_FILES['file_dokumen']) ? $_FILES['file_dokumen'] : null;
+
+    // Validasi file tidak kosong
+    if (!$file || $file['error'] !== UPLOAD_ERR_OK) {
+        $_SESSION['warning_message'] = "Silakan pilih file untuk diupload!";
+        header("Location: " . $_SERVER['PHP_SELF'] . "#upload");
+        exit();
+    } else {
         $allowed_ext = ['pdf'];
         $file_ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
         
@@ -496,80 +490,83 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             exit();
         }
         
-        // Generate filename
-        $new_filename = 'Dokumen_' . date('YmdHis') . '_' . uniqid() . '.pdf';
-        $file_path_abs = $upload_dir . $new_filename; 
-        $file_path = 'uploads/dokumen_penghapusan/' . $new_filename; 
-        
-        if (move_uploaded_file($file['tmp_name'], $file_path_abs)) {
+        // Baca file content langsung dari tmp tanpa menyimpan ke disk
+        $file_data = @file_get_contents($file['tmp_name']);
+        if ($file_data === false) {
+            $_SESSION['warning_message'] = "Gagal membaca file upload.";
+        } else {
             $success_count = 0;
 
             $no_aset_raw = isset($_POST['no_aset_list']) && !empty($_POST['no_aset_list']) 
-                           ? trim($_POST['no_aset_list']) 
-                           : '';
+                     ? trim($_POST['no_aset_list']) 
+                     : '';
 
             $ids = array_filter(array_map('trim', explode(',', $usulan_ids)));
-            $first_id = !empty($ids) ? intval(reset($ids)) : 0;
-            
-            if ($first_id > 0) {
-                $stmt = $con->prepare("SELECT nomor_asset_utama, profit_center, subreg FROM usulan_penghapusan WHERE id = ?");
-                $stmt->bind_param("i", $first_id);
-                $stmt->execute();
-                $result = $stmt->get_result();
-                $stmt->close();
+            $first_id = !empty($ids) ? intval(reset($ids)) : 0; 
 
-                if ($result->num_rows > 0) {
-                    $usulan = $result->fetch_assoc();
+            // Encode file ke base64 untuk disimpan di database
+            $base64 = base64_encode($file_data);
+            $file_path = 'data:application/pdf;base64,' . $base64;
+            // Simpan nama file asli untuk display
+            $new_filename = basename($file['name']);
 
-                    $profit_center_text = null;
-                    $qimp = $con->prepare("SELECT profit_center_text, subreg FROM import_dat WHERE nomor_asset_utama = ? LIMIT 1");
-                    $qimp->bind_param("s", $usulan['nomor_asset_utama']);
-                    $qimp->execute();
-                    $rimp = $qimp->get_result();
-                    if ($rimp && $rimp->num_rows > 0) {
-                        $rowimp = $rimp->fetch_assoc();
-                        $profit_center_text = $rowimp['profit_center_text'];
-                        if (empty($usulan['subreg'])) {
-                            $usulan['subreg'] = $rowimp['subreg'];
-                        }
-                    }
-                    $qimp->close();
-                    $no_aset_save = !empty($no_aset_raw) ? $no_aset_raw : $usulan['nomor_asset_utama'];
-                    $usulan_id_save = !empty($usulan_ids) ? $usulan_ids : $first_id;
-                    $insert_query = "INSERT INTO dokumen_penghapusan 
-                                    (usulan_id, tahun_dokumen, tipe_dokumen, no_aset, subreg, profit_center, profit_center_text, type_user, nipp, file_name, file_path, file_size) 
-                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-                    $stmt_insert = $con->prepare($insert_query);
-                    $stmt_insert->bind_param("iisssssssssi", 
-                        $first_id,     
-                        $tahun_dokumen, 
-                        $tipe_dokumen, 
-                        $no_aset_save, 
-                        $usulan['subreg'],
-                        $usulan['profit_center'],
-                        $profit_center_text,
-                        $type_user,
-                        $nipp,
-                        $new_filename,
-                        $file_path,
-                        $file['size']
-                    );
+          // Insert 1 dokumen dengan semua nomor aset yang digabung
+          if ($first_id > 0) {
+            $stmt = $con->prepare("SELECT nomor_asset_utama, profit_center, subreg FROM usulan_penghapusan WHERE id = ?");
+            $stmt->bind_param("i", $first_id);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            $stmt->close();
 
-                    if ($stmt_insert->execute()) {
-                        $success_count++;
-                    }
-                    $stmt_insert->close();
+            if ($result->num_rows > 0) {
+              $usulan = $result->fetch_assoc();
+
+              $profit_center_text = null;
+              $qimp = $con->prepare("SELECT profit_center_text, subreg FROM import_dat WHERE nomor_asset_utama = ? LIMIT 1");
+              $qimp->bind_param("s", $usulan['nomor_asset_utama']);
+              $qimp->execute();
+              $rimp = $qimp->get_result();
+              if ($rimp && $rimp->num_rows > 0) {
+                $rowimp = $rimp->fetch_assoc();
+                $profit_center_text = $rowimp['profit_center_text'];
+                if (empty($usulan['subreg'])) {
+                  $usulan['subreg'] = $rowimp['subreg'];
                 }
+              }
+              $qimp->close();
+
+              $no_aset_save = !empty($no_aset_raw) ? $no_aset_raw : $usulan['nomor_asset_utama'];
+              $insert_query = "INSERT INTO dokumen_penghapusan 
+                      (usulan_id, tahun_dokumen, tipe_dokumen, no_aset, subreg, profit_center, profit_center_text, type_user, nipp, file_name, file_path, file_size) 
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+              $stmt_insert = $con->prepare($insert_query);
+              $stmt_insert->bind_param("iisssssssssi", 
+                $first_id,     
+                $tahun_dokumen, 
+                $tipe_dokumen, 
+                $no_aset_save, 
+                $usulan['subreg'],
+                $usulan['profit_center'],
+                $profit_center_text,
+                $type_user,
+                $nipp,
+                $new_filename,
+                $file_path,
+                $file['size']
+              );
+
+              if ($stmt_insert->execute()) {
+                $success_count++;
+              }
+              $stmt_insert->close();
             }
-            
-            if ($success_count > 0) {
-                $jumlah_aset = count($ids);
-                $_SESSION['success_message'] = "✅ Berhasil upload dokumen" . ($jumlah_aset > 1 ? " untuk {$jumlah_aset} aset" : "") . "!";
-            } else {
-                $_SESSION['warning_message'] = "Gagal menyimpan dokumen!";
-            }
-        } else {
-            $_SESSION['warning_message'] = "Gagal upload file!";
+          }
+
+          if ($success_count > 0) {
+            $_SESSION['success_message'] = "✅ Berhasil upload dokumen untuk " . count($ids) . " aset!";
+          } else {
+            $_SESSION['warning_message'] = "Gagal menyimpan dokumen!";
+          }
         }
     }
     header("Location: " . $_SERVER['PHP_SELF'] . "#upload");
@@ -597,12 +594,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         $del->bind_param("i", $dokumen_id);
         
         if ($del->execute()) {
-            if (file_exists($file_path)) {
-                unlink($file_path);
-            }
-            $_SESSION['success_message'] = "✅ Dokumen berhasil dihapus.";
+          // If stored as file on disk (path), remove it; if stored as data URI, nothing to delete on FS
+          if (!empty($file_path) && strpos($file_path, 'data:') !== 0 && file_exists($file_path)) {
+            @unlink($file_path);
+          }
+          $_SESSION['success_message'] = "✅ Dokumen berhasil dihapus.";
         } else {
-            $_SESSION['error_message'] = "❌ Gagal menghapus dokumen.";
+          $_SESSION['error_message'] = "❌ Gagal menghapus dokumen.";
         }
         $del->close();
     } else {
@@ -711,7 +709,12 @@ if (isset($_GET['action']) && $_GET['action'] === 'view_dokumen' && isset($_GET[
         }
         $canView_v = ($userSr !== '' && strtolower(trim($dok['subreg'] ?? '')) === $userSr);
     } elseif ($isCabang_v) {
-        $canView_v = (normalize_str($dok['profit_center'] ?? '') === normalize_str($sessionPc_v));
+        $userPc = '';
+        if (!empty($sessionPc_v)) {
+            $r_pc2 = mysqli_query($con, "SELECT profit_center FROM import_dat WHERE profit_center = '" . mysqli_real_escape_string($con, $sessionPc_v) . "' LIMIT 1");
+            if ($r_pc2 && mysqli_num_rows($r_pc2) > 0) $userPc = strtolower(trim(mysqli_fetch_assoc($r_pc2)['profit_center']));
+        }
+        $canView_v = ($userPc !== '' && strtolower(trim($dok['profit_center'] ?? '')) === $userPc);
     }
 
     if (!$canView_v) { http_response_code(403); echo 'Akses ditolak.'; exit(); }
@@ -719,29 +722,73 @@ if (isset($_GET['action']) && $_GET['action'] === 'view_dokumen' && isset($_GET[
     $filePathDb = $dok['file_path'] ?? '';
     $fileName   = !empty($dok['file_name']) ? basename($dok['file_name']) : 'dokumen.pdf';
 
-    $uploadBaseDir = realpath(__DIR__ . '/../../uploads/dokumen_penghapusan') ?: (__DIR__ . '/../../uploads/dokumen_penghapusan');
+    // If file_path is a data URI (base64), serve it directly
+    if (!empty($filePathDb) && strpos($filePathDb, 'data:') === 0) {
+      // data:[<mediatype>][;base64],<data>
+      if (preg_match('#^data:([^;]+);base64,(.+)$#', $filePathDb, $m)) {
+        $mime = $m[1];
+        $b64 = $m[2];
+        $data = base64_decode($b64);
+        if ($data === false) { http_response_code(500); echo 'Gagal decode data.'; exit(); }
+        header('Content-Type: ' . $mime);
+        header('Content-Disposition: inline; filename="' . $fileName . '"');
+        header('Content-Length: ' . strlen($data));
+        header('Cache-Control: no-cache');
+        echo $data; exit();
+      } else {
+        http_response_code(400); echo 'Format data URI tidak valid.'; exit();
+      }
+    }
+
+    // If file_path is an absolute URL, redirect to it (so browser can render)
+    if (!empty($filePathDb) && (strpos($filePathDb, 'http://') === 0 || strpos($filePathDb, 'https://') === 0)) {
+      header('Location: ' . $filePathDb);
+      exit();
+    }
+    $uploadBaseDir = realpath(__DIR__ . '/../../uploads/dokumen_penghapusan') 
+                    ? realpath(__DIR__ . '/../../uploads/dokumen_penghapusan') . '/'
+                    : __DIR__ . '/../../uploads/dokumen_penghapusan/';
+
+    // Prepare variable used to hold resolved absolute path
     $absPath = null;
 
-    $try1 = $uploadBaseDir . '/' . basename($fileName);
+    // 1) check by file_name under uploads dir
+    $try1 = rtrim($uploadBaseDir, '/') . '/' . basename($fileName);
     if (file_exists($try1)) $absPath = $try1;
+
+    // 2) check DB path relative to document root
     if (!$absPath && !empty($filePathDb)) {
-        $try2 = rtrim($_SERVER['DOCUMENT_ROOT'], '/') . '/' . ltrim(str_replace('\\', '/', $filePathDb), '/');
-        if (file_exists($try2)) $absPath = $try2;
-    }
-    if (!$absPath && !empty($filePathDb)) {
-        $try3 = realpath(__DIR__ . '/' . $filePathDb);
-        if ($try3 && file_exists($try3)) $absPath = $try3;
+      $try2 = rtrim($_SERVER['DOCUMENT_ROOT'], '/') . '/' . ltrim(str_replace('\\', '/', $filePathDb), '/');
+      if (file_exists($try2)) $absPath = $try2;
     }
 
+    // 3) check relative to current script
+    if (!$absPath && !empty($filePathDb)) {
+      $try3 = realpath(__DIR__ . '/' . $filePathDb);
+      if ($try3 && file_exists($try3)) $absPath = $try3;
+    }
+
+    // 4) direct DB path
     if (!$absPath && !empty($filePathDb) && file_exists($filePathDb)) $absPath = $filePathDb;
 
     if (!$absPath) {
-        http_response_code(404);
-        echo 'File tidak ditemukan di server. Path DB: ' . htmlspecialchars($filePathDb) . ' | Upload dir: ' . htmlspecialchars($uploadBaseDir);
-        exit();
+      http_response_code(404);
+      echo 'File tidak ditemukan di server. Path DB: ' . htmlspecialchars($filePathDb) . ' | Upload dir: ' . htmlspecialchars($uploadBaseDir);
+      exit();
     }
 
-    header('Content-Type: application/pdf');
+    // Try to detect mime type, default to pdf
+    $mime = 'application/pdf';
+    if (function_exists('finfo_open')) {
+      $finfo = finfo_open(FILEINFO_MIME_TYPE);
+      if ($finfo) {
+        $det = finfo_file($finfo, $absPath);
+        if ($det) $mime = $det;
+        finfo_close($finfo);
+      }
+    }
+
+    header('Content-Type: ' . $mime);
     header('Content-Disposition: inline; filename="' . $fileName . '"');
     header('Content-Length: ' . filesize($absPath));
     header('Cache-Control: no-cache');
@@ -1968,10 +2015,10 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                             </th>
                                             <th>Nomor Aset</th>
                                             <th>Mekanisme Penghapusan</th>
-                                            <th>Fisik Aset</th>
                                             <th>Nama Aset</th>
                                             <th>Kategori</th>
                                             <th>Profit Center</th>
+                                            <th>Kondisi Fisik</th>
                                           </tr>
                                         </thead>
                                         <tbody>
@@ -1989,10 +2036,10 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                             </td>
                                             <td><?= htmlspecialchars($ua['nomor_asset_utama']) ?></td>
                                             <td><?= !empty($ua['mekanisme_penghapusan']) ? htmlspecialchars($ua['mekanisme_penghapusan']) : '-' ?></td>
-                                            <td><?= !empty($ua['fisik_aset']) ? htmlspecialchars($ua['fisik_aset']) : '-' ?></td>
                                             <td><?= htmlspecialchars(stripAUC($ua['nama_aset'] ?? '-')) ?></td>
                                             <td><?= htmlspecialchars($ua['kategori_aset'] ?? '-') ?></td>
                                             <td><?= htmlspecialchars($row['profit_center']) . (!empty($row['profit_center_text']) ? ' - ' . htmlspecialchars($row['profit_center_text']) : '') ?></td>
+                                            <td><?= !empty($ua['fisik_aset']) ? htmlspecialchars($ua['fisik_aset']) : '-' ?></td>
                                           </tr>                                       
                                           <?php endforeach; ?>
                                         </tbody>
@@ -3553,16 +3600,21 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
         const existingSection = document.getElementById('fotoExistingSection');
         const existingImg     = document.getElementById('fotoExistingImage');
         if (usulan.foto_path) {
-            // Build src: tambah prefix ../../ jika bukan absolute URL
-            let src = usulan.foto_path;
-            if (src && !/^(https?:)?\/\//i.test(src) && src.charAt(0) !== '/') {
-                src = '../../' + src;
+          let src = '';
+          if (typeof usulan.foto_path === 'string' && usulan.foto_path.length > 0) {
+            // If data URI, use as-is
+            if (usulan.foto_path.indexOf('data:') === 0) {
+              src = usulan.foto_path;
+            } else {
+              const isAbsoluteUrl = /^(https?:)?\/\//i.test(usulan.foto_path) || usulan.foto_path.charAt(0) === '/';
+              src = isAbsoluteUrl ? usulan.foto_path : '../../' + usulan.foto_path;
             }
-            existingImg.src = src;
-            existingSection.style.display = 'block';
-            document.getElementById('fotoUploadSection').style.display = 'block';
+          }
+          existingImg.src = src;
+          existingSection.style.display = 'block';
+          document.getElementById('fotoUploadSection').style.display = 'block';
         } else {
-            existingSection.style.display = 'none';
+          existingSection.style.display = 'none';
         }
         // Reset preview foto baru
         document.getElementById('fotoPreview').style.display = 'none';
@@ -3638,14 +3690,15 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
       }
       document.getElementById('modalFotoTitle').textContent = title;
 
-      let src = fotoPath;
+      let src = '';
       if (typeof fotoPath === 'string' && fotoPath.length > 0) {
-        const isAbsoluteUrl = /^(https?:)?\/\//i.test(fotoPath) || fotoPath.charAt(0) === '/';
-        if (!isAbsoluteUrl) {
-          src = '../../' + fotoPath; 
+        // If data URI (base64) — use as-is
+        if (fotoPath.indexOf('data:') === 0) {
+          src = fotoPath;
+        } else {
+          const isAbsoluteUrl = /^(https?:)?\/\//i.test(fotoPath) || fotoPath.charAt(0) === '/';
+          src = isAbsoluteUrl ? fotoPath : '../../' + fotoPath;
         }
-      } else {
-        src = '';
       }
 
       const img = document.getElementById('modalFotoImage');
