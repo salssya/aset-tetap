@@ -23,6 +23,25 @@ if (!isset($_SESSION["nipp"]) || !isset($_SESSION["name"])) {
   header("Location: ../login/login_view.php");
   exit();
 }
+// Restrict access: only users with Regional role may access this page.
+// Deny access for Sub Regional and Cabang users.
+$typeUser = isset($_SESSION['Type_User']) ? (string)$_SESSION['Type_User'] : '';
+$typeUserLower = strtolower($typeUser);
+$isRegional = (strpos($typeUserLower, 'regional') !== false && strpos($typeUserLower, 'sub') === false && strpos($typeUserLower, 'cabang') === false);
+if (!$isRegional) {
+    // If this looks like an AJAX/API request, return JSON 403
+    if (isset($_GET['action']) || isset($_POST['action']) || (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest')) {
+        header('Content-Type: application/json');
+        http_response_code(403);
+        echo json_encode(['error' => 'Akses ditolak. Hanya user Regional yang diperbolehkan.']);
+        exit();
+    }
+
+    // Otherwise show a simple HTML 403 page and stop execution
+    http_response_code(403);
+    echo '<h3 style="color:darkred">Akses ditolak</h3><p>Halaman ini hanya dapat diakses oleh user dengan peran <strong>Regional</strong>.</p>';
+    exit();
+}
 if (!isset($_SESSION['csrf_token'])) {
   try {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
