@@ -61,7 +61,6 @@ function normalize_foto_path($p) {
 }
 
 if (isset($_GET['action']) && $_GET['action'] === 'view_doc' && (isset($_GET['id']) || isset($_GET['id_dok']))) {
-  // Support: id_dok (id_dokumen langsung, lebih akurat) atau id (usulan_id, backward-compat)
   $nipp_val = (string)($_SESSION['nipp'] ?? '');
 
   if (isset($_GET['id_dok'])) {
@@ -87,7 +86,6 @@ if (isset($_GET['action']) && $_GET['action'] === 'view_doc' && (isset($_GET['id
   $typeUser = isset($_SESSION['Type_User']) ? (string)$_SESSION['Type_User'] : '';
   $sessionPc = trim($_SESSION['Cabang'] ?? $_SESSION['profit_center'] ?? '');
 
-  // Deteksi role — gunakan string persis sesuai Type_User di DB
   $isAdmin             = stripos($typeUser, 'admin') !== false;
   $isApprovalSubreg    = stripos($typeUser, 'Approval Sub Regional') !== false;
   $isApprovalRegional  = stripos($typeUser, 'Approval Regional') !== false;
@@ -98,16 +96,12 @@ if (isset($_GET['action']) && $_GET['action'] === 'view_doc' && (isset($_GET['id
   $canView = false;
 
   if ($isOwner || $isAdmin) {
-    // Pemilik dokumen atau admin → selalu bisa lihat
     $canView = true;
 
   } elseif ($isApprovalRegional || $isUserEntryRegional) {
-    // Regional (Approval maupun User Entry) → bisa lihat semua dokumen
     $canView = true;
 
   } elseif ($isApprovalSubreg || $isUserEntrySubreg) {
-    // SubReg → bisa lihat dokumen seluruh cabang di subreg-nya
-    // Ambil nama subreg dari DB berdasarkan profit_center session
     $doc_subreg = normalize_str($row['subreg'] ?? '');
     $session_subreg = '';
     if (!empty($sessionPc)) {
@@ -122,7 +116,6 @@ if (isset($_GET['action']) && $_GET['action'] === 'view_doc' && (isset($_GET['id
     }
 
   } elseif ($isUserEntryCabang) {
-    // Cabang → hanya bisa lihat dokumen cabang sendiri
     $doc_pc = normalize_str($row['profit_center'] ?? '');
     $canView = ($doc_pc === normalize_str($sessionPc));
   }
@@ -135,29 +128,69 @@ if (isset($_GET['action']) && $_GET['action'] === 'view_doc' && (isset($_GET['id
 
   $filePathDb = $row['file_path'] ?? '';
   $fileName   = !empty($row['file_name']) ? basename($row['file_name']) : 'dokumen.pdf';
+  $forceDownload = isset($_GET['download']) && $_GET['download'] === '1';
 
-  // Resolve path absolut file — coba beberapa strategi
-  // Upload folder relatif dari __DIR__ file ini
+  if (strpos($filePathDb, 'data:') === 0 && strpos($filePathDb, ';gzip,') !== false) {
+    $commaPos = strrpos($filePathDb, ',');
+    if ($commaPos === false) {
+      http_response_code(500);
+      echo 'Format data dokumen tidak valid.';
+      exit();
+    }
+    $base64Data = substr($filePathDb, $commaPos + 1);
+    $compressedData = base64_decode($base64Data);
+    if ($compressedData === false) {
+      http_response_code(500);
+      echo 'Gagal decode data dokumen.';
+      exit();
+    }
+    $fileData = gzdecode($compressedData);
+    if ($fileData === false) {
+      http_response_code(500);
+      echo 'Gagal decompress data dokumen.';
+      exit();
+    }
+    header('Content-Type: application/pdf');
+    header('Content-Disposition: ' . ($forceDownload ? 'attachment' : 'inline') . '; filename="' . $fileName . '"');
+    header('Content-Length: ' . strlen($fileData));
+    header('Cache-Control: no-cache, must-revalidate');
+    echo $fileData;
+    exit();
+  }
+
+  if (strpos($filePathDb, 'data:') === 0 && strpos($filePathDb, ';base64,') !== false) {
+    $commaPos = strpos($filePathDb, ',');
+    $base64Data = substr($filePathDb, $commaPos + 1);
+    $fileData = base64_decode($base64Data);
+    if ($fileData === false) {
+      http_response_code(500);
+      echo 'Gagal decode data dokumen.';
+      exit();
+    }
+    header('Content-Type: application/pdf');
+    header('Content-Disposition: ' . ($forceDownload ? 'attachment' : 'inline') . '; filename="' . $fileName . '"');
+    header('Content-Length: ' . strlen($fileData));
+    header('Cache-Control: no-cache, must-revalidate');
+    echo $fileData;
+    exit();
+  }
+
   $uploadBaseDir = realpath(__DIR__ . '/../../uploads/dokumen_penghapusan') ?: (__DIR__ . '/../../uploads/dokumen_penghapusan');
   $absPath = null;
 
-  // Strategi 1 (paling reliable): cari di upload folder berdasarkan nama file
   $try1 = $uploadBaseDir . '/' . basename($fileName);
   if (file_exists($try1)) $absPath = $try1;
 
-  // Strategi 2: webroot-relative (format baru: 'uploads/dokumen_penghapusan/xxx.pdf')
   if (!$absPath && !empty($filePathDb)) {
     $try2 = rtrim($_SERVER['DOCUMENT_ROOT'], '/') . '/' . ltrim(str_replace('\\', '/', $filePathDb), '/');
     if (file_exists($try2)) $absPath = $try2;
   }
 
-  // Strategi 3: relative dari __DIR__ (format lama: '../../uploads/...')
   if (!$absPath && !empty($filePathDb)) {
     $try3 = realpath(__DIR__ . '/' . $filePathDb);
     if ($try3 && file_exists($try3)) $absPath = $try3;
   }
 
-  // Strategi 4: path absolut langsung
   if (!$absPath && !empty($filePathDb) && file_exists($filePathDb)) $absPath = $filePathDb;
 
   if (!$absPath || !file_exists($absPath)) {
@@ -167,7 +200,6 @@ if (isset($_GET['action']) && $_GET['action'] === 'view_doc' && (isset($_GET['id
   }
 
   $mimeType = mime_content_type($absPath) ?: 'application/pdf';
-  $forceDownload = isset($_GET['download']) && $_GET['download'] === '1';
   header('Content-Type: ' . $mimeType);
   header('Content-Disposition: ' . ($forceDownload ? 'attachment' : 'inline') . '; filename="' . $fileName . '"');
   header('Content-Length: ' . filesize($absPath));
@@ -818,7 +850,7 @@ $stmt_docs->close();
                         <th>Nama Aset</th>
                         <th>Tipe Dokumen</th>
                         <th>Tahun</th>
-                        <th style="width:100px; text-align:center;">Unduh</th>
+                        <th style="width:100px; text-align:center;">Lihat Dokumen</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -844,11 +876,11 @@ $stmt_docs->close();
                           <td><?= htmlspecialchars($dokumen['tipe_dokumen'] ?? '—') ?></td>
                           <td><?= htmlspecialchars($dokumen['tahun_usulan'] ?? '—') ?></td>
                           <td style="text-align:center;">
-                            <a href="?action=view_doc&id_dok=<?= $dokumen['id_dokumen'] ?>&download=1"
-                               class="btn btn-sm btn-outline-success"
-                               download
-                               title="Download Dokumen">
-                              <i class="bi bi-download"></i>
+                          <a href="?action=view_doc&id_dok=<?= $dokumen['id_dokumen'] ?>"
+                            class="btn btn-sm btn-outline-primary"
+                            target="_blank"
+                            title="Lihat Dokumen">
+                            <i class="bi bi-eye"></i>
                             </a>
                           </td>
                         </tr>
