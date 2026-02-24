@@ -289,7 +289,7 @@ if (mysqli_num_rows($check_user) > 0) {
 
             <?php if (isset($error)): ?>
             <div class="alert alert-danger" role="alert">
-                <strong>⚠️ Error:</strong> <?php echo $error; ?>
+                <strong></strong> <?php echo $error; ?>
             </div>
             <?php endif; ?>
 

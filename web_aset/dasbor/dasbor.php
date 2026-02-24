@@ -527,9 +527,45 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
                   </div>
                   <!-- /.card-header -->
                   <div class="card-body">
-                    <div class="row">
+                    <!-- Nav Tabs untuk pilih diagram -->
+                    <ul class="nav nav-tabs mb-3" id="chartTabs" role="tablist">
+                      <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="horizontal-tab" data-bs-toggle="tab" data-bs-target="#horizontal-chart-tab" type="button" role="tab">
+                          <i class="bi bi-bar-chart me-2"></i>Bar Chart (Top 15)
+                        </button>
+                      </li>
+                      <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="vertical-tab" data-bs-toggle="tab" data-bs-target="#vertical-chart-tab" type="button" role="tab">
+                          <i class="bi bi-bar-chart-fill me-2"></i>Vertical Chart (All Asets)
+                        </button>
+                      </li>
+                      <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="pie-tab" data-bs-toggle="tab" data-bs-target="#pie-chart-tab" type="button" role="tab">
+                          <i class="bi bi-pie-chart me-2"></i>Pie Chart
+                        </button>
+                      </li>
+                    </ul>
+
+                    <!-- Tab Content -->
+                    <div class="tab-content" id="chartTabContent">
+                      <!-- Horizontal Bar Chart (Top 15) -->
+                      <div class="tab-pane fade show active" id="horizontal-chart-tab" role="tabpanel">
+                        <div id="horizontal-bar-chart" style="min-height: 500px;"></div>
+                      </div>
+
+                      <!-- Vertical Bar Chart (All Data) -->
+                      <div class="tab-pane fade" id="vertical-chart-tab" role="tabpanel">
+                        <div id="vertical-bar-chart" style="min-height: 600px;"></div>
+                      </div>
+
+                      <!-- Pie Chart (Original) -->
+                      <div class="tab-pane fade" id="pie-chart-tab" role="tabpanel">
+                        <div id="pie-chart" style="min-height: 400px;"></div>
+                      </div>
+                    </div>
+
+                    <div class="row mt-4">
                         <div class="col-12">
-                        <div id="pie-chart" style="min-height: 320px;"></div>
                         <?php
                         // Breakdown table: total nilai_perolehan_sd and total nilai_buku_sd grouped by asset_class_name
                         $breakdownQuery = "SELECT asset_class_name, COUNT(*) as count, " .
@@ -937,6 +973,122 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
       //-----------------
       // - END PIE CHART -
       //-----------------
+
+      // =====================
+      // HORIZONTAL BAR CHART (TOP 15)
+      // =====================
+      const horizontal_labels = <?php echo $labelsJson; ?>;
+      const horizontal_data = <?php echo $dataJson; ?>;
+      
+      // Buat array dengan labels & values, sort descending, ambil top 15
+      let horizontal_combined = horizontal_labels.map((label, idx) => ({
+        label: label,
+        value: horizontal_data[idx]
+      })).sort((a, b) => b.value - a.value).slice(0, 15);
+      
+      const horizontal_chart_options = {
+        series: [{
+          name: 'Nilai Perolehan (Rp)',
+          data: horizontal_combined.map(d => d.value)
+        }],
+        chart: {
+          type: 'bar',
+          height: 500,
+          toolbar: { show: true }
+        },
+        plotOptions: {
+          bar: {
+            horizontal: true,
+            dataLabels: { position: 'top' }
+          }
+        },
+        dataLabels: {
+          enabled: true,
+          formatter: function(val) {
+            return 'Rp ' + new Intl.NumberFormat('id-ID').format(Math.round(val / 1000000000)) + ' JT';
+          },
+          
+          offsetX: 0,
+          style: { fontSize: '11px', fontWeight: 600 }
+        },
+        xaxis: {
+          categories: horizontal_combined.map(d => d.label),
+          labels: {
+            formatter: function(val) {
+              return 'Rp ' + new Intl.NumberFormat('id-ID').format(Math.round(val / 1000000000000)) + 'M';
+            }
+          }
+        },
+        colors: ['#1666df'],
+        tooltip: {
+          y: {
+            formatter: function(val) {
+              return 'Rp ' + new Intl.NumberFormat('id-ID').format(Math.round(val));
+            }
+          }
+        },
+        noData: { text: 'Loading...' }
+      };
+
+      const horizontal_bar_chart = new ApexCharts(document.querySelector('#horizontal-bar-chart'), horizontal_chart_options);
+      horizontal_bar_chart.render();
+
+      // =====================
+      // VERTICAL BAR CHART (ALL DATA)
+      // =====================
+      const vertical_combined = horizontal_labels.map((label, idx) => ({
+        label: label,
+        value: horizontal_data[idx]
+      })).sort((a, b) => b.value - a.value);
+      
+      const vertical_chart_options = {
+        series: [{
+          name: 'Nilai Perolehan (Rp)',
+          data: vertical_combined.map(d => d.value)
+        }],
+        chart: {
+          type: 'bar',
+          height: 600,
+          toolbar: { show: true },
+          zoom: { enabled: true }
+        },
+        plotOptions: {
+          bar: {
+            horizontal: false,
+            columnWidth: '60%',
+            dataLabels: { position: 'top' }
+          }
+        },
+        dataLabels: {
+          enabled: false
+        },
+        xaxis: {
+          categories: vertical_combined.map(d => d.label),
+          labels: {
+            style: { fontSize: '11px' },
+            maxHeight: 95
+          }
+        },
+        yaxis: {
+          labels: {
+            formatter: function(val) {
+              return 'Rp ' + new Intl.NumberFormat('id-ID').format(Math.round(val / 1000000000000)) + 'M';
+            }
+          }
+        },
+        colors: ['#20c997'],
+        tooltip: {
+          y: {
+            formatter: function(val) {
+              return 'Rp ' + new Intl.NumberFormat('id-ID').format(Math.round(val));
+            }
+          }
+        }
+      };
+
+      const vertical_bar_chart = new ApexCharts(document.querySelector('#vertical-bar-chart'), vertical_chart_options);
+      vertical_bar_chart.render();
+
     </script>
     <!--end::Script-->
   </body>
