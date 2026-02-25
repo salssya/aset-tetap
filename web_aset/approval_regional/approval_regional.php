@@ -581,6 +581,80 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && $_POST['action'] === 'delete_draft')
     exit();
   }
 
+  // ========================================================
+  // HANDLER: View Dokumen (display PDF inline in iframe)
+  // ========================================================
+  if (isset($_GET['action']) && $_GET['action'] === 'view_dokumen' && isset($_GET['id_dok'])) {
+    $id_dok = intval($_GET['id_dok']);
+    $stmt = $con->prepare("SELECT file_name, file_path FROM dokumen_penghapusan WHERE id_dokumen = ? LIMIT 1");
+    if ($stmt) {
+      $stmt->bind_param("i", $id_dok);
+      $stmt->execute();
+      $res = $stmt->get_result();
+      if ($row = $res->fetch_assoc()) {
+        $name = $row['file_name'] ?? 'dokumen.pdf';
+        $file_path_db = $row['file_path'] ?? '';
+        
+        // Check if file_path is gzip-compressed data URI
+        if (!empty($file_path_db) && strpos($file_path_db, 'data:') === 0) {
+          // Check if gzip-compressed
+          if (strpos($file_path_db, ';gzip,') !== false) {
+            // Format: data:application/pdf;base64;gzip,<compressed_base64>
+            if (preg_match('#^data:([^;]+);base64;gzip,(.+)$#', $file_path_db, $m)) {
+              $mime = $m[1];
+              $b64_compressed = $m[2];
+              $compressed_data = base64_decode($b64_compressed, true);
+              if ($compressed_data === false) {
+                http_response_code(500);
+                echo 'Gagal decode data.';
+                exit();
+              }
+
+              // Decompress gzip
+              $data = @gzdecode($compressed_data);
+              if ($data === false) {
+                http_response_code(500);
+                echo 'Gagal decompress data.';
+                exit();
+              }
+
+              // Return PDF for inline viewing (not download)
+              header('Content-Type: ' . $mime);
+              header('Content-Disposition: inline; filename="' . basename($name) . '"');
+              header('Content-Length: ' . strlen($data));
+              header('Cache-Control: no-cache, must-revalidate');
+              echo $data;
+              exit();
+            }
+          } else {
+            // Format lama: data:application/pdf;base64,<base64>
+            if (preg_match('#^data:([^;]+);base64,(.+)$#', $file_path_db, $m)) {
+              $mime = $m[1];
+              $b64 = $m[2];
+              $data = base64_decode($b64, true);
+              if ($data === false) {
+                http_response_code(500);
+                echo 'Gagal decode data.';
+                exit();
+              }
+              // Return PDF for inline viewing (not download)
+              header('Content-Type: ' . $mime);
+              header('Content-Disposition: inline; filename="' . basename($name) . '"');
+              header('Content-Length: ' . strlen($data));
+              header('Cache-Control: no-cache, must-revalidate');
+              echo $data;
+              exit();
+            }
+          }
+        }
+      }
+      $stmt->close();
+    }
+    http_response_code(404);
+    echo 'Dokumen tidak ditemukan';
+    exit();
+  }
+
 // Handle cancel draft dari tombol di tabel (sama dengan delete_draft tapi dengan pesan berbeda)
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] === 'cancel_draft') {
     $draft_id = intval($_POST['draft_id']);
@@ -1345,7 +1419,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
   <!--begin::Head-->
   <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-    <title>Usulan Penghapusan - Web Aset Tetap</title>
+    <title>Approval Regional - Web Aset Tetap</title>
     <link rel="icon" type="image/png" href="../../dist/assets/img/emblem.png" /> 
     <link rel="shortcut icon" type="image/png" href="../../dist/assets/img/emblem.png" />  
     <!--begin::Accessibility Meta Tags-->
@@ -1755,21 +1829,21 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                     <!-- Nav tabs -->
                     <ul class="nav nav-tabs mb-3" id="myTab" role="tablist">
                       <li class="nav-item" role="presentation">
-                        <button class="nav-link active" id="upload-dokumen-tab" data-bs-toggle="tab" data-bs-target="#upload" type="button" role="tab" aria-controls="upload" aria-selected="true">
-                          <i class="bi bi-cloud-upload me-2"></i>Upload Dokumen
-                          <span class="badge bg-primary ms-1"><?= count($upload_data) ?></span>
+                        <button class="nav-link active" id="daftar-aset-tab" data-bs-toggle="tab" data-bs-target="#aset" type="button" role="tab" aria-controls="aset" aria-selected="true">
+                          <i class="bi bi-list-ul me-2"></i>Daftar Usulan
                         </button>
                       </li>
                       <li class="nav-item" role="presentation">
-                        <button class="nav-link" id="daftar-aset-tab" data-bs-toggle="tab" data-bs-target="#aset" type="button" role="tab" aria-controls="aset" aria-selected="false">
-                          <i class="bi bi-list-ul me-2"></i>Daftar Approval
+                        <button class="nav-link" id="upload-dokumen-tab" data-bs-toggle="tab" data-bs-target="#upload" type="button" role="tab" aria-controls="upload" aria-selected="false">
+                          <i class="bi bi-cloud-upload me-2"></i>Upload Dokumen
+                          <span class="badge bg-primary ms-1"><?= count($upload_data) ?></span>
                         </button>
                       </li>
                     </ul>
                     <!-- Tab Content -->
                     <div class="tab-content" id="usulanTabsContent">
                       <!-- Tab 1: Upload Dokumen -->
-                      <div class="tab-pane fade show active" id="upload" role="tabpanel">
+                      <div class="tab-pane fade" id="upload" role="tabpanel">
                             <?php
                             // Tampilkan pesan error/success dari session untuk tab upload
                             if (isset($_SESSION['error_message'])) {
@@ -1963,6 +2037,18 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                       z-index: 20020 !important;
                                     }
 
+                                    /* Ensure buttons and interactive elements in modal are clickable */
+                                    .modal-content,
+                                    .modal-header,
+                                    .modal-footer,
+                                    .modal button {
+                                      pointer-events: auto !important;
+                                    }
+
+                                    .modal-body {
+                                      pointer-events: auto !important;
+                                    }
+
                                     /* If any app wrapper uses very high z-index, lower it for stacking context issues */
                                     .app-wrapper, .app-sidebar, .app-main {
                                       z-index: auto !important;
@@ -2017,7 +2103,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                       </div>
                       <!-- End Tab Upload Pane -->
 
-                      <div class="tab-pane fade" id="aset" role="tabpanel">
+                      <div class="tab-pane fade show active" id="aset" role="tabpanel">
                       <!-- Summary Boxes -->
                             <div class="row mb-4">
                               <div class="col-md-4">
@@ -2370,6 +2456,34 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                           </div>
                           <!-- End Modal Detail Aset -->
 
+                          <!-- CSS untuk Z-Index Modal View Dokumen -->
+                          <style>
+                            /* Modal view dokumen harus selalu di depan */
+                            #modalViewDokumen {
+                              z-index: 1100 !important;
+                            }
+                            
+                            /* Backdrop untuk modal view dokumen */
+                            #modalViewDokumen ~ .modal-backdrop,
+                            .modal-backdrop[data-bs-modal="#modalViewDokumen"] {
+                              z-index: 1099 !important;
+                            }
+
+                            /* Pastikan modal content interactive */
+                            #modalViewDokumen .modal-content {
+                              z-index: 1100 !important;
+                            }
+
+                            /* Modal lengkapi data di belakang */
+                            #modalFormLengkapiDokumen {
+                              z-index: 1050 !important;
+                            }
+
+                            #modalFormLengkapiDokumen ~ .modal-backdrop {
+                              z-index: 1049 !important;
+                            }
+                          </style>
+
                           <!-- Modal: View Dokumen -->
                           <div class="modal fade" id="modalViewDokumen" tabindex="-1" aria-hidden="true">
                             <div class="modal-dialog modal-xl modal-dialog-centered" style="max-width:1000px;">
@@ -2382,7 +2496,9 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                   <iframe id="modalDokumenIframe" src="" frameborder="0" style="width:100%;height:70vh;"></iframe>
                                 </div>
                                 <div class="modal-footer">
-                                  <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Tutup</button>
+                                  <button type="button" class="btn btn-secondary" id="btnCloseModalDokumen" data-bs-dismiss="modal">
+                                    <i class="bi bi-x-circle me-1"></i> Tutup
+                                  </button>
                                 </div>
                               </div>
                             </div>
@@ -2484,25 +2600,71 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                               iframe.src = src;
                               if (titleEl) titleEl.textContent = 'Dokumen';
 
-                              // Move modal to document.body to avoid stacking-context issues
-                              if (modalEl.parentNode !== document.body) document.body.appendChild(modalEl);
-
-                              // Ensure modal/backdrop z-indexes are high
-                              modalEl.style.zIndex = '20010';
-
-                              const modalInstance = new bootstrap.Modal(modalEl, {backdrop: true});
-                              modalInstance.show();
-
-                              // Adjust backdrop z-index after it's inserted
+                              // Get existing instance atau buat baru
+                              let modalInstance = bootstrap.Modal.getInstance(modalEl);
+                              if (!modalInstance) {
+                                modalInstance = new bootstrap.Modal(modalEl, {
+                                  backdrop: true,
+                                  keyboard: true
+                                });
+                              }
+                              
+                              // Pastikan backdrop modal view dokumen memiliki z-index yang benar
                               setTimeout(() => {
                                 const backdrops = document.querySelectorAll('.modal-backdrop');
-                                backdrops.forEach(b => b.style.zIndex = '20000');
-                              }, 50);
+                                let viewDokBackdropCount = 0;
+                                
+                                backdrops.forEach((backdrop, idx) => {
+                                  // Cek apakah backdrop ini milik modal view dokumen
+                                  // Yang paling baru (terakhir) adalah untuk modal view dokumen
+                                  if (idx === backdrops.length - 1) {
+                                    // Ini backdrop terakhir (paling depan)
+                                    backdrop.style.zIndex = '1099';
+                                  }
+                                });
+                                
+                                // Set modal view dokumen z-index paling tinggi
+                                modalEl.style.zIndex = '1100';
+                              }, 10);
+                              
+                              modalInstance.show();
                             } catch (err) {
                               console.error('openDokumen error:', err);
                               alert('Terjadi kesalahan saat membuka dokumen');
                             }
                           }
+
+                          // Setup event listeners untuk modal view dokumen
+                          document.addEventListener('DOMContentLoaded', function() {
+                            const btnCloseModal = document.getElementById('btnCloseModalDokumen');
+                            if (btnCloseModal) {
+                              btnCloseModal.addEventListener('click', function() {
+                                const modalEl = document.getElementById('modalViewDokumen');
+                                const modalInstance = bootstrap.Modal.getInstance(modalEl);
+                                if (modalInstance) {
+                                  modalInstance.hide();
+                                }
+                              });
+                            }
+
+                            // Clean up iframe dan z-index saat modal ditutup
+                            const modalEl = document.getElementById('modalViewDokumen');
+                            if (modalEl) {
+                              modalEl.addEventListener('hidden.bs.modal', function() {
+                                const iframe = document.getElementById('modalDokumenIframe');
+                                if (iframe) {
+                                  iframe.src = '';
+                                }
+                                
+                                // Reset z-index jika modal lengkapi data masih terbuka
+                                const lengkapiModal = document.getElementById('modalFormLengkapiDokumen');
+                                if (lengkapiModal && lengkapiModal.classList.contains('show')) {
+                                  // Kembalikan fokus ke modal lengkapi data jika masih terbuka
+                                  lengkapiModal.style.zIndex = '1050';
+                                }
+                              });
+                            }
+                          });
 
                           /** Buka modal picker aset */
                           function openAsetPickerUpload() {
@@ -4267,7 +4429,10 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
           }).then(r => r.json()).then(json => {
             try{ bootstrap.Modal.getInstance(document.getElementById('modalConfirmApproveReject')).hide(); }catch(e){}
             try{ bootstrap.Modal.getInstance(document.getElementById('modalFormLengkapiDokumen')).hide(); }catch(e){}
-            if (json.success) location.reload(); else alert('Operasi gagal: ' + (json.error || 'Unknown'));
+            if (json.success) {
+              // Stay on the main approval list — navigate to the base path (clear query string)
+              location.replace(window.location.pathname);
+            } else alert('Operasi gagal: ' + (json.error || 'Unknown'));
           }).catch(err => alert('Error: ' + err.message));
         });
 
@@ -4290,7 +4455,10 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
           }).then(r => r.json()).then(json => {
             try{ bootstrap.Modal.getInstance(document.getElementById('modalConfirmReject')).hide(); }catch(e){}
             try{ bootstrap.Modal.getInstance(document.getElementById('modalFormLengkapiDokumen')).hide(); }catch(e){}
-            if (json.success) location.reload(); else alert('Operasi gagal: ' + (json.error || 'Unknown'));
+            if (json.success) {
+              // Stay on the main approval list — navigate to the base path (clear query string)
+              location.replace(window.location.pathname);
+            } else alert('Operasi gagal: ' + (json.error || 'Unknown'));
           }).catch(err => alert('Error: ' + err.message));
         });
       })();

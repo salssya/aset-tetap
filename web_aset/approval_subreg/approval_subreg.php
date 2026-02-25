@@ -1468,7 +1468,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
   <!--begin::Head-->
   <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-    <title>Usulan Penghapusan - Web Aset Tetap</title>
+    <title>Approval Sub Regional - Web Aset Tetap</title>
     <link rel="icon" type="image/png" href="../../dist/assets/img/emblem.png" /> 
     <link rel="shortcut icon" type="image/png" href="../../dist/assets/img/emblem.png" />  
     <!--begin::Accessibility Meta Tags-->
@@ -1835,21 +1835,21 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                     <!-- Nav tabs -->
                     <ul class="nav nav-tabs mb-3" id="myTab" role="tablist">
                       <li class="nav-item" role="presentation">
-                        <button class="nav-link active" id="upload-dokumen-tab" data-bs-toggle="tab" data-bs-target="#upload" type="button" role="tab" aria-controls="upload" aria-selected="true">
-                          <i class="bi bi-cloud-upload me-2"></i>Upload Dokumen
-                          <span class="badge bg-primary ms-1"><?= count($upload_data) ?></span>
+                        <button class="nav-link active" id="daftar-aset-tab" data-bs-toggle="tab" data-bs-target="#aset" type="button" role="tab" aria-controls="aset" aria-selected="true">
+                          <i class="bi bi-list-ul me-2"></i>Daftar Approval
                         </button>
                       </li>
                       <li class="nav-item" role="presentation">
-                        <button class="nav-link" id="daftar-aset-tab" data-bs-toggle="tab" data-bs-target="#aset" type="button" role="tab" aria-controls="aset" aria-selected="false">
-                          <i class="bi bi-list-ul me-2"></i>Daftar Approval
+                        <button class="nav-link" id="upload-dokumen-tab" data-bs-toggle="tab" data-bs-target="#upload" type="button" role="tab" aria-controls="upload" aria-selected="false">
+                          <i class="bi bi-cloud-upload me-2"></i>Upload Dokumen
+                          <span class="badge bg-primary ms-1"><?= count($upload_data) ?></span>
                         </button>
                       </li>
                     </ul>
                     <!-- Tab Content -->
                     <div class="tab-content" id="usulanTabsContent">
                       <!-- Tab 1: Upload Dokumen -->
-                      <div class="tab-pane fade show active" id="upload" role="tabpanel">
+                      <div class="tab-pane fade" id="upload" role="tabpanel">
                             <?php
                             // Tampilkan pesan error/success dari session untuk tab upload
                             if (isset($_SESSION['error_message'])) {
@@ -2388,7 +2388,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                           });
                           </script>
                           <!-- Tab 2: Daftar Approval -->
-                      <div class="tab-pane fade" id="aset" role="tabpanel">
+                      <div class="tab-pane fade show active" id="aset" role="tabpanel">
                             <div class="row mb-3 mt-2">
                               <div class="col-md-4">
                                 <div class="small-box" style="background: linear-gradient(135deg, #FFC107 0%, #FFB300 100%); color: white; margin-bottom: 0;">
