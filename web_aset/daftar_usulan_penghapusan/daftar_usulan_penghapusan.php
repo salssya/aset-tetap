@@ -216,9 +216,11 @@ $userNipp = $_SESSION['nipp'];
 $userType = isset($_SESSION['Type_User']) ? $_SESSION['Type_User'] : '';
 $userProfitCenter = isset($_SESSION['Cabang']) ? $_SESSION['Cabang'] : '';
 
-$isSubRegional = (strpos($userType, 'Approval Sub Regional') !== false || strpos($userType, 'User Entry Sub Regional') !== false);
-$isCabang      = (strpos($userType, 'Cabang') !== false || strpos($userType, 'User Entry Cabang') !== false);
-$isRegional    = !$isSubRegional && !$isCabang;
+$isSubRegional       = (strpos($userType, 'Approval Sub Regional') !== false || strpos($userType, 'User Entry Sub Regional') !== false);
+$isCabang            = (strpos($userType, 'Cabang') !== false || strpos($userType, 'User Entry Cabang') !== false);
+$isApprovalRegional  = (strpos($userType, 'Approval Regional') !== false && strpos($userType, 'User Entry') === false);
+$isUserEntryRegional = (strpos($userType, 'User Entry Regional') !== false);
+$isRegional          = !$isSubRegional && !$isCabang;
 
 $userSubreg = '';
 if ($isSubRegional && !empty($userProfitCenter)) {
@@ -237,11 +239,11 @@ if ($isSubRegional) {
     $whereClause .= " AND up.subreg = ?";
 } elseif ($isCabang) {
     $whereClause .= " AND up.profit_center = ?";
-} else {
-    // Approval Regional / User Entry Regional: tidak tampilkan yang direject oleh SubReg
+} elseif ($isApprovalRegional) {
     $whereClause .= " AND (up.status_approval_subreg != 'rejected' OR up.status_approval_subreg IS NULL)";
+} else {
+    
 }
-
 $query_daftar = "SELECT up.*,
                         id.keterangan_asset as nama_aset,
                         id.asset_class_name as kategori_aset,
@@ -303,8 +305,10 @@ if ($isSubRegional) {
     $query_docs .= " AND up.subreg = ?";
 } elseif ($isCabang) {
     $query_docs .= " AND up.profit_center = ?";
-} else {
+} elseif ($isApprovalRegional) {
     $query_docs .= " AND (up.status_approval_subreg != 'rejected' OR up.status_approval_subreg IS NULL)";
+} else {
+    
 }
 
 $query_docs .= " ORDER BY dp.id_dokumen DESC";
@@ -680,27 +684,48 @@ $stmt_docs->close();
                 'Daftar Aset Tetap'         => 'bi bi-card-list',
                 'Manajemen User'            => 'bi bi-people-fill'
           ];
+
           $menuRows = [];
-          while ($row = mysqli_fetch_assoc($result_menu)) { $menuRows[] = $row; }
-          $hasDaftarUsulan = false; $daftarRow = null;
-          foreach ($menuRows as $row) {
-              if (trim($row['nama_menu']) === 'Daftar Usulan Penghapusan') { $hasDaftarUsulan = true; $daftarRow = $row; break; }
+          while ($row = mysqli_fetch_assoc($result_menu)) {
+              $menuRows[] = $row;
           }
+
+          $hasDaftarUsulan = false;
+          $daftarRow       = null;
+          $hasUsulanMenu   = false;
+
+          foreach ($menuRows as $row) {
+              $nm = trim($row['nama_menu']);
+              if ($nm === 'Daftar Usulan Penghapusan') { $hasDaftarUsulan = true; $daftarRow = $row; }
+              if ($nm === 'Usulan Penghapusan')         { $hasUsulanMenu = true; }
+          }
+
           $currentPage = basename($_SERVER['PHP_SELF']);
+
           foreach ($menuRows as $row) {
               $namaMenu = trim($row['nama_menu']);
               if ($namaMenu === 'Daftar Usulan Penghapusan') continue;
-              $icon = $iconMap[$namaMenu] ?? 'bi bi-circle';
-              $menuFile = $row['menu'].'.php';
+
+              $icon     = $iconMap[$namaMenu] ?? 'bi bi-circle';
+              $menuFile = $row['menu'] . '.php';
               $isActive = ($currentPage === $menuFile) ? 'active' : '';
+
               if ($namaMenu === 'Manajemen Menu') echo '<li class="nav-header"></li>';
-              echo '<li class="nav-item"><a href="../'.$row['menu'].'/'.$row['menu'].'.php" class="nav-link '.$isActive.'"><i class="nav-icon '.$icon.'"></i><p>'.$row['nama_menu'].'</p></a></li>';
+              echo '<li class="nav-item"><a href="../' . $row['menu'] . '/' . $row['menu'] . '.php" class="nav-link ' . $isActive . '"><i class="nav-icon ' . $icon . '"></i><p>' . $row['nama_menu'] . '</p></a></li>';
+
               if ($namaMenu === 'Usulan Penghapusan' && $hasDaftarUsulan && $daftarRow) {
-                  $daftarIcon = $iconMap['Daftar Usulan Penghapusan'] ?? 'bi bi-circle';
-                  $daftarFile = $daftarRow['menu'].'.php';
+                  $daftarIcon     = $iconMap['Daftar Usulan Penghapusan'] ?? 'bi bi-circle';
+                  $daftarFile     = $daftarRow['menu'] . '.php';
                   $isDaftarActive = ($currentPage === $daftarFile) ? 'active' : '';
-                  echo '<li class="nav-item"><a href="../'.$daftarRow['menu'].'/'.$daftarRow['menu'].'.php" class="nav-link '.$isDaftarActive.'"><i class="nav-icon '.$daftarIcon.'"></i><p>Daftar Usulan Penghapusan</p></a></li>';
+                  echo '<li class="nav-item"><a href="../' . $daftarRow['menu'] . '/' . $daftarRow['menu'] . '.php" class="nav-link ' . $isDaftarActive . '"><i class="nav-icon ' . $daftarIcon . '"></i><p>Daftar Usulan Penghapusan</p></a></li>';
               }
+          }
+
+          if ($hasDaftarUsulan && $daftarRow && !$hasUsulanMenu) {
+              $daftarIcon     = $iconMap['Daftar Usulan Penghapusan'] ?? 'bi bi-circle';
+              $daftarFile     = $daftarRow['menu'] . '.php';
+              $isDaftarActive = ($currentPage === $daftarFile) ? 'active' : '';
+              echo '<li class="nav-item"><a href="../' . $daftarRow['menu'] . '/' . $daftarRow['menu'] . '.php" class="nav-link ' . $isDaftarActive . '"><i class="nav-icon ' . $daftarIcon . '"></i><p>Daftar Usulan Penghapusan</p></a></li>';
           }
           ?>
         </ul>
