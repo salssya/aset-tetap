@@ -250,67 +250,53 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
             ];
             
             $menuRows = [];
-            while ($row = mysqli_fetch_assoc($result_menu)) {
-                $menuRows[] = $row;
-            }
-            
-            $hasDaftarUsulan = false;
-            $daftarRow = null;
-            foreach ($menuRows as $row) {
-                if (trim($row['nama_menu']) === 'Daftar Usulan Penghapusan') {
-                    $hasDaftarUsulan = true;
-                    $daftarRow = $row;
-                    break;
-                }
-            }
-            
-            $currentPage = basename($_SERVER['PHP_SELF']);
-            
-            foreach ($menuRows as $row) {
-                $namaMenu = trim($row['nama_menu']);
-                
-                if ($namaMenu === 'Daftar Usulan Penghapusan') {
-                    continue;
-                }
-                
-                $icon = $iconMap[$namaMenu] ?? 'bi bi-circle';
-                $menuFile = $row['menu'].'.php';
-                $isActive = ($currentPage === $menuFile) ? 'active' : '';
+          while ($row = mysqli_fetch_assoc($result_menu)) {
+              $menuRows[] = $row;
+          }
 
-                if ($namaMenu === 'Manajemen Menu') {
-                    echo '<li class="nav-header"></li>';
-                }
-                
-                echo '
-                <li class="nav-item">
-                    <a href="../'.$row['menu'].'/'.$row['menu'].'.php" class="nav-link '.$isActive.'">
-                        <i class="nav-icon '.$icon.'"></i>
-                        <p>'.$row['nama_menu'].'</p>
-                    </a>
-                </li>';
-                
-                if ($namaMenu === 'Usulan Penghapusan' && $hasDaftarUsulan && $daftarRow) {
-                    $daftarIcon = $iconMap['Daftar Usulan Penghapusan'] ?? 'bi bi-circle';
-                    $daftarFile = $daftarRow['menu'].'.php';
-                    $isDaftarActive = ($currentPage === $daftarFile) ? 'active' : '';
-                    
-                    echo '
-                <li class="nav-item">
-                    <a href="../'.$daftarRow['menu'].'/'.$daftarRow['menu'].'.php" class="nav-link '.$isDaftarActive.'">
-                        <i class="nav-icon '.$daftarIcon.'"></i>
-                        <p>Daftar Usulan Penghapusan</p>
-                    </a>
-                </li>';
-                }
-            }
-            ?>
+          $hasDaftarUsulan = false;
+          $daftarRow       = null;
+          $hasUsulanMenu   = false;
 
-            </ul>
-            <!--end::Sidebar Menu-->
-          </nav>
-        </div>
-        <!--end::Sidebar Wrapper-->
-      </aside>
+          foreach ($menuRows as $row) {
+              $nm = trim($row['nama_menu']);
+              if ($nm === 'Daftar Usulan Penghapusan') { $hasDaftarUsulan = true; $daftarRow = $row; }
+              if ($nm === 'Usulan Penghapusan')         { $hasUsulanMenu = true; }
+          }
+
+          $currentPage = basename($_SERVER['PHP_SELF']);
+
+          foreach ($menuRows as $row) {
+              $namaMenu = trim($row['nama_menu']);
+              if ($namaMenu === 'Daftar Usulan Penghapusan') continue;
+
+              $icon     = $iconMap[$namaMenu] ?? 'bi bi-circle';
+              $menuFile = $row['menu'] . '.php';
+              $isActive = ($currentPage === $menuFile) ? 'active' : '';
+
+              if ($namaMenu === 'Manajemen Menu') echo '<li class="nav-header"></li>';
+              echo '<li class="nav-item"><a href="../' . $row['menu'] . '/' . $row['menu'] . '.php" class="nav-link ' . $isActive . '"><i class="nav-icon ' . $icon . '"></i><p>' . $row['nama_menu'] . '</p></a></li>';
+
+              if ($namaMenu === 'Usulan Penghapusan' && $hasDaftarUsulan && $daftarRow) {
+                  $daftarIcon     = $iconMap['Daftar Usulan Penghapusan'] ?? 'bi bi-circle';
+                  $daftarFile     = $daftarRow['menu'] . '.php';
+                  $isDaftarActive = ($currentPage === $daftarFile) ? 'active' : '';
+                  echo '<li class="nav-item"><a href="../' . $daftarRow['menu'] . '/' . $daftarRow['menu'] . '.php" class="nav-link ' . $isDaftarActive . '"><i class="nav-icon ' . $daftarIcon . '"></i><p>Daftar Usulan Penghapusan</p></a></li>';
+              }
+          }
+
+          if ($hasDaftarUsulan && $daftarRow && !$hasUsulanMenu) {
+              $daftarIcon     = $iconMap['Daftar Usulan Penghapusan'] ?? 'bi bi-circle';
+              $daftarFile     = $daftarRow['menu'] . '.php';
+              $isDaftarActive = ($currentPage === $daftarFile) ? 'active' : '';
+              echo '<li class="nav-item"><a href="../' . $daftarRow['menu'] . '/' . $daftarRow['menu'] . '.php" class="nav-link ' . $isDaftarActive . '"><i class="nav-icon ' . $daftarIcon . '"></i><p>Daftar Usulan Penghapusan</p></a></li>';
+          }
+          ?>
+        </ul>
+      </nav>
+    </div>
+  </aside>
+
       <!--end::Sidebar-->
       <!--begin::App Main-->
       <main class="app-main">
