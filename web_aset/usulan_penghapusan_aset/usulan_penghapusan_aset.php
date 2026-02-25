@@ -27,6 +27,7 @@ $isSubRegional = (
     stripos($userType, 'User Entry Sub Regional') !== false
 );
 $isCabang  = (!$isSubRegional && stripos($userType, 'Cabang') !== false);
+$isUserEntryRegional = stripos($userType, 'User Entry Regional') !== false;
 $isRegional = !$isSubRegional && !$isCabang;
 
 $userSubreg = '';
@@ -65,6 +66,8 @@ if ($isSubRegional) {
     $whereClause .= " AND subreg = ?";    
 } elseif ($isCabang) {
     $whereClause .= " AND profit_center = ?"; 
+} elseif ($isUserEntryRegional) {
+    $whereClause .= " AND profit_center = '12101'";
 }
 
 $query = "SELECT * FROM import_dat " . $whereClause . " ORDER BY nomor_asset_utama ASC";
@@ -452,7 +455,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         $_SESSION['success_message'] = "⚠️ Gagal menghapus usulan.";
     }
     $del->close();
-    header("Location: " . $_SERVER['PHP_SELF'] . "#dokumen");
+    header("Location: " . $_SERVER['PHP_SELF'] . "#lengkapi");
     exit();
 }
 
@@ -1567,6 +1570,28 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                                   ORDER BY CASE WHEN up.status IS NOT NULL THEN 0 ELSE 1 END ASC, id.nomor_asset_utama ASC";
                                         $stmt = $con->prepare($q_tab1);
                                         $stmt->bind_param("ss", $_SESSION['nipp'], $userProfitCenter);
+                                    } elseif ($isUserEntryRegional) {
+                                                  $q_tab1 = "SELECT id.*, 
+                                                  up.id as draft_id,
+                                                  up.mekanisme_penghapusan, 
+                                                  up.fisik_aset,
+                                                  up.status as draft_status,
+                                                  up.created_by as usulan_created_by,
+                                                  up_all.status as any_status,
+                                                  up_all.mekanisme_penghapusan as any_mekanisme,
+                                                  up_all.fisik_aset as any_fisik,
+                                                  up_all.created_by as any_created_by
+                                                  FROM import_dat id 
+                                                  LEFT JOIN usulan_penghapusan up 
+                                                        ON id.nomor_asset_utama = up.nomor_asset_utama AND up.created_by = ?
+                                                  LEFT JOIN usulan_penghapusan up_all
+                                                        ON id.nomor_asset_utama = up_all.nomor_asset_utama
+                                                  WHERE id.nilai_perolehan_sd != 0
+                                                    AND id.profit_center = '12101'
+                                                  GROUP BY id.id
+                                                  ORDER BY CASE WHEN up_all.status IS NOT NULL THEN 0 ELSE 1 END ASC, id.nomor_asset_utama ASC";
+                                        $stmt = $con->prepare($q_tab1);
+                                        $stmt->bind_param("s", $_SESSION['nipp']);
                                     } else {
                                         $q_tab1 = "SELECT id.*, 
                                                   up.id as draft_id,
