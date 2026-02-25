@@ -237,6 +237,9 @@ if ($isSubRegional) {
     $whereClause .= " AND up.subreg = ?";
 } elseif ($isCabang) {
     $whereClause .= " AND up.profit_center = ?";
+} else {
+    // Approval Regional / User Entry Regional: tidak tampilkan yang direject oleh SubReg
+    $whereClause .= " AND (up.status_approval_subreg != 'rejected' OR up.status_approval_subreg IS NULL)";
 }
 
 $query_daftar = "SELECT up.*,
@@ -245,12 +248,22 @@ $query_daftar = "SELECT up.*,
                         id.profit_center_text,
                         id.subreg,
                         id.nilai_perolehan_sd,
-                        (SELECT COUNT(*) FROM dokumen_penghapusan dp2 
-                        WHERE dp2.usulan_id = up.id 
-                           OR dp2.no_aset LIKE CONCAT('%', up.nomor_asset_utama, '%')
-                       ) as jumlah_dokumen
+                        (SELECT COUNT(*) FROM dokumen_penghapusan dp2
+                         WHERE dp2.usulan_id = up.id
+                            OR dp2.no_aset LIKE CONCAT('%', up.nomor_asset_utama, '%')
+                        ) as jumlah_dokumen,
+                        u.Nama as created_by_name,
+                        (SELECT ah.note FROM approval_history ah
+                         WHERE ah.usulan_id = up.id AND ah.action = 'reject_subreg'
+                         ORDER BY ah.created_at DESC LIMIT 1
+                        ) as alasan_reject_subreg,
+                        (SELECT ah.note FROM approval_history ah
+                         WHERE ah.usulan_id = up.id AND ah.action = 'reject_regional'
+                         ORDER BY ah.created_at DESC LIMIT 1
+                        ) as alasan_reject_regional
                  FROM usulan_penghapusan up
                  LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama
+                 LEFT JOIN users u ON up.created_by = u.NIPP
                  " . $whereClause . "
                  ORDER BY up.status DESC, up.created_at DESC";
 
@@ -290,7 +303,10 @@ if ($isSubRegional) {
     $query_docs .= " AND up.subreg = ?";
 } elseif ($isCabang) {
     $query_docs .= " AND up.profit_center = ?";
+} else {
+    $query_docs .= " AND (up.status_approval_subreg != 'rejected' OR up.status_approval_subreg IS NULL)";
 }
+
 $query_docs .= " ORDER BY dp.id_dokumen DESC";
 
 $stmt_docs = $con->prepare($query_docs);
@@ -912,6 +928,26 @@ $stmt_docs->close();
 
 </div><!-- end app-wrapper -->
 
+<!-- LIGHTBOX FOTO -->
+<div id="lightboxOverlay" onclick="tutupLightbox()"
+     style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.88);
+            align-items:center;justify-content:center;cursor:zoom-out;">
+  <div style="position:relative;max-width:90vw;max-height:90vh;" onclick="event.stopPropagation()">
+    <img id="lightboxImg" src="" alt="Foto Aset"
+         style="max-width:90vw;max-height:85vh;object-fit:contain;border-radius:8px;
+                box-shadow:0 8px 40px rgba(0,0,0,.6);display:block;">
+    <button onclick="tutupLightbox()"
+            style="position:absolute;top:-14px;right:-14px;width:32px;height:32px;border-radius:50%;
+                   border:none;background:#fff;color:#333;font-size:1rem;cursor:pointer;
+                   display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,.3);">
+      <i class="bi bi-x-lg"></i>
+    </button>
+    <div style="text-align:center;margin-top:8px;font-size:0.75rem;color:#ccc;">
+      Klik di luar foto atau tombol × untuk menutup
+    </div>
+  </div>
+</div>
+
 <!-- MODAL DETAIL                                                  -->
 <div class="modal fade" id="modalDetail" tabindex="-1" style="position:fixed !important;">
   <div class="modal-dialog modal-lg modal-dialog-scrollable" style="margin:1.75rem auto !important;">
@@ -931,7 +967,10 @@ $stmt_docs->close();
 
       </div>
 
-      <div class="modal-footer bg-light border-top">
+      <div class="modal-footer bg-light border-top d-flex align-items-center justify-content-between">
+        <div id="modalFooterMeta" style="font-size:0.78rem;color:#6b7280;line-height:1.5;">
+          <!-- diisi oleh JS -->
+        </div>
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
           <i class="bi bi-x-circle me-1"></i>Tutup
         </button>
@@ -1020,7 +1059,7 @@ $stmt_docs->close();
       </div>`;
     }
 
-    function statusNode(label, sub, status, locked) {
+    function statusNode(label, sub, status, locked, alasanReject) {
       let bg, color, icon;
       if (locked)               { bg='#f3f4f6'; color='#9ca3af'; icon='lock-fill'; }
       else if(status==='approved'){ bg='#d1fae5'; color='#059669'; icon='check-lg'; }
@@ -1033,6 +1072,13 @@ $stmt_docs->close();
       const txtColor = locked ? '#9ca3af'
                      : status==='approved' ? '#059669'
                      : status==='rejected' ? '#dc2626' : '#d97706';
+
+      const rejectHtml = (!locked && status === 'rejected' && alasanReject)
+        ? `<div style="margin-top:6px;font-size:0.75rem;font-weight:700;color:#dc2626;max-width:160px;margin-left:auto;margin-right:auto;line-height:1.4;">
+             <i class="bi bi-chat-left-text me-1"></i>${alasanReject}
+           </div>`
+        : '';
+
       return `<div class="status-node">
         <div class="status-node-circle" style="background:${bg};">
           <i class="bi bi-${icon}" style="color:${color};"></i>
@@ -1040,6 +1086,7 @@ $stmt_docs->close();
         <div class="status-node-name" style="color:${txtColor};">${txt}</div>
         <div class="status-node-sub">${label}</div>
         <div class="status-node-sub" style="font-size:0.65rem;">${sub}</div>
+        ${rejectHtml}
       </div>`;
     }
 
@@ -1066,7 +1113,7 @@ $stmt_docs->close();
     const fotoHtml = usulan.foto_path
       ? `<div class="text-center py-3" style="background:#f8f9fa; border-bottom:1px solid #f0f0f0;">
            <img src="${usulan.foto_path}" class="foto-aset-img img-fluid"
-                onclick="window.open('${usulan.foto_path}','_blank')"
+                onclick="bukaLightbox('${usulan.foto_path}')"
                 title="Klik untuk perbesar">
            <div class="mt-1" style="font-size:0.72rem;color:#9ca3af;">
              Klik foto untuk memperbesar
@@ -1134,7 +1181,7 @@ $stmt_docs->close();
                       class="btn btn-sm btn-outline-info"
                       style="font-size:0.76rem;padding:2px 9px;"
                       title="Preview Dokumen">
-                <i class="bi bi-card-image me-1"></i>Preview
+                <i class="bi bi-file-text me-1"></i>
               </button>
               <a href="${viewUrl}" target="_blank"
                  class="btn btn-sm btn-outline-primary"
@@ -1201,8 +1248,8 @@ $stmt_docs->close();
       <div class="detail-section" style="background:#f8faff;">
         <div class="detail-section-title"><i class="bi bi-shield-check"></i> Status Persetujuan</div>
         <div class="status-track px-4 py-2">
-          ${statusNode('Sub Regional', 'Persetujuan ke-1', usulan.status_approval_subreg, false)}
-          ${statusNode('Regional', 'Persetujuan ke-2', usulan.status_approval_regional, isLocked)}
+          ${statusNode('Sub Regional', 'Persetujuan ke-1', usulan.status_approval_subreg, false, usulan.alasan_reject_subreg || '')}
+          ${statusNode('Regional', 'Persetujuan ke-2', usulan.status_approval_regional, isLocked, usulan.alasan_reject_regional || '')}
         </div>
       </div>
 
@@ -1222,6 +1269,26 @@ $stmt_docs->close();
 
     document.getElementById('modalSubtitle').textContent = usulan.nama_aset || usulan.nomor_asset_utama;
     document.getElementById('modalDetailBody').innerHTML = html;
+
+    // Footer meta: created_at & created_by
+    const metaEl = document.getElementById('modalFooterMeta');
+    if (metaEl) {
+      let metaHtml = '';
+      if (usulan.created_at) {
+        const dt = new Date(usulan.created_at.replace(' ', 'T'));
+        const tgl = dt.toLocaleDateString('id-ID', { day:'2-digit', month:'long', year:'numeric' });
+        const jam = dt.toLocaleTimeString('id-ID', { hour:'2-digit', minute:'2-digit' });
+        metaHtml += `<span><i class="bi bi-clock me-1"></i><strong>Dibuat:</strong> ${tgl}, ${jam}</span>`;
+      }
+      if (usulan.created_by || usulan.created_by_name) {
+        const byNipp = usulan.created_by || '';
+        const byName = usulan.created_by_name || '';
+        const byLabel = byName ? `${byName} (${byNipp})` : byNipp;
+        metaHtml += `<span class="ms-3"><i class="bi bi-person me-1"></i><strong>Oleh:</strong> ${byLabel}</span>`;
+      }
+      metaEl.innerHTML = metaHtml || '';
+    }
+
     new bootstrap.Modal(document.getElementById('modalDetail')).show();
   }
 </script>
@@ -1229,5 +1296,26 @@ $stmt_docs->close();
 <script src="../../dist/js/overlayscrollbars.browser.es6.min.js"></script>
 <script src="../../dist/js/popper.min.js"></script>
 <script src="../../dist/js/adminlte.js"></script>
+
+<script>
+  function bukaLightbox(src) {
+    if (!src) return;
+    const overlay = document.getElementById('lightboxOverlay');
+    const img     = document.getElementById('lightboxImg');
+    img.src = src;
+    overlay.style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+  }
+  function tutupLightbox() {
+    const overlay = document.getElementById('lightboxOverlay');
+    overlay.style.display = 'none';
+    document.getElementById('lightboxImg').src = '';
+    document.body.style.overflow = '';
+  }
+  // Tutup lightbox dengan tombol Escape
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') tutupLightbox();
+  });
+</script>
 </body>
 </html>
