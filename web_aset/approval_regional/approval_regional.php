@@ -1959,6 +1959,29 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                       <?php if (empty($semua_dokumen)): ?>
                                         <tr>
                                           <td colspan="8" class="text-center text-muted py-3">
+                                  <!-- Modal stacking fix: ensure bootstrap modals and backdrops render above app UI -->
+                                  <style>
+                                    /* Make modal backdrop and modal content higher than any app elements */
+                                    .modal-backdrop,
+                                    .modal-backdrop.show {
+                                      z-index: 20000 !important;
+                                    }
+
+                                    .modal,
+                                    .modal.show {
+                                      z-index: 20010 !important;
+                                    }
+
+                                    /* Ensure dialog itself sits above the backdrop */
+                                    .modal .modal-dialog {
+                                      z-index: 20020 !important;
+                                    }
+
+                                    /* If any app wrapper uses very high z-index, lower it for stacking context issues */
+                                    .app-wrapper, .app-sidebar, .app-main {
+                                      z-index: auto !important;
+                                    }
+                                  </style>
                                             Belum ada dokumen yang diupload
                                           </td>
                                         </tr>
@@ -1976,7 +1999,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                             <button type="button"
                                                     class="btn btn-sm btn-outline-secondary"
                                                     style="margin-right: 4px; font-size: 0.8rem; padding: 2px 8px;"
-                                                    onclick="openDokumen(<?= $dok['id_dokumen'] ?>, '<?= htmlspecialchars($_SERVER['PHP_SELF'] . '?action=download_dokumen&id=' . $dok['id_dokumen']) ?>')">
+                                                    onclick="openDokumen(<?= $dok['id_dokumen'] ?>, '<?= htmlspecialchars($_SERVER['PHP_SELF'] . '?action=view_dokumen&id_dok=' . $dok['id_dokumen']) ?>')">
                                               Lihat Dokumen
                                             </button>
                                             <!-- Detail Aset -->
@@ -2453,12 +2476,18 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                               iframe.src = '';
                               if (titleEl) titleEl.textContent = 'Memuat dokumen...';
 
-                              // Gunakan download URL yang sudah disiapkan
+                              // Gunakan download URL yang sudah disiapkan, tapi ubah ke view handler jika diperlukan
                               let src = '';
                               if (downloadUrl && downloadUrl.length > 0) {
-                                src = downloadUrl;
+                                // Convert download URL to view URL and ensure parameter name is id_dok
+                                src = downloadUrl.replace('action=download_dokumen', 'action=view_dokumen').replace(/([?&])id=/, '$1id_dok=');
+                                // Normalize relative URLs
+                                if (!/^(https?:)?\/\//i.test(src) && src.charAt(0) !== '/') {
+                                  const basePath = window.location.pathname.replace(/\/[^\/]*$/, '/');
+                                  src = basePath + src;
+                                }
                               } else if (dokumenId && parseInt(dokumenId) > 0) {
-                                src = window.location.pathname + '?action=download_dokumen&id=' + encodeURIComponent(dokumenId);
+                                src = window.location.pathname + '?action=view_dokumen&id_dok=' + encodeURIComponent(dokumenId);
                               }
 
                               if (!src) {
@@ -2468,7 +2497,21 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
 
                               iframe.src = src;
                               if (titleEl) titleEl.textContent = 'Dokumen';
-                              new bootstrap.Modal(modalEl, {backdrop: true}).show();
+
+                              // Move modal to document.body to avoid stacking-context issues
+                              if (modalEl.parentNode !== document.body) document.body.appendChild(modalEl);
+
+                              // Ensure modal/backdrop z-indexes are high
+                              modalEl.style.zIndex = '20010';
+
+                              const modalInstance = new bootstrap.Modal(modalEl, {backdrop: true});
+                              modalInstance.show();
+
+                              // Adjust backdrop z-index after it's inserted
+                              setTimeout(() => {
+                                const backdrops = document.querySelectorAll('.modal-backdrop');
+                                backdrops.forEach(b => b.style.zIndex = '20000');
+                              }, 50);
                             } catch (err) {
                               console.error('openDokumen error:', err);
                               alert('Terjadi kesalahan saat membuka dokumen');
@@ -4014,7 +4057,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                     <td>${asetDisplay}</td>
                     <td style="white-space: nowrap;">
                       <button type="button" class="btn btn-sm btn-outline-secondary" style="font-size: 0.75rem; padding: 2px 6px;"
-                              onclick="openDokumen(${dok.id_dokumen}, '<?= htmlspecialchars($_SERVER['PHP_SELF'] . '?action=download_dokumen&id=') ?>' + ${dok.id_dokumen})">
+                              onclick="openDokumen(${dok.id_dokumen}, '<?= htmlspecialchars($_SERVER['PHP_SELF'] . '?action=view_dokumen&id_dok=') ?>' + ${dok.id_dokumen})">
                         <i class="bi bi-eye"></i> Lihat
                       </button>
                     </td>
