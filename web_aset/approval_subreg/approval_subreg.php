@@ -204,7 +204,7 @@ $query_subreg_pending = "SELECT up.*,
        id.profit_center_text
        FROM usulan_penghapusan up 
        LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama 
-       " . $filterCondition . " AND up.status IN ('dokumen_lengkap','submitted')
+       " . $filterCondition . " AND up.status IN ('submitted')
        AND COALESCE(up.status_approval_subreg, 'pending') IN ('pending','submitted')
        ORDER BY up.created_at DESC";
 
@@ -228,7 +228,7 @@ if ($result_subreg) {
 $upload_data = [];
 // Reviewer view (SubRegional / Cabang) -> show items awaiting subreg approval
 if (isset($_SESSION['Type_User']) && (stripos($_SESSION['Type_User'], 'Sub') !== false || stripos($_SESSION['Type_User'], 'Cabang') !== false)) {
-  $uploadWhereClause = $filterCondition . " AND up.status IN ('dokumen_lengkap','submitted') AND COALESCE(up.status_approval_subreg, 'pending') IN ('pending','submitted')";
+  $uploadWhereClause = $filterCondition . " AND up.status IN ('submitted') AND COALESCE(up.status_approval_subreg, 'pending') IN ('pending','submitted')";
 
   $query_upload = "SELECT up.*, 
            id.keterangan_asset as nama_aset,
@@ -302,7 +302,7 @@ $count_pending = 0;
 $query_pending_count = "SELECT COUNT(*) AS cnt 
    FROM usulan_penghapusan up 
    LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama 
-   " . $filterCondition . " AND up.status IN ('dokumen_lengkap','submitted') AND COALESCE(up.status_approval_subreg, 'pending') IN ('pending','submitted')";
+   " . $filterCondition . " AND up.status IN ('submitted') AND COALESCE(up.status_approval_subreg, 'pending') IN ('pending','submitted')";
 $res_p = mysqli_query($con, $query_pending_count);
 if ($res_p) {
   $count_pending = intval((mysqli_fetch_assoc($res_p)['cnt']) ?? 0);
@@ -932,9 +932,37 @@ if (isset($_GET['action']) && $_GET['action'] === 'view_dokumen' && isset($_GET[
         }
     }
 
-    http_response_code(404);
-    echo 'Format dokumen tidak didukung.';
-    exit();
+          // Jika file_path bukan data URI, coba layani sebagai file di filesystem (uploads)
+          if (!empty($filePathDb)) {
+            $candidates = [
+              $filePathDb,
+              __DIR__ . '/' . $filePathDb,
+              __DIR__ . '/../' . $filePathDb,
+              __DIR__ . '/../../' . $filePathDb,
+              __DIR__ . '/../../../' . $filePathDb,
+            ];
+            $found = null;
+            foreach ($candidates as $p) {
+              if ($p && file_exists($p) && is_file($p) && is_readable($p)) {
+                $found = $p;
+                break;
+              }
+            }
+
+            if ($found) {
+              $mime = @mime_content_type($found) ?: 'application/octet-stream';
+              header('Content-Type: ' . $mime);
+              header('Content-Disposition: inline; filename="' . $fileName . '"');
+              header('Cache-Control: no-cache');
+              header('Content-Length: ' . filesize($found));
+              readfile($found);
+              exit();
+            }
+          }
+
+          http_response_code(404);
+          echo 'Format dokumen tidak didukung atau file tidak ditemukan.';
+          exit();
 }
 
 // ========================================================
@@ -1717,68 +1745,54 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                 'Daftar Aset Tetap'         => 'bi bi-card-list',
                 'Manajemen User'            => 'bi bi-people-fill'
             ];
-            
             $menuRows = [];
-            while ($row = mysqli_fetch_assoc($result_menu)) {
-                $menuRows[] = $row;
-            }
-            
-            $hasDaftarUsulan = false;
-            $daftarRow = null;
-            foreach ($menuRows as $row) {
-                if (trim($row['nama_menu']) === 'Daftar Usulan Penghapusan') {
-                    $hasDaftarUsulan = true;
-                    $daftarRow = $row;
-                    break;
-                }
-            }
-            
-            $currentPage = basename($_SERVER['PHP_SELF']);
-            
-            foreach ($menuRows as $row) {
-                $namaMenu = trim($row['nama_menu']);
-                
-                if ($namaMenu === 'Daftar Usulan Penghapusan') {
-                    continue;
-                }
-                
-                $icon = $iconMap[$namaMenu] ?? 'bi bi-circle';
-                $menuFile = $row['menu'].'.php';
-                $isActive = ($currentPage === $menuFile) ? 'active' : '';
+          while ($row = mysqli_fetch_assoc($result_menu)) {
+              $menuRows[] = $row;
+          }
 
-                if ($namaMenu === 'Manajemen Menu') {
-                    echo '<li class="nav-header"></li>';
-                }
-                
-                echo '
-                <li class="nav-item">
-                    <a href="../'.$row['menu'].'/'.$row['menu'].'.php" class="nav-link '.$isActive.'">
-                        <i class="nav-icon '.$icon.'"></i>
-                        <p>'.$row['nama_menu'].'</p>
-                    </a>
-                </li>';
-                
-                if ($namaMenu === 'Usulan Penghapusan' && $hasDaftarUsulan && $daftarRow) {
-                    $daftarIcon = $iconMap['Daftar Usulan Penghapusan'] ?? 'bi bi-circle';
-                    $daftarFile = $daftarRow['menu'].'.php';
-                    $isDaftarActive = ($currentPage === $daftarFile) ? 'active' : '';
-                    
-                    echo '
-                <li class="nav-item">
-                    <a href="../'.$daftarRow['menu'].'/'.$daftarRow['menu'].'.php" class="nav-link '.$isDaftarActive.'">
-                        <i class="nav-icon '.$daftarIcon.'"></i>
-                        <p>Daftar Usulan Penghapusan</p>
-                    </a>
-                </li>';
-                }
-            }
-            ?>
-            </ul>
-            <!--end::Sidebar Menu-->
-          </nav>
-        </div>
-        <!--end::Sidebar Wrapper-->
-      </aside>
+          $hasDaftarUsulan = false;
+          $daftarRow       = null;
+          $hasUsulanMenu   = false;
+
+          foreach ($menuRows as $row) {
+              $nm = trim($row['nama_menu']);
+              if ($nm === 'Daftar Usulan Penghapusan') { $hasDaftarUsulan = true; $daftarRow = $row; }
+              if ($nm === 'Usulan Penghapusan')         { $hasUsulanMenu = true; }
+          }
+
+          $currentPage = basename($_SERVER['PHP_SELF']);
+
+          foreach ($menuRows as $row) {
+              $namaMenu = trim($row['nama_menu']);
+              if ($namaMenu === 'Daftar Usulan Penghapusan') continue;
+
+              $icon     = $iconMap[$namaMenu] ?? 'bi bi-circle';
+              $menuFile = $row['menu'] . '.php';
+              $isActive = ($currentPage === $menuFile) ? 'active' : '';
+
+              if ($namaMenu === 'Manajemen Menu') echo '<li class="nav-header"></li>';
+              echo '<li class="nav-item"><a href="../' . $row['menu'] . '/' . $row['menu'] . '.php" class="nav-link ' . $isActive . '"><i class="nav-icon ' . $icon . '"></i><p>' . $row['nama_menu'] . '</p></a></li>';
+
+              if ($namaMenu === 'Usulan Penghapusan' && $hasDaftarUsulan && $daftarRow) {
+                  $daftarIcon     = $iconMap['Daftar Usulan Penghapusan'] ?? 'bi bi-circle';
+                  $daftarFile     = $daftarRow['menu'] . '.php';
+                  $isDaftarActive = ($currentPage === $daftarFile) ? 'active' : '';
+                  echo '<li class="nav-item"><a href="../' . $daftarRow['menu'] . '/' . $daftarRow['menu'] . '.php" class="nav-link ' . $isDaftarActive . '"><i class="nav-icon ' . $daftarIcon . '"></i><p>Daftar Usulan Penghapusan</p></a></li>';
+              }
+          }
+
+          if ($hasDaftarUsulan && $daftarRow && !$hasUsulanMenu) {
+              $daftarIcon     = $iconMap['Daftar Usulan Penghapusan'] ?? 'bi bi-circle';
+              $daftarFile     = $daftarRow['menu'] . '.php';
+              $isDaftarActive = ($currentPage === $daftarFile) ? 'active' : '';
+              echo '<li class="nav-item"><a href="../' . $daftarRow['menu'] . '/' . $daftarRow['menu'] . '.php" class="nav-link ' . $isDaftarActive . '"><i class="nav-icon ' . $daftarIcon . '"></i><p>Daftar Usulan Penghapusan</p></a></li>';
+          }
+          ?>
+        </ul>
+      </nav>
+    </div>
+  </aside>
+
       <!--end::Sidebar-->
       <!--begin::App Main-->
       <main class="app-main">
@@ -2881,14 +2895,19 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
               iframe.src = '';
               if (titleEl) titleEl.textContent = 'Memuat dokumen...';
 
-              // Gunakan download URL untuk view dokumen
-              let src = '';
-              if (downloadUrl && downloadUrl.length > 0) {
-                  // Replace action=download_dokumen dengan action=view_dokumen
-                  src = downloadUrl.replace('action=download_dokumen', 'action=view_dokumen');
-              } else if (dokumenId && parseInt(dokumenId) > 0) {
+                // Gunakan download URL untuk view dokumen — pastikan parameter cocok untuk handler view_dokumen
+                let src = '';
+                if (downloadUrl && downloadUrl.length > 0) {
+                  // Ubah action menjadi view_dokumen dan pastikan parameter id diganti ke id_dok
+                  src = downloadUrl.replace('action=download_dokumen', 'action=view_dokumen').replace(/([?&])id=/, '$1id_dok=');
+                  // Jika URL relatif (tanpa leading slash atau protocol), normalisasi terhadap current path
+                  if (!/^(https?:)?\/\//i.test(src) && src.charAt(0) !== '/') {
+                    const basePath = window.location.pathname.replace(/\/[^\/]*$/, '/');
+                    src = basePath + src;
+                  }
+                } else if (dokumenId && parseInt(dokumenId) > 0) {
                   src = window.location.pathname + '?action=view_dokumen&id_dok=' + encodeURIComponent(dokumenId);
-              }
+                }
 
               if (!src) {
                   alert('Dokumen tidak tersedia');
@@ -3619,6 +3638,8 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                 asetDisplay = `<span class="badge bg-info text-dark">${no_list.length} aset</span><br><small>${no_list.join(' | ')}</small>`;
               }
               
+              const safeFileName = encodeURIComponent(dok.file_name || '');
+
               tr.innerHTML = `
                 <td><strong>${dok.id_dokumen}</strong></td>
                 <td>${dok.file_name || '-'}</td>
@@ -3626,11 +3647,11 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                 <td>${asetDisplay}</td>
                 <td style="white-space: nowrap;">
                   <button type="button" class="btn btn-sm btn-outline-secondary" style="font-size: 0.75rem; padding: 2px 6px;"
-                          onclick="openDokumen(${dok.id_dokumen}, '<?= htmlspecialchars($_SERVER['PHP_SELF'] . '?action=download_dokumen&id=') ?>' + ${dok.id_dokumen})">
+                          onclick="openDokumen(${dok.id_dokumen}, '<?= htmlspecialchars($_SERVER['PHP_SELF'] . '?action=view_dokumen&id_dok=') ?>' + ${dok.id_dokumen})">
                     <i class="bi bi-eye"></i> Lihat
                   </button>
                   <button type="button" class="btn btn-sm btn-outline-danger" style="font-size: 0.75rem; padding: 2px 6px;"
-                          onclick="confirmDeleteDokumen(${dok.id_dokumen}, '${dok.file_name}')">
+                          onclick="confirmDeleteDokumen(${dok.id_dokumen}, decodeURIComponent('${safeFileName}'))">
                     <i class="bi bi-trash"></i> Hapus
                   </button>
                 </td>
