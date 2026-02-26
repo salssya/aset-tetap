@@ -1106,40 +1106,57 @@ if (isset($_GET['action']) && $_GET['action'] === 'get_dokumen_by_usulan' && iss
     $usulan_id = intval($_GET['usulan_id']);
     
     try {
-        $query = "
-            SELECT 
-                dp.id_dokumen,
-                dp.tahun_dokumen,
-                dp.no_aset,
-                dp.tipe_dokumen,
-                dp.file_name,
-                dp.uploaded_at
-            FROM dokumen_penghapusan dp
-            WHERE dp.usulan_id = ?
-            ORDER BY dp.uploaded_at DESC
-        ";
-        
-        if (!($stmt = $con->prepare($query))) {
-            throw new Exception('Prepare error: ' . $con->error);
-        }
-        
-        if (!$stmt->bind_param('i', $usulan_id)) {
-            throw new Exception('Bind param error: ' . $stmt->error);
-        }
-        
-        if (!$stmt->execute()) {
-            throw new Exception('Execute error: ' . $stmt->error);
-        }
-        
-        $result = $stmt->get_result();
-        
-        $dokumen = [];
-        while ($row = $result->fetch_assoc()) {
-            $dokumen[] = $row;
-        }
-        $stmt->close();
-        
-        echo json_encode(['success' => true, 'data' => $dokumen]);
+    // Also include documents that were uploaded for multiple assets
+    // (dokumen_penghapusan.no_aset stores semicolon-separated asset numbers)
+    // First get the nomor_asset_utama for this usulan
+    $nomor_asset = '';
+    $s = $con->prepare("SELECT nomor_asset_utama FROM usulan_penghapusan WHERE id = ? LIMIT 1");
+    if ($s) {
+      $s->bind_param('i', $usulan_id);
+      $s->execute();
+      $r = $s->get_result();
+      if ($row = $r->fetch_assoc()) {
+        $nomor_asset = $row['nomor_asset_utama'] ?? '';
+      }
+      $s->close();
+    }
+
+    // Query documents either directly linked by usulan_id OR containing the nomor_asset
+    $query = "
+      SELECT 
+        dp.id_dokumen,
+        dp.tahun_dokumen,
+        dp.no_aset,
+        dp.tipe_dokumen,
+        dp.file_name,
+        dp.uploaded_at
+      FROM dokumen_penghapusan dp
+      WHERE dp.usulan_id = ?
+         OR REPLACE(CONCAT(';', IFNULL(dp.no_aset, ''), ';'), ' ', '') LIKE CONCAT('%;', REPLACE(?, ' ', ''), ';%')
+      ORDER BY dp.uploaded_at DESC
+    ";
+
+    if (!($stmt = $con->prepare($query))) {
+      throw new Exception('Prepare error: ' . $con->error);
+    }
+
+    if (!$stmt->bind_param('is', $usulan_id, $nomor_asset)) {
+      throw new Exception('Bind param error: ' . $stmt->error);
+    }
+
+    if (!$stmt->execute()) {
+      throw new Exception('Execute error: ' . $stmt->error);
+    }
+
+    $result = $stmt->get_result();
+
+    $dokumen = [];
+    while ($row = $result->fetch_assoc()) {
+      $dokumen[] = $row;
+    }
+    $stmt->close();
+
+    echo json_encode(['success' => true, 'data' => $dokumen]);
     } catch (Exception $e) {
         http_response_code(500);
         echo json_encode(['success' => false, 'error' => $e->getMessage()]);
@@ -3604,7 +3621,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
           .then(payload => {
             const container = document.getElementById('dokumentContainer');
             if (!payload.success || !Array.isArray(payload.data) || payload.data.length === 0) {
-              container.innerHTML = '<p class="text-muted">Belum ada dokumen yang diupload untuk usulan ini.</p>';
+              container.innerHTML = '<p class="text-muted"><i class="bi bi-info-circle"></i> Tidak ada dokumen yang terupload untuk usulan ini.</p>';
               return;
             }
             
@@ -3665,8 +3682,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
             container.appendChild(table);
           }).catch(err => {
             const container = document.getElementById('dokumentContainer');
-            container.innerHTML = '<p class="text-muted text-danger"><i class="bi bi-exclamation-circle"></i> Gagal memuat dokumen: ' + err.message + '</p>';
-            console.error('Dokumen fetch error:', err);
+            container.innerHTML = `<p class="text-danger"><i class="bi bi-exclamation-triangle"></i> Gagal memuat dokumen: ${err.message}</p>`;
           });
 
         // Attach modal button handlers (use current usulan id)
