@@ -166,8 +166,7 @@ while ($row = $result_lengkapi->fetch_assoc()) {
 }
 $stmt_lengkapi->close();
 
-// Query aset yang sudah submitted ke approval
-$submittedWhereClause = "WHERE up.created_by = ? AND up.status = 'submitted'";
+$submittedWhereClause = "WHERE up.created_by = ? AND up.status IN ('submitted','approved_subreg','pending_subreg','pending_regional','approved_regional','approved','rejected')";
 if ($isSubRegional) {
     $submittedWhereClause .= " AND up.subreg = ?";
 } elseif ($isCabang) {
@@ -509,11 +508,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             exit();
         }
         
-        // Encode compressed data sebagai base64 untuk disimpan ke database
         $base64_compressed = base64_encode($compressed_data);
         $file_path = 'data:application/pdf;base64;gzip,' . $base64_compressed;
         
-        // Simpan nama file asli untuk display
         $new_filename = basename($file['name']);
         
         $success_count = 0;
@@ -525,7 +522,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         $ids = array_filter(array_map('trim', explode(',', $usulan_ids)));
         $first_id = !empty($ids) ? intval(reset($ids)) : 0; 
 
-        // Insert 1 dokumen dengan semua nomor aset yang digabung
         if ($first_id > 0) {
           $stmt = $con->prepare("SELECT nomor_asset_utama, profit_center, subreg FROM usulan_penghapusan WHERE id = ?");
           $stmt->bind_param("i", $first_id);
@@ -555,8 +551,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
                     (usulan_id, tahun_dokumen, tipe_dokumen, no_aset, subreg, profit_center, profit_center_text, type_user, nipp, file_name, file_path, file_size) 
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
             $stmt_insert = $con->prepare($insert_query);
-            
-            // Simpan compressed size di database (ukuran file setelah dikompres)
+
             $compressed_size = strlen($compressed_data);
             
             $stmt_insert->bind_param("iisssssssssi", 
@@ -612,7 +607,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         $del->bind_param("i", $dokumen_id);
         
         if ($del->execute()) {
-          // If stored as file on disk (path), remove it; if stored as data URI, nothing to delete on FS
           if (!empty($file_path) && strpos($file_path, 'data:') !== 0 && file_exists($file_path)) {
             @unlink($file_path);
           }
@@ -792,27 +786,21 @@ if (isset($_GET['action']) && $_GET['action'] === 'view_dokumen' && isset($_GET[
     $uploadBaseDir = realpath(__DIR__ . '/../../uploads/dokumen_penghapusan') 
                     ? realpath(__DIR__ . '/../../uploads/dokumen_penghapusan') . '/'
                     : __DIR__ . '/../../uploads/dokumen_penghapusan/';
-
-    // Prepare variable used to hold resolved absolute path
     $absPath = null;
 
-    // 1) check by file_name under uploads dir
     $try1 = rtrim($uploadBaseDir, '/') . '/' . basename($fileName);
     if (file_exists($try1)) $absPath = $try1;
 
-    // 2) check DB path relative to document root
     if (!$absPath && !empty($filePathDb)) {
       $try2 = rtrim($_SERVER['DOCUMENT_ROOT'], '/') . '/' . ltrim(str_replace('\\', '/', $filePathDb), '/');
       if (file_exists($try2)) $absPath = $try2;
     }
 
-    // 3) check relative to current script
     if (!$absPath && !empty($filePathDb)) {
       $try3 = realpath(__DIR__ . '/' . $filePathDb);
       if ($try3 && file_exists($try3)) $absPath = $try3;
     }
 
-    // 4) direct DB path
     if (!$absPath && !empty($filePathDb) && file_exists($filePathDb)) $absPath = $filePathDb;
 
     if (!$absPath) {
@@ -1630,8 +1618,11 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                         $any_status      = !empty($row['any_status']) ? $row['any_status'] : null;
                                         $any_created_by  = !empty($row['any_created_by']) ? $row['any_created_by'] : null;
                                         $isByOtherUser   = $any_status && ($any_created_by !== $_SESSION['nipp']);
-                                        $isAnySelected   = $isInDraft || $isLengkapi || $isSubmitted || $isByOtherUser;
-
+                                        // Aset milik sendiri yang sudah di-approve/reject juga tidak bisa dipilih ulang
+                                        $isOwnApproved   = $any_status && ($any_created_by === $_SESSION['nipp']) && in_array($any_status, ['approved_subreg','pending_subreg','pending_regional','approved_regional','approved','rejected']);
+                                        $isAnySelected   = $isInDraft || $isLengkapi || $isSubmitted || $isByOtherUser || $isOwnApproved;
+                                        $isAnySelected   = $isInDraft || $isLengkapi || $isSubmitted || $isByOtherUser || $isOwnApproved;
+                                        
                                         $display_mekanisme = !empty($row['mekanisme_penghapusan']) 
                                                             ? $row['mekanisme_penghapusan'] 
                                                             : (!empty($row['any_mekanisme']) ? $row['any_mekanisme'] : '');
@@ -1640,9 +1631,9 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                                             : (!empty($row['any_fisik']) ? $row['any_fisik'] : '');
                                         
                                         $checkedAttr    = $isAnySelected ? ' checked' : '';
-                                        $disabledAttr   = ($isLengkapi || $isSubmitted || $isByOtherUser) ? ' disabled title="Aset sudah dalam usulan"' : '';
+                                        $disabledAttr   = ($isLengkapi || $isSubmitted || $isByOtherUser || $isOwnApproved) ? ' disabled title="Aset sudah dalam usulan"' : '';
                                         $draftClass     = $isInDraft ? ' is-draft' : '';
-                                        $submittedClass = ($isSubmitted || $isByOtherUser) ? ' is-submitted' : '';
+                                        $submittedClass = ($isSubmitted || $isByOtherUser || $isOwnApproved) ? ' is-submitted' : '';
 
                                         $nilai_buku = isset($row['nilai_buku_sd']) ? 'Rp ' . number_format($row['nilai_buku_sd'], 0, ',', '.') : '-';
                                         $nilai_perolehan = isset($row['nilai_perolehan_sd']) ? 'Rp ' . number_format($row['nilai_perolehan_sd'], 0, ',', '.') : '-';
@@ -1664,7 +1655,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                         
                                         // Dropdown Mekanisme Penghapusan
                                         $selectedMekanisme = !empty($display_mekanisme) ? $display_mekanisme : '';
-                                        $mekanismeDropdown = '<select class="form-select form-select-sm mekanisme-dropdown" data-asset-id="'.htmlspecialchars($row['id']).'" data-nomor-aset="'.htmlspecialchars($row['nomor_asset_utama']).'" '.($isSubmitted || $isByOtherUser ? 'disabled' : '').'>
+                                        $mekanismeDropdown = '<select class="form-select form-select-sm mekanisme-dropdown" data-asset-id="'.htmlspecialchars($row['id']).'" data-nomor-aset="'.htmlspecialchars($row['nomor_asset_utama']).'" '.($isSubmitted || $isByOtherUser || $isOwnApproved ? 'disabled' : '').'>
                                             <option value="">-</option>
                                             <option value="Jual Lelang"'.($selectedMekanisme === 'Jual Lelang' ? ' selected' : '').'>Jual Lelang</option>
                                             <option value="Hapus Administrasi"'.($selectedMekanisme === 'Hapus Administrasi' ? ' selected' : '').'>Hapus Administrasi</option>
@@ -1672,7 +1663,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                         
                                         // Dropdown Fisik Aset
                                         $selectedFisik = !empty($display_fisik) ? $display_fisik : '';
-                                        $fisikDropdown = '<select class="form-select form-select-sm fisik-dropdown" data-asset-id="'.htmlspecialchars($row['id']).'" data-nomor-aset="'.htmlspecialchars($row['nomor_asset_utama']).'" '.($isSubmitted || $isByOtherUser ? 'disabled' : '').'>
+                                        $fisikDropdown = '<select class="form-select form-select-sm fisik-dropdown" data-asset-id="'.htmlspecialchars($row['id']).'" data-nomor-aset="'.htmlspecialchars($row['nomor_asset_utama']).'" '.($isSubmitted || $isByOtherUser || $isOwnApproved ? 'disabled' : '').'>
                                             <option value="">-</option>
                                             <option value="Ada"'.($selectedFisik === 'Ada' ? ' selected' : '').'>Ada</option>
                                             <option value="Tidak Ada"'.($selectedFisik === 'Tidak Ada' ? ' selected' : '').'>Tidak Ada</option>
@@ -3553,7 +3544,6 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                       placeholder="Identifikasi risiko terkait penghapusan..."></textarea>
                   </div>
 
-              <!-- Row 6 - Upload Foto (conditional) -->
                   <div class="mb-3" id="fotoUploadSection" style="display:none;">
                     <label class="form-label">Foto Aset <span class="text-danger" id="fotoRequired">*</span></label>
                     
@@ -3601,7 +3591,6 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
     </div>
 
     <script>
-    // Data usulan dalam format JSON untuk akses cepat
     const usulanLengkapiData = <?= json_encode($lengkapi_data) ?>;
 
     function openFormLengkapiDokumen(usulanId) {
@@ -3636,8 +3625,8 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
         
         // Reset form terlebih dahulu
         document.getElementById('formLengkapiDokumen').reset();
-        document.getElementById('usulan_id').value = usulanId; // Set lagi setelah reset
-        
+        document.getElementById('usulan_id').value = usulanId; 
+
         // PRE-FILL FORM dengan data yang sudah ada (jika ada)
         if (usulan.jumlah_aset) {
             document.querySelector('input[name="jumlah_aset"]').value = usulan.jumlah_aset;
@@ -3686,9 +3675,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
         document.getElementById('fotoPreview').style.display = 'none';
         document.getElementById('fotoPreviewImage').src = '';
         document.getElementById('fotoInput').value = '';
-        
-        // Panggil toggleFotoUpload SETELAH foto existing di-set
-        // agar hasExisting terdeteksi dengan benar → foto tidak jadi required
+
         if (usulan.fisik_aset) {
             toggleFotoUpload();
         }
@@ -3709,7 +3696,6 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
         
         if (fisikAset === 'Ada') {
             fotoSection.style.display = 'block';
-            // Jika sudah ada foto sebelumnya → upload foto baru TIDAK wajib (opsional)
             if (hasExisting) {
                 fotoInput.removeAttribute('required');
             } else {
