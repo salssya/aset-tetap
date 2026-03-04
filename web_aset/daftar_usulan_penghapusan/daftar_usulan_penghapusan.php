@@ -1077,7 +1077,7 @@ $stmt_docs->close();
   document.addEventListener('DOMContentLoaded', function () {
   if ($('#usulanTable tbody tr td[colspan]').length === 0) {
     $('#usulanTable').DataTable({
-      ordering: true, searching: true, paging: true, pageLength: 25,
+      ordering: true, searching: true, paging: true, pageLength: 10,
       language: { url: '../../dist/js/i18n/id.json' },
       scrollX: true,
       columnDefs: [{ orderable: false, targets: [1, 2, 10, 11] }]
@@ -1086,7 +1086,7 @@ $stmt_docs->close();
 
   if ($('#dokumenTable tbody tr td[colspan]').length === 0) {
     $('#dokumenTable').DataTable({
-      ordering: true, searching: true, paging: true, pageLength: 25,
+      ordering: true, searching: true, paging: true, pageLength: 10,
       language: { url: '../../dist/js/i18n/id.json' },
       scrollX: true,
       columnDefs: [{ orderable: false, targets: [5] }]
