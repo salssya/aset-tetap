@@ -32,7 +32,21 @@ function get_pcs_for_subreg($con, $subreg_text) {
 
 function normalize_foto_path($p) {
   if (empty($p)) return '';
-  $p = trim((string)$p);
+  $p = (string)$p;
+
+  if (strpos($p, "\x00") !== false) {
+    if (substr($p, 0, 8) === "\x89PNG\r\n\x1a\n") {
+      return 'data:image/png;base64,' . base64_encode($p);
+    } elseif (substr($p, 0, 3) === "\xff\xd8\xff") {
+      return 'data:image/jpeg;base64,' . base64_encode($p);
+    } elseif (substr($p, 0, 4) === 'GIF8') {
+      return 'data:image/gif;base64,' . base64_encode($p);
+    }
+    return '';
+  }
+
+  $p = trim($p);
+  if (preg_match('#^data:image/#i', $p)) return $p;
   if (preg_match('#^https?://#i', $p)) return $p;
   if (strpos($p, '/') === 0) return $p;
 
@@ -41,7 +55,7 @@ function normalize_foto_path($p) {
   $docroot = realpath($_SERVER['DOCUMENT_ROOT'] ?? '') ?: '';
   if ($docroot !== '') {
     $docroot = str_replace('\\', '/', $docroot);
-    $abs = realpath($p2);
+    $abs = @realpath($p2);
     if ($abs) {
       $abs = str_replace('\\', '/', $abs);
       if (strpos($abs, $docroot) === 0) {
@@ -234,22 +248,42 @@ if ($isSubRegional && !empty($userProfitCenter)) {
     $q_sub->close();
 }
 
-$whereClause = "WHERE up.status NOT IN ('draft', 'lengkapi_dokumen', 'dokumen_lengkap')";
+// ── Filter tahun 
+if (isset($_GET['tahun']) && $_GET['tahun'] !== '') {
+    $tahunSelected = $_GET['tahun'];
+    $_SESSION['last_tahun_daftar_usulan'] = $tahunSelected;
+} elseif (isset($_SESSION['last_tahun_daftar_usulan']) && $_SESSION['last_tahun_daftar_usulan'] !== '') {
+    $tahunSelected = $_SESSION['last_tahun_daftar_usulan'];
+} else {
+    $tahunSelected = '';
+}
+$tahunSQL = $tahunSelected ? " AND up.tahun_usulan = " . intval($tahunSelected) : " AND 1=0";
+
+// Ambil list tahun tersedia sesuai user type
+$listTahun = [];
+$tahunWhere = "WHERE tahun_usulan IS NOT NULL AND tahun_usulan > 0
+               AND status NOT IN ('draft','lengkapi_dokumen','dokumen_lengkap')";
+if ($isSubRegional && !empty($userSubreg))
+    $tahunWhere .= " AND subreg = '" . mysqli_real_escape_string($con, $userSubreg) . "'";
+elseif ($isCabang)
+    $tahunWhere .= " AND profit_center = '" . mysqli_real_escape_string($con, $userProfitCenter) . "'";
+$qT = mysqli_query($con, "SELECT DISTINCT tahun_usulan FROM usulan_penghapusan $tahunWhere ORDER BY tahun_usulan DESC");
+if ($qT) while ($r = mysqli_fetch_assoc($qT)) if (!empty($r['tahun_usulan'])) $listTahun[] = $r['tahun_usulan'];
+
+$whereClause = "WHERE up.status NOT IN ('draft', 'lengkapi_dokumen', 'dokumen_lengkap')" . $tahunSQL;
 if ($isSubRegional) {
     $whereClause .= " AND up.subreg = ?";
 } elseif ($isCabang) {
     $whereClause .= " AND up.profit_center = ?";
 } elseif ($isApprovalRegional) {
     $whereClause .= " AND (up.status_approval_subreg != 'rejected' OR up.status_approval_subreg IS NULL)";
-} else {
-    
 }
 $query_daftar = "SELECT up.*,
-                        id.keterangan_asset as nama_aset,
-                        id.asset_class_name as kategori_aset,
-                        id.profit_center_text,
-                        id.subreg,
-                        id.nilai_perolehan_sd,
+                        up.nama_aset,
+                        up.kategori_aset,
+                        up.profit_center_text,
+                        up.subreg,
+                        up.nilai_perolehan,
                         (SELECT COUNT(*) FROM dokumen_penghapusan dp2
                          WHERE dp2.usulan_id = up.id
                             OR dp2.no_aset LIKE CONCAT('%', up.nomor_asset_utama, '%')
@@ -264,7 +298,6 @@ $query_daftar = "SELECT up.*,
                          ORDER BY ah.created_at DESC LIMIT 1
                         ) as alasan_reject_regional
                  FROM usulan_penghapusan up
-                 LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama
                  LEFT JOIN users u ON up.created_by = u.NIPP
                  " . $whereClause . "
                  ORDER BY up.status DESC, up.created_at DESC";
@@ -292,24 +325,22 @@ while ($row = $result->fetch_assoc()) {
 }
 $stmt->close();
 
-$query_docs = "SELECT dp.id_dokumen, dp.usulan_id, dp.tipe_dokumen, 
+$whereDoc = "WHERE up.status NOT IN ('draft', 'lengkapi_dokumen', 'dokumen_lengkap')" . $tahunSQL;
+if ($isSubRegional) {
+    $whereDoc .= " AND up.subreg = ?";
+} elseif ($isCabang) {
+    $whereDoc .= " AND up.profit_center = ?";
+} elseif ($isApprovalRegional) {
+    $whereDoc .= " AND (up.status_approval_subreg != 'rejected' OR up.status_approval_subreg IS NULL)";
+}
+
+$query_docs = "SELECT dp.id_dokumen, dp.usulan_id, dp.tipe_dokumen,
                       dp.file_path, dp.file_name, dp.no_aset,
-                      YEAR(up.created_at) as tahun_usulan,
-                      up.nomor_asset_utama, id.keterangan_asset as nama_aset
+                      up.tahun_usulan,
+                      up.nomor_asset_utama, up.nama_aset
                FROM dokumen_penghapusan dp
                JOIN usulan_penghapusan up ON dp.usulan_id = up.id
-               LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama
-               WHERE up.status NOT IN ('draft', 'lengkapi_dokumen', 'dokumen_lengkap')";
-
-if ($isSubRegional) {
-    $query_docs .= " AND up.subreg = ?";
-} elseif ($isCabang) {
-    $query_docs .= " AND up.profit_center = ?";
-} elseif ($isApprovalRegional) {
-    $query_docs .= " AND (up.status_approval_subreg != 'rejected' OR up.status_approval_subreg IS NULL)";
-} else {
-    
-}
+               " . $whereDoc;
 
 $query_docs .= " ORDER BY dp.id_dokumen DESC";
 
@@ -737,10 +768,24 @@ $stmt_docs->close();
   <main class="app-main">
     <div class="app-content-header">
       <div class="container-fluid">
-        <div class="row">
+        <div class="row align-items-center">
           <div class="col-sm-6"><h3 class="mb-0">Daftar Usulan Penghapusan Aset</h3></div>
-          <div class="col-sm-6">
-            <ol class="breadcrumb float-sm-end">
+          <div class="col-sm-6 d-flex align-items-center justify-content-end gap-3">
+            <!-- Filter Tahun -->
+            <form method="GET" class="d-flex align-items-center gap-2" id="formFilterTahun">
+              <label class="mb-0 text-muted small fw-semibold text-nowrap" for="selectTahun">
+                <i class="bi bi-calendar3 me-1"></i>Tahun:
+              </label>
+              <select name="tahun" id="selectTahun" class="form-select form-select-sm" style="min-width:130px;" onchange="this.form.submit()">
+                <option value="">-- Pilih Tahun --</option>
+                <?php foreach ($listTahun as $th): ?>
+                  <option value="<?= htmlspecialchars($th) ?>" <?= ($tahunSelected == $th) ? 'selected' : '' ?>>
+                    <?= htmlspecialchars($th) ?>
+                  </option>
+                <?php endforeach; ?>
+              </select>
+            </form>
+            <ol class="breadcrumb float-sm-end mb-0">
               <li class="breadcrumb-item"><a href="../dasbor/dasbor.php">Home</a></li>
               <li class="breadcrumb-item active">Daftar Usulan Penghapusan</li>
             </ol>
@@ -758,6 +803,11 @@ $stmt_docs->close();
             <div class="alert alert-info mb-0">
               <i class="bi bi-info-circle me-2"></i>
               <strong>Informasi:</strong> Tabel di bawah menampilkan semua usulan penghapusan aset dengan status approval SubReg dan Regional.
+              <?php if (!$tahunSelected): ?>
+                <span class="ms-2 text-muted">— Pilih tahun untuk melihat data.</span>
+              <?php else: ?>
+                <span class="ms-2">Menampilkan data tahun <strong><?= $tahunSelected ?></strong>.</span>
+              <?php endif; ?>
             </div>
           </div>
         </div>
@@ -769,6 +819,9 @@ $stmt_docs->close();
               <div class="card-table-header">
                 <i class="bi bi-list-check text-primary"></i>
                 <h5>Daftar Usulan Penghapusan</h5>
+                <?php if ($tahunSelected): ?>
+                  <span class="badge bg-primary ms-2">Tahun <?= $tahunSelected ?></span>
+                <?php endif; ?>
               </div>
               <div class="card-table-body">
                 <div class="table-responsive">
@@ -835,8 +888,8 @@ $stmt_docs->close();
                             <?php endif; ?>
                           </td>
                           <td style="font-family:'Courier New',monospace; font-weight:500;">
-                            <?php if (isset($usulan['nilai_perolehan_sd']) && $usulan['nilai_perolehan_sd'] !== null && $usulan['nilai_perolehan_sd'] !== ''): ?>
-                              Rp <?= number_format((float)$usulan['nilai_perolehan_sd'], 0, ',', '.') ?>
+                            <?php if (isset($usulan['nilai_perolehan']) && $usulan['nilai_perolehan'] !== null && $usulan['nilai_perolehan'] !== ''): ?>
+                              Rp <?= number_format((float)$usulan['nilai_perolehan'], 0, ',', '.') ?>
                             <?php else: ?>
                               <span class="text-muted">—</span>
                             <?php endif; ?>
@@ -861,7 +914,7 @@ $stmt_docs->close();
                       <tr>
                         <td colspan="12" class="text-center text-muted py-5">
                           <i class="bi bi-inbox" style="font-size:2.5rem; opacity:0.3; display:block; margin-bottom:0.75rem;"></i>
-                          Belum ada usulan penghapusan
+                          <?= $tahunSelected ? 'Tidak ada usulan untuk tahun ' . $tahunSelected : 'Pilih tahun untuk menampilkan data' ?>
                         </td>
                       </tr>
                       <?php endif; ?>
@@ -880,6 +933,9 @@ $stmt_docs->close();
               <div class="card-table-header">
                 <i class="bi bi-file-earmark-pdf text-danger"></i>
                 <h5>Daftar Dokumen yang Diupload</h5>
+                <?php if ($tahunSelected): ?>
+                  <span class="badge bg-primary ms-2">Tahun <?= $tahunSelected ?></span>
+                <?php endif; ?>
               </div>
               <div class="card-table-body">
                 <div class="table-responsive">
@@ -930,7 +986,7 @@ $stmt_docs->close();
                       <tr>
                         <td colspan="6" class="text-center text-muted py-5">
                           <i class="bi bi-inbox" style="font-size:2.5rem; opacity:0.3; display:block; margin-bottom:0.75rem;"></i>
-                          Belum ada dokumen yang diupload
+                          <?= $tahunSelected ? 'Tidak ada dokumen untuk tahun ' . $tahunSelected : 'Pilih tahun untuk menampilkan data' ?>
                         </td>
                       </tr>
                       <?php endif; ?>
@@ -1038,10 +1094,7 @@ $stmt_docs->close();
   }
 });
 
-  // Data dokumen untuk cek relasi gabungan aset
   const semuaDokumen = <?= json_encode(array_values($daftar_dokumen)) ?>;
-
-  // Toggle preview inline dokumen di dalam modal
   function togglePreviewDok(previewId, url) {
     const container = document.getElementById(previewId);
     const frame = document.getElementById(previewId + '-frame');
@@ -1050,11 +1103,10 @@ $stmt_docs->close();
     const isVisible = container.style.display !== 'none';
     if (isVisible) {
       container.style.display = 'none';
-      if (frame) frame.src = ''; // reset iframe biar hemat resource
+      if (frame) frame.src = ''; 
     } else {
       if (frame && url) frame.src = url;
       container.style.display = 'block';
-      // Scroll ke preview supaya kelihatan
       setTimeout(function() { container.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, 150);
     }
   }
@@ -1148,8 +1200,6 @@ $stmt_docs->close();
 
     const isLocked = usulan.status_approval_subreg !== 'approved';
 
-    // Cari dokumen yang berkaitan dengan aset ini
-    // Prioritas: match usulan_id langsung (paling akurat)
     // Fallback: match no_aset atau nomor_asset_utama (untuk dokumen gabungan multi-aset)
     const usulanId   = String(usulan.id || '');
     const nomorAset  = String(usulan.nomor_asset_utama || '').trim();
@@ -1180,7 +1230,7 @@ $stmt_docs->close();
 
         const asetBadge = '';
 
-        // Keterangan gabungan: tampil info aset-aset yang satu dokumen
+        // Keterangan dokumen gabungan jika mencakup lebih dari 1 nomor aset
         const infoGabungan = isGabungan
           ? `<div style="margin-top:5px;font-size:0.75rem;color:#6b7280;">
                <i class="bi bi-paperclip me-1"></i>Dokumen ini juga mencakup:
@@ -1260,7 +1310,7 @@ $stmt_docs->close();
         <div class="detail-section-title"><i class="bi bi-clipboard-data"></i> Detail Usulan</div>
         <div class="detail-grid">
           ${item('Nilai Buku', `<span style="font-family:monospace;">${rupiah(usulan.nilai_buku)}</span>`)}
-          ${item('Nilai Perolehan', `<span style="font-family:monospace;">${rupiah(usulan.nilai_perolehan_sd)}</span>`)}
+          ${item('Nilai Perolehan', `<span style="font-family:monospace;">${rupiah(usulan.nilai_perolehan)}</span>`)}
           ${item('Tahun Usulan', val(usulan.tahun_usulan))}
           ${item('Mekanisme Penghapusan', mek)}
           ${item('Fisik Aset', fisik)}
