@@ -3244,17 +3244,22 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
 // Update info text saat berpindah tab
         document.getElementById('daftar-aset-tab').addEventListener('shown.bs.tab', function () {
             document.getElementById('infoTextContent').textContent = 'Pilih aset yang akan diusulkan untuk penghapusan';
+            if ($.fn.DataTable.isDataTable('#myTable')) $('#myTable').DataTable().columns.adjust();
         });
 
         document.getElementById('lengkapi-dokumen-tab').addEventListener('shown.bs.tab', function () {
             document.getElementById('infoTextContent').textContent = 'Lengkapi data pendukung untuk aset yang sudah diusulkan';
+            if ($.fn.DataTable.isDataTable('#lengkapiTable')) $('#lengkapiTable').DataTable().columns.adjust();
         });
+
         document.getElementById('upload-dokumen-tab').addEventListener('shown.bs.tab', function () {
           document.getElementById('infoTextContent').textContent = 'Unggah dokumen pendukung untuk melengkapi usulan penghapusan aset.';
+          if ($.fn.DataTable.isDataTable('#uploadTable')) $('#uploadTable').DataTable().columns.adjust();
         });
 
         document.getElementById('summary-tab').addEventListener('shown.bs.tab', function () {
           document.getElementById('infoTextContent').textContent = 'Tinjau ringkasan data usulan sebelum masuk ke proses persetujuan.';
+          if ($.fn.DataTable.isDataTable('#summaryTable')) $('#summaryTable').DataTable().columns.adjust();
         });
 
 // Function untuk konfirmasi hapus usulan
