@@ -7,6 +7,27 @@ $dbname     = "asetreg3_db";
 $con = mysqli_connect($servername, $username, $password, $dbname);
 session_start();
 
+// Ambil tahun dari GET, fallback dari session
+if (isset($_GET['tahun']) && $_GET['tahun'] !== '') {
+    $tahunSelected = $_GET['tahun'];
+    $_SESSION['last_tahun_usulan'] = $tahunSelected;
+} elseif (isset($_SESSION['last_tahun_usulan']) && $_SESSION['last_tahun_usulan'] !== '') {
+    $tahunSelected = $_SESSION['last_tahun_usulan']; 
+} else {
+    $tahunSelected = '';
+}
+
+if($tahunSelected != ''){
+    $queryData = mysqli_query($con, "
+        SELECT * FROM usulan_penghapusan 
+        WHERE tahun_usulan = '$tahunSelected'
+    ");
+} else {
+    $queryData = mysqli_query($con, "
+        SELECT * FROM usulan_penghapusan
+    ");
+}
+
 function stripAUC($s) {
   if ($s === null) return $s;
   $s = preg_replace('/\\bAUC\\s*(?:-|–)?\\s*/i', '', $s);
@@ -61,6 +82,30 @@ if ($isSubRegional && empty($userSubreg)) {
     $userSubreg = '__NO_SUBREG_ACCESS__';
 }
 
+// Query list tahun berdasarkan user type (setelah session & userSubreg siap)
+// Kolom tahun_usulan bertipe INT — pakai IS NOT NULL dan > 0
+$tahunWhereClause = "WHERE tahun_usulan IS NOT NULL AND tahun_usulan > 0";
+if ($isSubRegional) {
+    $tahunWhereClause .= " AND subreg = '" . mysqli_real_escape_string($con, $userSubreg) . "'";
+} elseif ($isCabang) {
+    $tahunWhereClause .= " AND profit_center = '" . mysqli_real_escape_string($con, $userProfitCenter) . "'";
+}
+// Regional/admin: tanpa filter tambahan — ambil semua tahun yang ada di DB
+$queryTahun = mysqli_query($con, "
+    SELECT DISTINCT tahun_usulan 
+    FROM usulan_penghapusan 
+    $tahunWhereClause
+    ORDER BY tahun_usulan DESC
+");
+$listTahun = [];
+if ($queryTahun) {
+    while ($row = mysqli_fetch_assoc($queryTahun)) {
+        if (!empty($row['tahun_usulan'])) {
+            $listTahun[] = $row['tahun_usulan'];
+        }
+    }
+}
+
 $whereClause = "WHERE nilai_perolehan_sd != 0";
 if ($isSubRegional) {
     $whereClause .= " AND subreg = ?";    
@@ -89,7 +134,11 @@ while ($row = $result->fetch_assoc()) {
 }
 $stmt->close();
 
-$draftWhereClause = "WHERE status = 'draft' AND created_by = ?";
+// $tahunSelected kosong 
+$tahunFilterSQL = $tahunSelected ? " AND tahun_usulan = " . intval($tahunSelected) : " AND 1=0";
+
+// ─── Query Draft 
+$draftWhereClause = "WHERE status = 'draft' AND created_by = ?" . $tahunFilterSQL;
 if ($isSubRegional) {
     $draftWhereClause .= " AND subreg = ?";
 } elseif ($isCabang) {
@@ -118,9 +167,9 @@ while ($row = $result_draft->fetch_assoc()) {
 }
 $stmt_draft->close();
 
-//Query untuk tab "Lengkapi Data" dengan filter type user
+// ─── Query Lengkapi Data
 $userNipp = $_SESSION['nipp'];
-$lengkapiWhereClause = "WHERE up.created_by = ? AND up.status IN ('lengkapi_dokumen', 'dokumen_lengkap')";
+$lengkapiWhereClause = "WHERE up.created_by = ? AND up.status IN ('lengkapi_dokumen', 'dokumen_lengkap')" . $tahunFilterSQL;
 if ($isSubRegional) {
     $lengkapiWhereClause .= " AND up.subreg = ?";
 } elseif ($isCabang) {
@@ -166,7 +215,8 @@ while ($row = $result_lengkapi->fetch_assoc()) {
 }
 $stmt_lengkapi->close();
 
-$submittedWhereClause = "WHERE up.created_by = ? AND up.status IN ('submitted','approved_subreg','pending_subreg','pending_regional','approved_regional','approved','rejected')";
+// ─── Query Submitted 
+$submittedWhereClause = "WHERE up.created_by = ? AND up.status IN ('submitted','approved_subreg','pending_subreg','pending_regional','approved_regional','approved','rejected')" . $tahunFilterSQL;
 if ($isSubRegional) {
     $submittedWhereClause .= " AND up.subreg = ?";
 } elseif ($isCabang) {
@@ -190,8 +240,8 @@ while ($row = $result_submitted->fetch_assoc()) {
 }
 $stmt_submitted->close();
 
-// Query untuk data Upload Dokumen (status = dokumen_lengkap)
-$uploadWhereClause = "WHERE up.created_by = ? AND up.status = 'dokumen_lengkap'";
+// ─── Query Upload Dokumen 
+$uploadWhereClause = "WHERE up.created_by = ? AND up.status = 'dokumen_lengkap'" . $tahunFilterSQL;
 if ($isSubRegional) {
     $uploadWhereClause .= " AND up.subreg = ?";
 } elseif ($isCabang) {
@@ -231,11 +281,12 @@ while ($row = $result_upload->fetch_assoc()) {
 }
 $stmt_upload->close();
 
-// Query untuk ambil semua dokumen penghapusan (untuk submit approval)
+// ─── Query semua dokumen (untuk submit approval) 
+$tahunFilterDokSQL = $tahunSelected ? " AND up.tahun_usulan = " . intval($tahunSelected) : " AND 1=0";
 $query_all_dokumen = "SELECT dp.id_dokumen, dp.usulan_id 
                       FROM dokumen_penghapusan dp 
                       JOIN usulan_penghapusan up ON dp.usulan_id = up.id 
-                      WHERE up.created_by = ?";
+                      WHERE up.created_by = ?" . $tahunFilterDokSQL;
 
 $stmt_all_dok = $con->prepare($query_all_dokumen);
 $stmt_all_dok->bind_param("s", $userNipp);
@@ -248,16 +299,18 @@ while ($row = $result_all_dok->fetch_assoc()) {
 }
 $stmt_all_dok->close();
 
-
+// ─── Query usulan yang sudah punya dokumen 
 $usulan_with_docs = [];
-$q_docs = $con->prepare("SELECT DISTINCT up.id
-                         FROM usulan_penghapusan up
-                         LEFT JOIN dokumen_penghapusan dp 
-                               ON dp.usulan_id = up.id 
-                               OR dp.no_aset LIKE CONCAT('%', up.nomor_asset_utama, '%')
-                         WHERE up.created_by = ? 
-                           AND up.status IN ('dokumen_lengkap', 'lengkapi_dokumen')
-                           AND dp.id_dokumen IS NOT NULL");
+$q_docs_sql = "SELECT DISTINCT up.id
+               FROM usulan_penghapusan up
+               LEFT JOIN dokumen_penghapusan dp 
+                     ON dp.usulan_id = up.id 
+                     OR dp.no_aset LIKE CONCAT('%', up.nomor_asset_utama, '%')
+               WHERE up.created_by = ? 
+                 AND up.status IN ('dokumen_lengkap', 'lengkapi_dokumen')
+                 AND dp.id_dokumen IS NOT NULL"
+             . $tahunFilterDokSQL;
+$q_docs = $con->prepare($q_docs_sql);
 $q_docs->bind_param("s", $userNipp);
 $q_docs->execute();
 $r_docs = $q_docs->get_result();
@@ -265,6 +318,7 @@ while ($row_doc = $r_docs->fetch_assoc()) {
     $usulan_with_docs[] = $row_doc['id'];
 }
 $q_docs->close();
+
 
 // Handle save to database dengan status draft/submit
 $pesan = "";
@@ -287,12 +341,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
                 if ($is_submit) {
                   
                     $_SESSION['success_message'] = "✅ Berhasil mengusulkan " . $saved_count . " aset untuk penghapusan";
-                    header("Location: " . $_SERVER['PHP_SELF'] . "#dokumen");
+                    $_SESSION['last_tahun_usulan'] = date('Y');
+                    header("Location: " . $_SERVER['PHP_SELF'] . "?tahun=" . date('Y') . "#dokumen");
                     exit();
                 } else {
 
                     $_SESSION['success_message'] = "✅ Berhasil menyimpan " . $saved_count . " aset sebagai draft";
-                    header("Location: " . $_SERVER['PHP_SELF']);
+                    $_SESSION['last_tahun_usulan'] = date('Y');
+                    header("Location: " . $_SERVER['PHP_SELF'] . "?tahun=" . date('Y') . "#aset");
                     exit();
                 }
             } else {
@@ -413,7 +469,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
 
       if ($stmt->execute()) {
         $_SESSION['show_success_modal'] = true;
-        header("Location: " . $_SERVER['PHP_SELF'] . "#dokumen");
+        header("Location: " . $_SERVER['PHP_SELF'] . "?tahun=" . ($tahunSelected ?: date('Y')) . "#dokumen");
         exit();
       } else {
         $pesan = "Gagal menyimpan data: " . $stmt->error;
@@ -434,7 +490,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && $_POST['action'] === 'delete_draft')
         $_SESSION['warning_message'] = "⚠️ Gagal membatalkan draft.";
     }
     $del->close();
-    header("Location: " . $_SERVER['PHP_SELF']);
+    header("Location: " . $_SERVER['PHP_SELF'] . "?tahun=" . ($tahunSelected ?: date('Y')));
     exit();
 }
 
@@ -454,7 +510,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         $_SESSION['success_message'] = "⚠️ Gagal menghapus usulan.";
     }
     $del->close();
-    header("Location: " . $_SERVER['PHP_SELF'] . "#lengkapi");
+    header("Location: " . $_SERVER['PHP_SELF'] . "?tahun=" . ($tahunSelected ?: date('Y')) . "#lengkapi");
     exit();
 }
 
@@ -474,7 +530,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
     // Validasi file tidak kosong
     if (!$file || $file['error'] !== UPLOAD_ERR_OK) {
         $_SESSION['warning_message'] = "Silakan pilih file untuk diupload!";
-        header("Location: " . $_SERVER['PHP_SELF'] . "#upload");
+        header("Location: " . $_SERVER['PHP_SELF'] . "?tahun=" . ($tahunSelected ?: date('Y')) . "#upload");
         exit();
     } else {
         $allowed_ext = ['pdf'];
@@ -482,13 +538,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         
         if (!in_array($file_ext, $allowed_ext)) {
             $_SESSION['warning_message'] = "Format file harus PDF!";
-            header("Location: " . $_SERVER['PHP_SELF'] . "#upload");
+            header("Location: " . $_SERVER['PHP_SELF'] . "?tahun=" . ($tahunSelected ?: date('Y')) . "#upload");
             exit();
         }
         
         if ($file['size'] > 50 * 1024 * 1024) {
             $_SESSION['warning_message'] = "Ukuran file maksimal 50MB!";
-            header("Location: " . $_SERVER['PHP_SELF'] . "#upload");
+            header("Location: " . $_SERVER['PHP_SELF'] . "?tahun=" . ($tahunSelected ?: date('Y')) . "#upload");
             exit();
         }
         
@@ -496,7 +552,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         $file_data = @file_get_contents($file['tmp_name']);
         if ($file_data === false) {
             $_SESSION['warning_message'] = "Gagal membaca file upload.";
-            header("Location: " . $_SERVER['PHP_SELF'] . "#upload");
+            header("Location: " . $_SERVER['PHP_SELF'] . "?tahun=" . ($tahunSelected ?: date('Y')) . "#upload");
             exit();
         }
         
@@ -504,7 +560,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         $compressed_data = gzencode($file_data, 9);
         if ($compressed_data === false) {
             $_SESSION['warning_message'] = "Gagal kompres file!";
-            header("Location: " . $_SERVER['PHP_SELF'] . "#upload");
+            header("Location: " . $_SERVER['PHP_SELF'] . "?tahun=" . ($tahunSelected ?: date('Y')) . "#upload");
             exit();
         }
         
@@ -582,9 +638,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
           $_SESSION['warning_message'] = "Gagal menyimpan dokumen!";
         }
     }
-    header("Location: " . $_SERVER['PHP_SELF'] . "#upload");
+    header("Location: " . $_SERVER['PHP_SELF'] . "?tahun=" . ($tahunSelected ?: date('Y')) . "#upload");
     exit();
 }
+
 
 // HANDLER: Delete Dokumen
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] === 'delete_dokumen') {
@@ -620,7 +677,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
     }
     $q->close();
     
-    header("Location: " . $_SERVER['PHP_SELF'] . "#upload");
+    header("Location: " . $_SERVER['PHP_SELF'] . "?tahun=" . ($tahunSelected ?: date('Y')) . "#upload");
     exit();
 }
 
@@ -639,7 +696,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
     
     if (empty($usulan_ids)) {
         $_SESSION['error_message'] = "❌ Tidak ada usulan yang dipilih.";
-        header("Location: " . $_SERVER['PHP_SELF'] . "#summary");
+        header("Location: " . $_SERVER['PHP_SELF'] . "?tahun=" . ($tahunSelected ?: date('Y')) . "#summary");
         exit();
     }
     
@@ -687,7 +744,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
     } else {
         $_SESSION['error_message'] = "❌ Gagal submit. Pastikan semua aset berstatus 'dokumen_lengkap' dan sudah punya dokumen.";
     }
-    header("Location: " . $_SERVER['PHP_SELF'] . "#summary");
+    header("Location: " . $_SERVER['PHP_SELF'] . "?tahun=" . ($tahunSelected ?: date('Y')) . "#summary");
     exit();
 }
 
@@ -955,7 +1012,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && $_POST['action'] === 'submit_from_dr
 
 $draft_data = [];
 $draft_count = 0;
-$dq = $con->prepare("SELECT * FROM usulan_penghapusan WHERE status = 'draft' AND created_by = ? ORDER BY created_at DESC");
+$_draftSQL = "SELECT * FROM usulan_penghapusan WHERE status = 'draft' AND created_by = ?" . $tahunFilterSQL . " ORDER BY created_at DESC";
+$dq = $con->prepare($_draftSQL);
 $dq->bind_param("s", $_SESSION['nipp']);
 $dq->execute();
 $dr = $dq->get_result();
@@ -1429,8 +1487,24 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
             <!--begin::Row-->
             <div class="row">
               <div class="col-sm-6"><h3 class="mb-0">Usulan Penghapusan Aset Tetap</h3></div>
-              <div class="col-sm-6">
-                <ol class="breadcrumb float-sm-end">
+              
+              <div class="col-sm-6 d-flex align-items-center justify-content-end gap-2">
+                <!-- Dropdown Filter Tahun -->
+                <form method="GET" class="d-flex align-items-center gap-2 me-3" id="formFilterTahun">
+                  <label class="mb-0 text-muted small fw-semibold text-nowrap" for="selectTahun">
+                    <i class="bi bi-calendar3 me-1"></i>Tahun:
+                  </label>
+                  <select name="tahun" id="selectTahun" class="form-select form-select-sm" style="min-width:130px;" onchange="this.form.submit()">
+                    <option value="">-- Pilih Tahun --</option>
+                    <?php foreach($listTahun as $tahun): ?>
+                      <option value="<?= htmlspecialchars($tahun) ?>" <?= ($tahunSelected == $tahun) ? 'selected' : '' ?>>
+                        <?= htmlspecialchars($tahun) ?>
+                      </option>
+                    <?php endforeach; ?>
+                  </select>
+                </form>
+
+                <ol class="breadcrumb float-sm-end mb-0">
                   <li class="breadcrumb-item"><a href="../dasbor/dasbor.php">Home</a></li>
                   <li class="breadcrumb-item active">Usulan Penghapusan</li>
                 </ol>
@@ -1519,7 +1593,25 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                 </thead>
                                 <tbody>
                                   
-                                  <?php  
+                                  <?php
+                                    // Jika tahun tidak dipilih: JOIN dipaksa tidak match (AND 1=0)
+                                    // sehingga draft_id, any_status, dll = NULL → tidak ada centang
+                                    if ($tahunSelected) {
+                                        $tahunJoinCond    = " AND up.tahun_usulan = " . intval($tahunSelected);
+                                        $tahunJoinCondAll = " AND up_all.tahun_usulan = " . intval($tahunSelected);
+                                        // Exclude aset yang sudah diusulkan di tahun LAIN
+                                        // → aset hanya muncul di tahun usulannya saja
+                                        $excludeOtherYear = " AND id.nomor_asset_utama NOT IN (
+                                            SELECT nomor_asset_utama FROM usulan_penghapusan
+                                            WHERE tahun_usulan IS NOT NULL
+                                              AND tahun_usulan != " . intval($tahunSelected) . "
+                                        )";
+                                    } else {
+                                        $tahunJoinCond    = " AND 1=0";
+                                        $tahunJoinCondAll = " AND 1=0";
+                                        $excludeOtherYear = "";
+                                    }
+
                                     if ($isSubRegional) {
                                         $q_tab1 = "SELECT id.*, 
                                                   up.id as draft_id,
@@ -1533,10 +1625,10 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                                   up_all.created_by as any_created_by
                                                   FROM import_dat id 
                                                   LEFT JOIN usulan_penghapusan up 
-                                                        ON id.nomor_asset_utama = up.nomor_asset_utama AND up.created_by = ?
+                                                        ON id.nomor_asset_utama = up.nomor_asset_utama AND up.created_by = ?{$tahunJoinCond}
                                                   LEFT JOIN usulan_penghapusan up_all
-                                                        ON id.nomor_asset_utama = up_all.nomor_asset_utama
-                                                  WHERE id.nilai_perolehan_sd != 0
+                                                        ON id.nomor_asset_utama = up_all.nomor_asset_utama{$tahunJoinCondAll}
+                                                  WHERE id.nilai_perolehan_sd != 0{$excludeOtherYear}
                                                     AND id.subreg = ?
                                                   GROUP BY id.id
                                                   ORDER BY CASE WHEN up_all.status IS NOT NULL THEN 0 ELSE 1 END ASC, id.nomor_asset_utama ASC";
@@ -1551,8 +1643,8 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                                   up.created_by as usulan_created_by
                                                   FROM import_dat id 
                                                   LEFT JOIN usulan_penghapusan up 
-                                                        ON id.nomor_asset_utama = up.nomor_asset_utama AND up.created_by = ?
-                                                  WHERE id.nilai_perolehan_sd != 0
+                                                        ON id.nomor_asset_utama = up.nomor_asset_utama AND up.created_by = ?{$tahunJoinCond}
+                                                  WHERE id.nilai_perolehan_sd != 0{$excludeOtherYear}
                                                     AND id.profit_center = ?
                                                   GROUP BY id.id
                                                   ORDER BY CASE WHEN up.status IS NOT NULL THEN 0 ELSE 1 END ASC, id.nomor_asset_utama ASC";
@@ -1571,10 +1663,10 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                                   up_all.created_by as any_created_by
                                                   FROM import_dat id 
                                                   LEFT JOIN usulan_penghapusan up 
-                                                        ON id.nomor_asset_utama = up.nomor_asset_utama AND up.created_by = ?
+                                                        ON id.nomor_asset_utama = up.nomor_asset_utama AND up.created_by = ?{$tahunJoinCond}
                                                   LEFT JOIN usulan_penghapusan up_all
-                                                        ON id.nomor_asset_utama = up_all.nomor_asset_utama
-                                                  WHERE id.nilai_perolehan_sd != 0
+                                                        ON id.nomor_asset_utama = up_all.nomor_asset_utama{$tahunJoinCondAll}
+                                                  WHERE id.nilai_perolehan_sd != 0{$excludeOtherYear}
                                                     AND id.profit_center = '12101'
                                                   GROUP BY id.id
                                                   ORDER BY CASE WHEN up_all.status IS NOT NULL THEN 0 ELSE 1 END ASC, id.nomor_asset_utama ASC";
@@ -1593,10 +1685,10 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                                   up_all.created_by as any_created_by
                                                   FROM import_dat id 
                                                   LEFT JOIN usulan_penghapusan up 
-                                                        ON id.nomor_asset_utama = up.nomor_asset_utama AND up.created_by = ?
+                                                        ON id.nomor_asset_utama = up.nomor_asset_utama AND up.created_by = ?{$tahunJoinCond}
                                                   LEFT JOIN usulan_penghapusan up_all
-                                                        ON id.nomor_asset_utama = up_all.nomor_asset_utama
-                                                  WHERE id.nilai_perolehan_sd != 0
+                                                        ON id.nomor_asset_utama = up_all.nomor_asset_utama{$tahunJoinCondAll}
+                                                  WHERE id.nilai_perolehan_sd != 0{$excludeOtherYear}
                                                   GROUP BY id.id
                                                   ORDER BY CASE WHEN up_all.status IS NOT NULL THEN 0 ELSE 1 END ASC, id.nomor_asset_utama ASC";
                                         $stmt = $con->prepare($q_tab1);
@@ -1869,20 +1961,15 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
 
                                   <div class="mb-3">
                                     <label class="form-label" style="font-weight: normal;">
-                                      Tahun Dokumen <span class="text-danger">*</span>
+                                      Tahun Dokumen
                                     </label>
-                                    <select class="form-control" name="tahun_dokumen" id="inlineTahunDokumen" 
-                                            style="border: 1px solid #dee2e6; border-radius: 4px;" required>
-                                      <option value="">-- Pilih Tahun --</option>
-                                      <?php
-                                      $current_year = date('Y');
-                                      for ($y = $current_year; $y >= 2015; $y--) {
-                                          $selected = ($y == $current_year) ? 'selected' : '';
-                                          echo "<option value=\"$y\" $selected>$y</option>";
-                                      }
-                                      ?>
-                                    </select>
-                                    <div class="invalid-feedback">Pilih tahun dokumen.</div>
+                                    <?php $tahunUpload = $tahunSelected ?: date('Y'); ?>
+                                    <input type="text" class="form-control"
+                                           value="<?= htmlspecialchars($tahunUpload) ?>"
+                                           readonly
+                                           style="border: 1px solid #dee2e6; border-radius: 4px; background:#f8f9fa; color:#6c757d; cursor:default;">
+                                    <input type="hidden" name="tahun_dokumen" value="<?= htmlspecialchars($tahunUpload) ?>">
+                                    <small class="text-muted">Mengikuti filter tahun yang dipilih di atas.</small>
                                   </div>
 
                                   <div class="mb-3">
@@ -2199,6 +2286,13 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                 if (bsModal) bsModal.hide();
                               }
                             });
+
+                            document.getElementById('tahunDropdown').addEventListener('change', function() {
+                              let tahun = this.value;
+                              // reload halaman dengan parameter tahun
+                              window.location.href = "usulan_penghapusan.php?tahun=" + tahun;
+                          });
+
                           })();
                           </script>
 
@@ -2510,6 +2604,8 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                             </div>
                             <div class="card-body">
                               <?php
+                              $tahunSummarySQL = $tahunSelected ? " AND up.tahun_usulan = " . intval($tahunSelected) : " AND 1=0";
+
                               if ($isSubRegional && !empty($userSubreg)) {
                                   $q_all = $con->prepare("SELECT up.*, 
                                                           id.keterangan_asset as nama_aset,
@@ -2519,7 +2615,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                                          ) as jumlah_dokumen
                                                           FROM usulan_penghapusan up 
                                                           LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama 
-                                                          WHERE up.subreg = ?
+                                                          WHERE up.subreg = ?" . $tahunSummarySQL . "
                                                           ORDER BY up.status ASC, up.updated_at DESC");
                                   $q_all->bind_param("s", $userSubreg);
                               } elseif ($isCabang) {
@@ -2531,7 +2627,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                                          ) as jumlah_dokumen
                                                           FROM usulan_penghapusan up 
                                                           LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama 
-                                                          WHERE up.created_by = ?
+                                                          WHERE up.created_by = ?" . $tahunSummarySQL . "
                                                           ORDER BY up.created_at DESC");
                                   $q_all->bind_param("s", $_SESSION['nipp']);
                               } else {
@@ -2543,6 +2639,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                                          ) as jumlah_dokumen
                                                           FROM usulan_penghapusan up 
                                                           LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama 
+                                                          WHERE 1=1" . $tahunSummarySQL . "
                                                           ORDER BY up.subreg ASC, up.status ASC, up.updated_at DESC");
                                   $q_all->execute();
                               }
@@ -2987,7 +3084,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
             <p class="text-muted mb-4">
               Data usulan penghapusan aset telah berhasil dilengkapi, namun statusnya diubah menjadi 
               <span class="badge" style="background: #218838; color: white;">
-                <i class="bi bi-check-circle-fill text-success"></i>Data Lengkap</span>.
+                <i class="bi bi-check-circle-fill text-succes me-1"></i>Data Lengkap</span>
             </p>
             <div class="alert alert-info mb-4">
               <i class="bi bi-info-circle me-2"></i>
