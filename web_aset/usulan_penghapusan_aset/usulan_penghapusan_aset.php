@@ -8,14 +8,20 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
 session_start();
 
 // Ambil tahun dari GET, fallback dari session
-if (isset($_GET['tahun']) && $_GET['tahun'] !== '') {
+if (isset($_GET['tahun'])) {
     $tahunSelected = $_GET['tahun'];
-    $_SESSION['last_tahun_usulan'] = $tahunSelected;
+    if ($tahunSelected !== '') {
+        $_SESSION['last_tahun_usulan'] = $tahunSelected;
+    } else {
+        unset($_SESSION['last_tahun_usulan']); 
+    }
 } elseif (isset($_SESSION['last_tahun_usulan']) && $_SESSION['last_tahun_usulan'] !== '') {
     $tahunSelected = $_SESSION['last_tahun_usulan']; 
 } else {
     $tahunSelected = '';
 }
+
+$tahunInputAset = date('Y');
 
 if($tahunSelected != ''){
     $queryData = mysqli_query($con, "
@@ -27,7 +33,6 @@ if($tahunSelected != ''){
         SELECT * FROM usulan_penghapusan
     ");
 }
-
 function stripAUC($s) {
   if ($s === null) return $s;
   $s = preg_replace('/\\bAUC\\s*(?:-|–)?\\s*/i', '', $s);
