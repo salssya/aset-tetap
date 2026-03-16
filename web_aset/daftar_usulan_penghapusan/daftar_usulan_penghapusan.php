@@ -335,7 +335,7 @@ if ($isSubRegional) {
 }
 
 $query_docs = "SELECT dp.id_dokumen, dp.usulan_id, dp.tipe_dokumen,
-                      dp.file_path, dp.file_name, dp.no_aset,
+                      dp.file_name, dp.no_aset,
                       up.tahun_usulan,
                       up.nomor_asset_utama, up.nama_aset
                FROM dokumen_penghapusan dp
@@ -711,7 +711,8 @@ $stmt_docs->close();
                 'Persetujuan Penghapusan'   => 'bi bi-clipboard-check-fill',
                 'Pelaksanaan Penghapusan'   => 'bi bi-tools',
                 'Manajemen Menu'            => 'bi bi-list-ul',
-                'Import DAT'                => 'bi bi-file-earmark-arrow-up-fill',
+                'Import DAT'                => 'bi bi-file-earmark-arrow-down',
+                'Export DAT'                => 'bi bi-file-earmark-arrow-up-fill',
                 'Daftar Aset Tetap'         => 'bi bi-card-list',
                 'Manajemen User'            => 'bi bi-people-fill'
           ];
