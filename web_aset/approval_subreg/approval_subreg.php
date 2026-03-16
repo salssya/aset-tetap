@@ -187,7 +187,7 @@ if (isset($_SESSION['Type_User']) && stripos($_SESSION['Type_User'], 'Sub') !== 
 
   // Filter berdasarkan subreg - ini akan menangkap semua dokumen dari cabang dalam subreg yang sama
   if (!empty($determinedSubreg)) {
-    $filterCondition .= " AND id.subreg = '" . mysqli_real_escape_string($con, $determinedSubreg) . "'";
+    $filterCondition .= " AND (id.subreg = '" . mysqli_real_escape_string($con, $determinedSubreg) . "' OR LOWER(id.profit_center_text) = 'kantor pusat')";
   }
 } elseif (isset($_SESSION['Type_User']) && stripos($_SESSION['Type_User'], 'Cabang') !== false) {
   $userCabang = mysqli_real_escape_string($con, $_SESSION['Cabang'] ?? '');

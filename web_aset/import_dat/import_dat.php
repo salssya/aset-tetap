@@ -18,52 +18,9 @@ $pesan = "";
 $tipe_pesan = "";
 $saved_count = 0;
 
-// Handle save to database
-if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] === 'save_data') {
-    // Validate CSRF (simple check)
-    if (!isset($_POST['data']) || empty($_POST['data'])) {
-        $pesan = "Tidak ada data untuk disimpan";
-        $tipe_pesan = "danger";
-    } else {
-        try {
-            $data_json = $_POST['data'];
-            $importedData = json_decode($data_json, true);
-            
-            if (is_null($importedData)) {
-                throw new Exception("Data tidak valid");
-            }
-            
-            // Save to database
-            $saved_count = saveDataToDatabase($con, $importedData);
-            
-            if ($saved_count > 0) {
-                $pesan = "✅ Berhasil menyimpan " . $saved_count . " baris data ke database";
-                $tipe_pesan = "success";
-                // Clear the imported data after saving
-                $importedData = [];
-                // Clear session data
-                unset($_SESSION['importedData']);
-            } else {
-                $pesan = "Gagal menyimpan data ke database";
-                $tipe_pesan = "danger";
-            }
-        } catch (Exception $e) {
-            $pesan = "Error: " . $e->getMessage();
-            $tipe_pesan = "danger";
-        }
-    }
-}
+// Reserved: save_data action is now integrated with file upload
 
-// Handle clear preview (hapus table)
-if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] === 'clear_preview') {
-    // Hapus data preview dari session
-    if (isset($_SESSION['importedData'])) {
-        unset($_SESSION['importedData']);
-    }
-    $importedData = [];
-    $pesan = "✅ Preview data berhasil dihapus";
-    $tipe_pesan = "success";
-}
+// Reserved: clear_preview action is no longer needed
 
 // Handle file upload
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_FILES['file_excel'])) {
@@ -98,10 +55,28 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_FILES['file_excel'])) {
                 $pesan = "File tidak memiliki data untuk diimport";
                 $tipe_pesan = "warning";
             } else {
-                // Save to session
-                $_SESSION['importedData'] = $importedData;
-                $pesan = "File berhasil diimport! Total " . count($importedData) . " baris data";
-                $tipe_pesan = "success";
+                // Langsung simpan ke database tanpa preview
+                try {
+                    $saved_count = saveDataToDatabase($con, $importedData);
+                    
+                    if ($saved_count > 0) {
+                        $pesan = "✅ Berhasil mengimport dan menyimpan " . $saved_count . " baris data ke database";
+                        $tipe_pesan = "success";
+                        // Clear imported data
+                        $importedData = [];
+                        if (isset($_SESSION['importedData'])) {
+                            unset($_SESSION['importedData']);
+                        }
+                    } else {
+                        $pesan = "File berhasil dibaca namun tidak ada data yang tersimpan (mungkin duplikat)";
+                        $tipe_pesan = "warning";
+                        $importedData = [];
+                    }
+                } catch (Exception $e) {
+                    $pesan = "Gagal menyimpan data ke database: " . $e->getMessage();
+                    $tipe_pesan = "danger";
+                    $importedData = [];
+                }
             }
         } catch (Exception $e) {
             $error_msg = $e->getMessage();
@@ -114,11 +89,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_FILES['file_excel'])) {
             $tipe_pesan = "danger";
         }
     }
-}
-
-// Get imported data from session if available
-if (isset($_SESSION['importedData'])) {
-    $importedData = $_SESSION['importedData'];
 }
 
 /**
@@ -443,6 +413,12 @@ function saveDataToDatabase($con, $importedData) {
     
     if (!mysqli_query($con, $create_table_sql)) {
         throw new Exception("Gagal membuat tabel: " . mysqli_error($con));
+    }
+    
+    // Hapus semua data lama sebelum mengimport data baru
+    $truncate_sql = "TRUNCATE TABLE import_dat";
+    if (!mysqli_query($con, $truncate_sql)) {
+        throw new Exception("Gagal menghapus data lama: " . mysqli_error($con));
     }
     
     // Get current user
@@ -904,10 +880,7 @@ function saveDataToDatabase($con, $importedData) {
                     <div class="card-footer">
                       <div class="d-flex gap-2">
                         <button type="submit" class="btn btn-primary">
-                          <i class="bi bi-cloud-arrow-up"></i> Upload
-                        </button>
-                        <button type="button" class="btn btn-success" onclick="confirmSaveData()" id="saveBtn" style="display: none;">
-                          <i class="bi bi-check-circle"></i> Simpan ke Database
+                          <i class="bi bi-cloud-arrow-up"></i> Upload & Simpan ke Database
                         </button>
                       </div>
                     </div>
@@ -917,109 +890,7 @@ function saveDataToDatabase($con, $importedData) {
                   </div>
                   <!--end::Form-->
                   
-                  <!-- Data Preview Card -->
-                  <?php if (!empty($importedData)): ?>
-                  <div class="card mb-4">
-                    <div class="card-header d-flex justify-content-between align-items-center">
-                      <h3 class="card-title">Preview Data (<?php echo count($importedData); ?> baris)</h3>
-                    </div>
-                    <div class="card-body" style="overflow-x: auto;">
-                      <table class="table table-bordered table-striped table-sm" role="table">
-                        <thead class="table-dark sticky-top">
-                          <tr>
-                            <th scope="col" style="white-space: nowrap;">No Asset Utama</th>
-                            <th scope="col" style="white-space: nowrap;">SubReg</th>
-                            <th scope="col" style="white-space: nowrap;">Profit Center</th>
-                            <th scope="col" style="white-space: nowrap;">PC Text</th>
-                            <th scope="col" style="white-space: nowrap;">Cost Center Baru</th>
-                            <th scope="col" style="white-space: nowrap;">Deskripsi CC</th>
-                            <th scope="col" style="white-space: nowrap;">Cabang/Kawasan</th>
-                            <th scope="col" style="white-space: nowrap;">Kode Plant</th>
-                            <th scope="col" style="white-space: nowrap;">Periode</th>
-                            <th scope="col" style="white-space: nowrap;">Tahun</th>
-                            <th scope="col" style="white-space: nowrap;">Asset Asal</th>
-                            <th scope="col" style="white-space: nowrap;">Asset No</th>
-                            <th scope="col" style="white-space: nowrap;">Sub Number</th>
-                            <th scope="col" style="white-space: nowrap;">Nomor Asset_Sub Number</th>
-                            <th scope="col" style="white-space: nowrap;">GL Account</th>
-                            <th scope="col" style="white-space: nowrap;">Asset Class</th>
-                            <th scope="col" style="white-space: nowrap;">Nama Class</th>
-                            <th scope="col" style="white-space: nowrap;">Kel. Aset</th>
-                            <th scope="col" style="white-space: nowrap;">Status</th>
-                            <th scope="col" style="white-space: nowrap;">Asset No Text</th>
-                            <th scope="col" style="white-space: nowrap;">Akuisisi</th>
-                            <th scope="col" style="white-space: nowrap;">Keterangan</th>
-                            <th scope="col" style="white-space: nowrap;">Tgl Akusisi</th>
-                            <th scope="col" style="white-space: nowrap;">Tgl Perolehan</th>
-                            <th scope="col" style="white-space: nowrap;">Tgl Penyusutan</th>
-                            <th scope="col" style="white-space: nowrap;">Masa Manfaat</th>
-                            <th scope="col" style="white-space: nowrap;">Sisa Manfaat</th>
-                            <th scope="col" style="white-space: nowrap;">Nilai Perolehan AT</th>
-                            <th scope="col" style="white-space: nowrap;">Residu %</th>
-                            <th scope="col" style="white-space: nowrap;">Residu Rp</th>
-                            <th scope="col" style="white-space: nowrap;">Nilai Perolehan s.d</th>
-                            <th scope="col" style="white-space: nowrap;">Adjusment Nilai</th>
-                            <th scope="col" style="white-space: nowrap;">Nilai Buku AT</th>
-                            <th scope="col" style="white-space: nowrap;">Nilai Buku s.d</th>
-                            <th scope="col" style="white-space: nowrap;">Penyusutan/Bulan</th>
-                            <th scope="col" style="white-space: nowrap;">Penyusutan s.d</th>
-                            <th scope="col" style="white-space: nowrap;">Penyusutan TL</th>
-                            <th scope="col" style="white-space: nowrap;">Penyusutan/Tahun</th>
-                            <th scope="col" style="white-space: nowrap;">Akm Penyusutan TL</th>
-                            <th scope="col" style="white-space: nowrap;">Adjusment Akm</th>
-                            <th scope="col" style="white-space: nowrap;">Penghapusan</th>
-                            <th scope="col" style="white-space: nowrap;">Asset Shutdown</th>
-                            <th scope="col" style="white-space: nowrap;">Akumulasi Penyusutan</th>
-                            <th scope="col" style="white-space: nowrap;">Additional Description</th>
-                            <th scope="col" style="white-space: nowrap;">Serial Number</th>
-                            <th scope="col" style="white-space: nowrap;">Alamat</th>
-                            <th scope="col" style="white-space: nowrap;">GL Account Exp</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <?php
-                          foreach ($importedData as $row) {
-                              echo '<tr class="align-middle">';
-                              for ($i = 0; $i < 47; $i++) {
-                                  $cellValue = isset($row[$i]) ? htmlspecialchars((string)$row[$i]) : '-';
-                                  echo '<td style="font-size: 0.85rem;">' . $cellValue . '</td>';
-                              }
-                              echo '</tr>';
-                          }
-                          ?>
-                        </tbody>
-                      </table>
-                    </div>
-                    <div class="card-footer clearfix">
-                      <div class="row">
-                        <div class="col-md-12">
-                          <div class="d-flex gap-2">
-                            <form id="saveForm" method="POST" style="display:inline;">
-                              <input type="hidden" name="action" value="save_data">
-                              <input type="hidden" id="dataInput" name="data" value="">
-                              <button type="button" class="btn btn-success" onclick="submitSaveForm()">
-                                <i class="bi bi-check-circle"></i> Simpan ke Database
-                              </button>
-                            </form>
-
-                            <form id="clearForm" method="POST" style="display:inline;">
-                              <input type="hidden" name="action" value="clear_preview">
-                              <button type="button" class="btn btn-danger" id="clearBtn" onclick="confirmClearTable()">
-                                <i class="bi bi-trash"></i> Hapus Table
-                              </button>
-                            </form>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  <?php endif; ?>
-                  
-                  <!-- Hidden form for saving data - DEPRECATED, using inline form now -->
-                  <form id="saveFormHidden" method="POST" style="display:none;">
-                    <input type="hidden" name="action" value="save_data">
-                    <input type="hidden" id="dataInputHidden" name="data" value="">
-                  </form>
+                  <!-- Data Preview Card - REMOVED: Data is now saved directly on upload -->
             <!--end::Row-->
           </div>
         </div>
@@ -1253,68 +1124,6 @@ function saveDataToDatabase($con, $importedData) {
       //-----------------
       // - END PIE CHART -
       //-----------------
-
-      // Function to submit save form with data from preview table
-      function submitSaveForm() {
-        // Get table data from preview
-        const tableRows = document.querySelectorAll('.card-body table tbody tr');
-        
-        if (tableRows.length === 0) {
-          showAlertModal('Info', 'Tidak ada data untuk disimpan', 'info');
-          return;
-        }
-        
-        // Extract data from table
-        const importedData = [];
-        tableRows.forEach((row) => {
-          const cells = row.querySelectorAll('td');
-          if (cells.length > 0) {
-            const rowData = [];
-            // Get only first 47 columns
-            for (let i = 0; i < Math.min(47, cells.length); i++) {
-              rowData.push(cells[i].textContent.trim());
-            }
-            importedData.push(rowData);
-          }
-        });
-        
-        if (importedData.length === 0) {
-          showAlertModal('Info', 'Tidak ada data valid untuk disimpan', 'info');
-          return;
-        }
-        
-        // Show confirmation dialog using modal
-        const message = `Anda yakin ingin menyimpan ${importedData.length} baris data ke database?\n\nData yang sudah ada dengan nomor asset yang sama akan ditolak.`;
-        showConfirmModal('Konfirmasi Simpan', message, { variant: 'success', confirmText: 'Simpan', cancelText: 'Batal' })
-          .then((confirmed) => {
-            if (confirmed) {
-              // Set hidden input with data
-              document.getElementById('dataInput').value = JSON.stringify(importedData);
-              // Submit form
-              document.getElementById('saveForm').submit();
-            }
-          });
-      }
-
-      // Legacy function for backward compatibility
-      function confirmSaveData() {
-        submitSaveForm();
-      }
-
-      // Confirm and clear preview table
-      function confirmClearTable() {
-        const tableRows = document.querySelectorAll('.card-body table tbody tr');
-        if (tableRows.length === 0) {
-          showAlertModal('Info', 'Tidak ada data untuk dihapus', 'info');
-          return;
-        }
-        showConfirmModal('Hapus Preview', 'Anda yakin ingin menghapus preview data?', { variant: 'danger', confirmText: 'Hapus', cancelText: 'Batal' })
-          .then((confirmed) => {
-            if (confirmed) {
-              document.getElementById('clearForm').submit();
-            }
-          });
-      }
 
       // Utility: Promise-based modal confirm using Bootstrap 5
       function showConfirmModal(title, message, options = {}) {

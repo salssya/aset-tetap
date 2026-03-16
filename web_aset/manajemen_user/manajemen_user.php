@@ -62,6 +62,11 @@ $_SESSION['akses'] = $akses;
     <link rel="stylesheet" href="../../dist/css/adminlte.css" />
     <!--end::Required Plugin(AdminLTE)-->
 
+    <!-- DataTables CSS -->
+    <link rel="stylesheet" href="../../dist/css/dataTables.bootstrap5.min.css">
+    <link rel="stylesheet" href="../../dist/css/responsive.bootstrap5.min.css">
+    <link rel="stylesheet" href="../../dist/css/dataTables.dataTables.min.css"/>
+
     <style> 
      .app-sidebar {
         background-color: #0b3a8c !important;
@@ -125,6 +130,42 @@ $_SESSION['akses'] = $akses;
       .app-sidebar .nav-link.active i,
       .app-sidebar .nav-link:hover i {
         color: #ffffff !important;
+      }
+      /* Custom styles untuk DataTables */
+      .table-responsive {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        border: 1px solid #dee2e6;
+        border-radius: 0.25rem;
+      }
+      .table-responsive::-webkit-scrollbar {
+        height: 8px;
+      }
+      .table-responsive::-webkit-scrollbar-track {
+        background: #f1f1f1;
+      }
+      .table-responsive::-webkit-scrollbar-thumb {
+        background: #888;
+        border-radius: 4px;
+      }
+      .table-responsive::-webkit-scrollbar-thumb:hover {
+        background: #555;
+      }
+      #usersTable {
+        margin-bottom: 0;
+      }
+      #usersTable thead th,
+      #usersTable tbody td {
+        padding: 8px 12px;
+        white-space: nowrap;
+      }
+      #usersTable thead th {
+        background-color: #f8f9fa;
+        font-weight: 600;
+        border-bottom: 2px solid #dee2e6;
+      }
+      #usersTable tbody td {
+        border-bottom: 1px solid #dee2e6;
       }
     </style>
     <!-- apexcharts -->
@@ -347,19 +388,20 @@ $_SESSION['akses'] = $akses;
               </div>
               <!-- /.card-header -->
               <div class="card-body">
-                <table class="table table-bordered table-striped">
-                  <thead>
-                    <tr>
-                      <th>NIPP</th>
-                      <th>Nama</th>
-                      <th>Email</th>
-                      <th>Akses Menu</th>
-                      <th>Type User</th>
-                      <th>Cabang</th>
-                      <th>Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
+                <div class="table-responsive">
+                  <table class="table table-bordered table-hover" id="usersTable">
+                    <thead style="background: #f8f9fa;">
+                      <tr>
+                        <th>NIPP</th>
+                        <th>Nama</th>
+                        <th>Email</th>
+                        <th>Akses Menu</th>
+                        <th>Type User</th>
+                        <th>Cabang</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
                     <?php
                     $result_users = mysqli_query($con, "
                       SELECT u.NIPP, u.Nama, u.Email, u.Type_User, u.Cabang,
@@ -391,8 +433,9 @@ $_SESSION['akses'] = $akses;
                             </tr>';
                     }
                     ?>
-                  </tbody>
-                </table>
+                    </tbody>
+                  </table>
+                </div>
               </div>
               <!-- /.card-body -->
             </div>
@@ -451,6 +494,12 @@ $_SESSION['akses'] = $akses;
     </div>
     <!--end::Modal Delete Confirmation-->
     <!--begin::Script-->
+    <!-- jQuery -->
+    <script src="../../dist/js/jquery-3.6.0.min.js"></script>
+    <!-- DataTables JS -->
+    <script src="../../dist/js/dataTables.js"></script>
+    <script src="../../dist/js/dataTables.responsive.js"></script>
+    <script src="../../dist/js/dataTables.buttons.js"></script>
     <!--begin::Third Party Plugin(OverlayScrollbars)-->
     <script
       src="../../dist/js/overlayscrollbars.browser.es6.min.js"
@@ -501,6 +550,39 @@ $_SESSION['akses'] = $akses;
       sessionStorage.setItem("email", "<?php echo $_SESSION['email']; ?>");
     </script>
     <script>
+      // Initialize DataTable
+      $(document).ready(function() {
+        $('#usersTable').DataTable({
+          responsive: false,
+          autoWidth: false,
+          scrollX: true,
+          scrollCollapse: true,
+          fixedHeader: true,
+          paging: true,
+          pageLength: 10,
+          searching: true,
+          ordering: true,
+          info: true,
+          processing: true,
+          deferRender: true,
+          retrieve: true,
+          columnDefs: [
+            {
+              targets: 6, // Action column
+              orderable: false,
+              width: '180px',
+              className: 'dt-body-center'
+            }
+          ],
+          language: {
+            url: '../../dist/js/i18n/id.json'
+          },
+          initComplete: function() {
+            console.log('DataTable initialized successfully');
+          }
+        });
+      });
+
       // Handle Delete Modal
       const deleteModal = document.getElementById('deleteModal');
       let deleteNipp = null;
