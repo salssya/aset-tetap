@@ -89,6 +89,40 @@ if (empty($_SESSION['profit_center_text']) && !empty($_SESSION['Cabang'])) {
   }
 }
 
+// ========================================================
+// FILTER TAHUN: Ambil tahun dari GET parameter atau session
+// ========================================================
+// Jika parameter tahun ada di GET (baik kosong maupun berisi nilai), gunakan itu
+// Jika tidak ada parameter tahun di GET, pakai session jika ada
+if (isset($_GET['tahun']) && $_GET['tahun'] !== '') {
+    $tahunSelected = $_GET['tahun'];
+    $_SESSION['last_tahun_subreg'] = $tahunSelected;
+} elseif (isset($_SESSION['last_tahun_subreg']) && $_SESSION['last_tahun_subreg'] !== '') {
+    $tahunSelected = $_SESSION['last_tahun_subreg'];
+} else {
+    $tahunSelected = '2026';
+    $_SESSION['last_tahun_subreg'] = $tahunSelected;
+}
+
+// Query untuk mendapatkan daftar tahun yang tersedia dari usulan_penghapusan
+$queryTahun = mysqli_query($con, "
+    SELECT DISTINCT tahun_usulan 
+    FROM usulan_penghapusan 
+    ORDER BY tahun_usulan DESC
+");
+$listTahun = [];
+if ($queryTahun) {
+    while ($row = mysqli_fetch_assoc($queryTahun)) {
+        if (!empty($row['tahun_usulan'])) {
+            $listTahun[] = $row['tahun_usulan'];
+        }
+    }
+}
+// Pastikan 2026 selalu tersedia
+if (!in_array('2026', array_map('strval', $listTahun))) {
+    array_unshift($listTahun, '2026');
+}
+
 // Query hanya untuk profit center user dan nilai_perolehan_sd ≠ 0
 $query = "SELECT * FROM import_dat 
           WHERE profit_center = ? 
@@ -205,8 +239,14 @@ $query_subreg_pending = "SELECT up.*,
        FROM usulan_penghapusan up 
        LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama 
        " . $filterCondition . " AND up.status IN ('submitted')
-       AND COALESCE(up.status_approval_subreg, 'pending') IN ('pending','submitted')
-       ORDER BY up.created_at DESC";
+       AND COALESCE(up.status_approval_subreg, 'pending') IN ('pending','submitted')";
+
+// Tambahkan filter tahun jika dipilih
+if (!empty($tahunSelected)) {
+    $query_subreg_pending .= " AND up.tahun_usulan = '" . mysqli_real_escape_string($con, $tahunSelected) . "'";
+}
+
+$query_subreg_pending .= " ORDER BY up.created_at DESC";
 
 $result_subreg = mysqli_query($con, $query_subreg_pending);
 $subreg_pending_data = [];
@@ -226,9 +266,15 @@ if ($result_subreg) {
 // ========================================================
 
 $upload_data = [];
-// Reviewer view (SubRegional / Cabang) -> show items awaiting subreg approval
-if (isset($_SESSION['Type_User']) && (stripos($_SESSION['Type_User'], 'Sub') !== false || stripos($_SESSION['Type_User'], 'Cabang') !== false)) {
+// Reviewer view (SubRegional / Cabang / Regional) -> show items awaiting subreg approval
+// Also include ADMINISTRATOR or users with broad access for approval workflow
+if (isset($_SESSION['Type_User']) && (stripos($_SESSION['Type_User'], 'Sub') !== false || stripos($_SESSION['Type_User'], 'Cabang') !== false || stripos($_SESSION['Type_User'], 'Regional') !== false || strtolower($_SESSION['Type_User']) === 'administrator')) {
   $uploadWhereClause = $filterCondition . " AND up.status IN ('submitted') AND COALESCE(up.status_approval_subreg, 'pending') IN ('pending','submitted')";
+
+  // Tambahkan filter tahun jika dipilih
+  if (!empty($tahunSelected)) {
+    $uploadWhereClause .= " AND up.tahun_usulan = '" . mysqli_real_escape_string($con, $tahunSelected) . "'";
+  }
 
   $query_upload = "SELECT up.*, 
            id.keterangan_asset as nama_aset,
@@ -302,7 +348,8 @@ $count_pending = 0;
 $query_pending_count = "SELECT COUNT(*) AS cnt 
    FROM usulan_penghapusan up 
    LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama 
-   " . $filterCondition . " AND up.status IN ('submitted') AND COALESCE(up.status_approval_subreg, 'pending') IN ('pending','submitted')";
+   " . $filterCondition . " AND up.status IN ('submitted') AND COALESCE(up.status_approval_subreg, 'pending') IN ('pending','submitted')"
+   . (!empty($tahunSelected) ? " AND up.tahun_usulan = '" . mysqli_real_escape_string($con, $tahunSelected) . "'" : "");
 $res_p = mysqli_query($con, $query_pending_count);
 if ($res_p) {
   $count_pending = intval((mysqli_fetch_assoc($res_p)['cnt']) ?? 0);
@@ -313,7 +360,8 @@ $count_approved = 0;
 $query_approved_count = "SELECT COUNT(*) AS cnt 
    FROM usulan_penghapusan up 
    LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama 
-   " . $filterCondition . " AND up.status_approval_subreg = 'approved'";
+   " . $filterCondition . " AND up.status_approval_subreg = 'approved'"
+   . (!empty($tahunSelected) ? " AND up.tahun_usulan = '" . mysqli_real_escape_string($con, $tahunSelected) . "'" : "");
 $res_a = mysqli_query($con, $query_approved_count);
 if ($res_a) {
   $count_approved = intval((mysqli_fetch_assoc($res_a)['cnt']) ?? 0);
@@ -324,7 +372,8 @@ $count_rejected = 0;
 $query_rejected_count = "SELECT COUNT(*) AS cnt 
    FROM usulan_penghapusan up 
    LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama 
-   " . $filterCondition . " AND COALESCE(up.status_approval_subreg, '') IN ('rejected','rejected_subreg')";
+   " . $filterCondition . " AND COALESCE(up.status_approval_subreg, '') IN ('rejected','rejected_subreg')"
+   . (!empty($tahunSelected) ? " AND up.tahun_usulan = '" . mysqli_real_escape_string($con, $tahunSelected) . "'" : "");
 $res_r = mysqli_query($con, $query_rejected_count);
 if ($res_r) {
   $count_rejected = intval((mysqli_fetch_assoc($res_r)['cnt']) ?? 0);
@@ -1758,7 +1807,8 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                 'Persetujuan Penghapusan'   => 'bi bi-clipboard-check-fill',
                 'Pelaksanaan Penghapusan'   => 'bi bi-tools',
                 'Manajemen Menu'            => 'bi bi-list-ul',
-                'Import DAT'                => 'bi bi-file-earmark-arrow-up-fill',
+                'Import DAT'                => 'bi bi-file-earmark-arrow-down',
+                'Export DAT'                => 'bi bi-file-earmark-arrow-up-fill',
                 'Daftar Aset Tetap'         => 'bi bi-card-list',
                 'Manajemen User'            => 'bi bi-people-fill'
             ];
@@ -1820,8 +1870,24 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
             <!--begin::Row-->
             <div class="row">
               <div class="col-sm-6"><h3 class="mb-0">Approval Sub Regional</h3></div>
-              <div class="col-sm-6">
-                <ol class="breadcrumb float-sm-end">
+
+              <div class="col-sm-6 d-flex align-items-center justify-content-end gap-2">
+                <!-- Dropdown Filter Tahun -->
+                <form method="GET" class="d-flex align-items-center gap-2 me-3" id="formFilterTahun">
+                  <label class="mb-0 text-muted small fw-semibold text-nowrap" for="selectTahun">
+                    <i class="bi bi-calendar3 me-1"></i>Tahun:
+                  </label>
+                  <select name="tahun" id="selectTahun" class="form-select form-select-sm" style="min-width:130px;" onchange="this.form.submit()">
+                    <?php foreach($listTahun as $tahun): ?>
+                      <option value="<?= htmlspecialchars($tahun) ?>" <?= ($tahunSelected == $tahun) ? 'selected' : '' ?>>
+                        <?= htmlspecialchars($tahun) ?>
+                      </option>
+                    <?php endforeach; ?>
+                  </select>
+                </form>
+
+              
+                <ol class="breadcrumb float-sm-end mb-0">
                   <li class="breadcrumb-item"><a href="../dasbor/dasbor.php">Home</a></li>
                   <li class="breadcrumb-item active">Approval Sub Regional</li>
                 </ol>
@@ -1842,6 +1908,12 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
             </div>
             <?php endif; ?>
+
+            <!-- Filter Info -->
+            <div class="alert alert-info alert-dismissible fade show" role="alert">
+                <small><i class="bi bi-info-circle"></i> <strong>Filter aktif:</strong> Menampilkan data tahun <strong><?= htmlspecialchars($tahunSelected) ?></strong></small>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
 
             <!--begin::Row-->
             <div class="row">
