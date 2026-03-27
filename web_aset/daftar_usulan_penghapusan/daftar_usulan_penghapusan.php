@@ -255,7 +255,8 @@ if (isset($_GET['tahun']) && $_GET['tahun'] !== '') {
 } elseif (isset($_SESSION['last_tahun_daftar_usulan']) && $_SESSION['last_tahun_daftar_usulan'] !== '') {
     $tahunSelected = $_SESSION['last_tahun_daftar_usulan'];
 } else {
-    $tahunSelected = '';
+    $tahunSelected = '2026';
+    $_SESSION['last_tahun_daftar_usulan'] = $tahunSelected;
 }
 $tahunSQL = $tahunSelected ? " AND up.tahun_usulan = " . intval($tahunSelected) : " AND 1=0";
 
@@ -269,6 +270,10 @@ elseif ($isCabang)
     $tahunWhere .= " AND profit_center = '" . mysqli_real_escape_string($con, $userProfitCenter) . "'";
 $qT = mysqli_query($con, "SELECT DISTINCT tahun_usulan FROM usulan_penghapusan $tahunWhere ORDER BY tahun_usulan DESC");
 if ($qT) while ($r = mysqli_fetch_assoc($qT)) if (!empty($r['tahun_usulan'])) $listTahun[] = $r['tahun_usulan'];
+
+if (!in_array('2026', array_map('strval', $listTahun))) {
+    array_unshift($listTahun, '2026');
+}
 
 $whereClause = "WHERE up.status NOT IN ('draft', 'lengkapi_dokumen', 'dokumen_lengkap')" . $tahunSQL;
 if ($isSubRegional) {
@@ -778,7 +783,6 @@ $stmt_docs->close();
                 <i class="bi bi-calendar3 me-1"></i>Tahun:
               </label>
               <select name="tahun" id="selectTahun" class="form-select form-select-sm" style="min-width:130px;" onchange="this.form.submit()">
-                <option value="">-- Pilih Tahun --</option>
                 <?php foreach ($listTahun as $th): ?>
                   <option value="<?= htmlspecialchars($th) ?>" <?= ($tahunSelected == $th) ? 'selected' : '' ?>>
                     <?= htmlspecialchars($th) ?>
@@ -804,11 +808,7 @@ $stmt_docs->close();
             <div class="alert alert-info mb-0">
               <i class="bi bi-info-circle me-2"></i>
               <strong>Informasi:</strong> Tabel di bawah menampilkan semua usulan penghapusan aset dengan status approval SubReg dan Regional.
-              <?php if (!$tahunSelected): ?>
-                <span class="ms-2 text-muted">— Pilih tahun untuk melihat data.</span>
-              <?php else: ?>
-                <span class="ms-2">Menampilkan data tahun <strong><?= $tahunSelected ?></strong>.</span>
-              <?php endif; ?>
+              <span class="ms-2">Menampilkan data tahun <strong><?= $tahunSelected ?></strong>.</span>
             </div>
           </div>
         </div>
