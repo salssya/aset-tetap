@@ -93,6 +93,34 @@ if (empty($_SESSION['profit_center_text']) && !empty($_SESSION['Cabang'])) {
   }
 }
 
+if (isset($_GET['tahun']) && $_GET['tahun'] !== '') {
+    $tahunSelected = $_GET['tahun'];
+    $_SESSION['last_tahun_regional'] = $tahunSelected;
+} elseif (isset($_SESSION['last_tahun_regional']) && $_SESSION['last_tahun_regional'] !== '') {
+    $tahunSelected = $_SESSION['last_tahun_regional'];
+} else {
+    $tahunSelected = '2026';
+    $_SESSION['last_tahun_regional'] = $tahunSelected;
+}
+
+// Query untuk mendapatkan daftar tahun yang tersedia dari usulan_penghapusan
+$queryTahun = mysqli_query($con, "
+    SELECT DISTINCT tahun_usulan 
+    FROM usulan_penghapusan 
+    ORDER BY tahun_usulan DESC
+");
+$listTahun = [];
+if ($queryTahun) {
+    while ($row = mysqli_fetch_assoc($queryTahun)) {
+        if (!empty($row['tahun_usulan'])) {
+            $listTahun[] = $row['tahun_usulan'];
+        }
+    }
+}
+if (!in_array('2026', array_map('strval', $listTahun))) {
+    array_unshift($listTahun, '2026');
+}
+
 // Query hanya untuk profit center user dan nilai_perolehan_sd ≠ 0
 $query = "SELECT * FROM import_dat 
           WHERE profit_center = ? 
@@ -161,87 +189,44 @@ while ($row = $result_lengkapi->fetch_assoc()) {
 }
 $stmt_lengkapi->close();
 
-// Query khusus: tampilkan usulan yang sudah disetujui oleh SubReg dan menunggu approval Regional
-// Untuk reviewer Regional, jangan batasi oleh created_by; tampilkan berdasarkan profit_center / subreg
-$query_regional_pending = "SELECT up.*, 
-           id.keterangan_asset as nama_aset, 
-           id.asset_class_name as kategori_aset,
-           id.subreg,
-           id.profit_center_text
-           FROM usulan_penghapusan up 
-           LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama 
-          WHERE COALESCE(up.status_approval_subreg, '') LIKE 'approved%'
-           AND COALESCE(up.status_approval_regional, 'pending') = 'pending'";
-
-// Jika kita punya informasi profit center (cabang) dari session, batasi hasil ke profit_center/subreg terkait
-if (!empty($userProfitCenter)) {
-  $query_regional_pending .= " AND (id.profit_center = ? OR id.subreg LIKE ?)";
-}
-
-$query_regional_pending .= " ORDER BY up.created_at DESC";
-
-$stmt_regional = $con->prepare($query_regional_pending);
-if (!empty($userProfitCenter)) {
-  $subreg_pattern = $userProfitCenter . '%';
-  $stmt_regional->bind_param("ss", $userProfitCenter, $subreg_pattern);
-}
-$stmt_regional->execute();
-$result_regional = $stmt_regional->get_result();
-
-$regional_pending_data = [];
-while ($row = $result_regional->fetch_assoc()) {
-  $row['nama_aset'] = str_replace('AUC-', '', $row['nama_aset']);
-  $row['kategori_aset'] = str_replace('AUC-', '', $row['kategori_aset']);
-  $regional_pending_data[] = $row;
-}
-$stmt_regional->close();
-
-// If scoped query returned nothing, try a fallback unscoped query to check data presence
-$regional_fallback_used = false;
-  if (empty($regional_pending_data)) {
-  $fallback_sql = "SELECT up.*, id.keterangan_asset as nama_aset, id.asset_class_name as kategori_aset, id.subreg, id.profit_center_text FROM usulan_penghapusan up LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama WHERE COALESCE(up.status_approval_subreg, '') LIKE 'approved%' AND COALESCE(up.status_approval_regional, 'pending') = 'pending' ORDER BY up.created_at DESC";
-  $res_fb = mysqli_query($con, $fallback_sql);
-  if ($res_fb && mysqli_num_rows($res_fb) > 0) {
-    $regional_fallback_used = true;
-    $regional_pending_data = [];
-    while ($r = mysqli_fetch_assoc($res_fb)) {
-      $r['nama_aset'] = str_replace('AUC-', '', $r['nama_aset']);
-      $r['kategori_aset'] = str_replace('AUC-', '', $r['kategori_aset']);
-      $regional_pending_data[] = $r;
-    }
-  }
-}
+// ========================================================
+// Data untuk tab "Daftar Usulan" sekarang dimuat via AJAX server-side processing
+// Array $regional_pending_data tidak lagi diperlukan
+// ========================================================
 
 // ========================================================
 // Query untuk data Upload Dokumen (HANYA approval regional yang pending)
 // ========================================================
 // Upload listing for Regional: show usulan that passed SubReg approval and awaiting Regional approval
 $uploadWhereClause = "WHERE COALESCE(up.status_approval_subreg, '') LIKE 'approved%' AND COALESCE(up.status_approval_regional, 'pending') = 'pending'";
-// If we have a profit center in session, scope to that profit center / subreg
-if (!empty($userProfitCenter)) {
-  $uploadWhereClause .= " AND (id.profit_center = ? OR id.subreg LIKE ?)";
+// Tambahkan filter tahun jika dipilih
+if (!empty($tahunSelected)) {
+    $uploadWhereClause .= " AND up.tahun_usulan = ?";
 }
 
-$query_upload = "SELECT DISTINCT up.id, up.*, 
+$query_upload = "SELECT DISTINCT up.id, up.*,
                  id.keterangan_asset as nama_aset,
                  id.profit_center_text,
                  id.subreg,
                  (SELECT COUNT(*) FROM dokumen_penghapusan WHERE usulan_id = up.id) as jumlah_dokumen
-                 FROM usulan_penghapusan up 
-                 LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama 
+                 FROM usulan_penghapusan up
+                 LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama
                  " . $uploadWhereClause . "
                  ORDER BY up.updated_at DESC";
 
 $stmt_upload = $con->prepare($query_upload);
-
-if (!empty($userProfitCenter)) {
-  $subreg_pattern = $userProfitCenter . '%';
-  $stmt_upload->bind_param("ss", $userProfitCenter, $subreg_pattern);
-} else {
-  // No profit center available: just execute unbound query
+if (!$stmt_upload) {
+    die("Prepare failed (upload query): " . htmlspecialchars($con->error));
 }
-
-$stmt_upload->execute();
+// Bind parameter jika ada filter tahun
+if (!empty($tahunSelected)) {
+    if (!$stmt_upload->bind_param("s", $tahunSelected)) {
+        die("Bind param failed (upload query): " . htmlspecialchars($stmt_upload->error));
+    }
+}
+if (!$stmt_upload->execute()) {
+    die("Execute failed (upload query): " . htmlspecialchars($stmt_upload->error));
+}
 $result_upload = $stmt_upload->get_result();
 
 $upload_data = [];
@@ -264,40 +249,40 @@ $stmt_upload->close();
 }
 
 // Hitung jumlah per status_approval_regional dari tabel usulan_penghapusan untuk summary boxes (Regional overview)
-// Hanya hitung usulan yang sudah disetujui SubReg dan milik profit_center/subreg reviewer
+// Hanya hitung usulan yang sudah disetujui SubReg (tidak lagi discoping)
 $count_pending = 0;
 $count_approved = 0;
 $count_rejected = 0;
 // Build counts using same logic as listing: accept approved variants or status = 'approved'
 $count_sql_base = "SELECT COALESCE(up.status_approval_regional, 'pending') AS status_key, COUNT(*) AS cnt FROM usulan_penghapusan up LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama WHERE COALESCE(up.status_approval_subreg, '') LIKE 'approved%'";
-if (!empty($regional_fallback_used)) {
-  // Fallback used: compute counts without scoping so counts match displayed fallback rows
-  $count_sql = $count_sql_base . " GROUP BY COALESCE(up.status_approval_regional, 'pending')";
-  $stmt_counts = $con->prepare($count_sql);
-} elseif (!empty($userProfitCenter)) {
-  $count_sql = $count_sql_base . " AND (id.profit_center = ? OR id.subreg LIKE ?) GROUP BY COALESCE(up.status_approval_regional, 'pending')";
-  $stmt_counts = $con->prepare($count_sql);
-  if ($stmt_counts) {
-    $subreg_pattern = $userProfitCenter . '%';
-    $stmt_counts->bind_param('ss', $userProfitCenter, $subreg_pattern);
-  }
-} else {
-  $count_sql = $count_sql_base . " GROUP BY COALESCE(up.status_approval_regional, 'pending')";
-  $stmt_counts = $con->prepare($count_sql);
+// Tambahkan filter tahun jika dipilih
+if (!empty($tahunSelected)) {
+    $count_sql_base .= " AND up.tahun_usulan = ?";
 }
+$count_sql = $count_sql_base . " GROUP BY COALESCE(up.status_approval_regional, 'pending')";
+$stmt_counts = $con->prepare($count_sql);
 
-if ($stmt_counts) {
-  $stmt_counts->execute();
-  $res_counts = $stmt_counts->get_result();
-  while ($rc = $res_counts->fetch_assoc()) {
-    $key = $rc['status_key'];
-    $cnt = intval($rc['cnt']);
-    if ($key === 'pending') $count_pending = $cnt;
-    elseif ($key === 'approved') $count_approved = $cnt;
-    elseif ($key === 'rejected') $count_rejected = $cnt;
-  }
-  $stmt_counts->close();
+if (!$stmt_counts) {
+    die("Prepare failed (count query): " . htmlspecialchars($con->error));
 }
+// Bind parameter jika ada filter tahun
+if (!empty($tahunSelected)) {
+    if (!$stmt_counts->bind_param("s", $tahunSelected)) {
+        die("Bind param failed (count query): " . htmlspecialchars($stmt_counts->error));
+    }
+}
+if (!$stmt_counts->execute()) {
+    die("Execute failed (count query): " . htmlspecialchars($stmt_counts->error));
+}
+$res_counts = $stmt_counts->get_result();
+while ($rc = $res_counts->fetch_assoc()) {
+  $key = $rc['status_key'];
+  $cnt = intval($rc['cnt']);
+  if ($key === 'pending') $count_pending = $cnt;
+  elseif ($key === 'approved') $count_approved = $cnt;
+  elseif ($key === 'rejected') $count_rejected = $cnt;
+}
+$stmt_counts->close();
 
 // Temporary debug output (enable by adding ?debug=1 to the URL)
 if (isset($_GET['debug']) && $_GET['debug'] === '1') {
@@ -306,11 +291,9 @@ if (isset($_GET['debug']) && $_GET['debug'] === '1') {
   echo "Session values:\n";
   echo " - Type_User: " . htmlspecialchars($_SESSION['Type_User'] ?? '') . "\n";
   echo " - Cabang / profit_center: " . htmlspecialchars($userProfitCenter) . "\n";
-  echo "\nCounts from PHP arrays:\n";
-  echo " - regional_pending_data (PHP array): " . count(
-    $regional_pending_data
-  ) . "\n";
-  echo " - upload_data (PHP array): " . count($upload_data) . "\n";
+  echo " - Tahun filter: " . htmlspecialchars($tahunSelected) . "\n";
+  echo "\nDataTables server-side processing aktif untuk tab 'Daftar Usulan'\n";
+  echo "Data dimuat via AJAX untuk menghindari memory exhaustion\n";
   // Quick DB-level checks
   echo "\nDB check: rows matching SubReg-approved & Regional pending (no profit_center scoping):\n";
   $check_q = "SELECT id, nomor_asset_utama, status, status_approval_subreg, status_approval_regional, profit_center, subreg FROM usulan_penghapusan WHERE (COALESCE(status_approval_subreg,'') LIKE 'approved%' OR status='approved') AND COALESCE(status_approval_regional,'pending')='pending' ORDER BY updated_at DESC LIMIT 50";
@@ -322,16 +305,6 @@ if (isset($_GET['debug']) && $_GET['debug'] === '1') {
     }
   } else {
     echo " - DB check query failed: " . mysqli_error($con) . "\n";
-  }
-
-  echo "\nDB check: missing import_dat join for SubReg-approved rows (these will be filtered by profit_center/subreg scoping):\n";
-  $missing_q = "SELECT up.id, up.nomor_asset_utama FROM usulan_penghapusan up WHERE (COALESCE(up.status_approval_subreg,'') LIKE 'approved%' OR up.status='approved') AND COALESCE(up.status_approval_regional,'pending')='pending' AND NOT EXISTS (SELECT 1 FROM import_dat id WHERE id.nomor_asset_utama = up.nomor_asset_utama) LIMIT 50";
-  $res_miss = mysqli_query($con, $missing_q);
-  if ($res_miss) {
-    echo " - Missing import_dat rows: " . mysqli_num_rows($res_miss) . "\n";
-    while ($r = mysqli_fetch_assoc($res_miss)) echo json_encode($r) . "\n";
-  } else {
-    echo " - Missing check failed: " . mysqli_error($con) . "\n";
   }
 
   echo "</pre>";
@@ -1058,11 +1031,99 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
 
 
 // ========================================================
+// AJAX HANDLER: Server-side processing untuk DataTables "Daftar Usulan"
+// ========================================================
+if (isset($_GET['action']) && $_GET['action'] === 'get_daftar_usulan_data') {
+    header('Content-Type: application/json');
+
+    // Parameter DataTables
+    $draw = intval($_GET['draw'] ?? 1);
+    $start = intval($_GET['start'] ?? 0);
+    $length = intval($_GET['length'] ?? 10);
+    $search = $_GET['search']['value'] ?? '';
+    $orderColumn = intval($_GET['order'][0]['column'] ?? 0);
+    $orderDir = $_GET['order'][0]['dir'] ?? 'desc';
+
+    // Map kolom untuk ordering
+    $columns = ['up.created_at', 'up.profit_center', 'up.nomor_asset_utama', 'id.keterangan_asset', 'up.mekanisme_penghapusan', 'up.status_approval_regional'];
+    $orderBy = $columns[$orderColumn] ?? 'up.created_at';
+
+    // Filter tahun
+    $tahunSelected = isset($_GET['tahun']) && $_GET['tahun'] !== '' ? $_GET['tahun'] : '';
+
+    // Base query
+    $baseQuery = "FROM usulan_penghapusan up
+                  LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama
+                  WHERE COALESCE(up.status_approval_subreg, '') LIKE 'approved%'
+                  AND COALESCE(up.status_approval_regional, 'pending') = 'pending'";
+
+    // Tambahkan filter tahun jika ada
+    if (!empty($tahunSelected)) {
+        $baseQuery .= " AND up.tahun_usulan = '" . mysqli_real_escape_string($con, $tahunSelected) . "'";
+    }
+
+    // Tambahkan search filter
+    if (!empty($search)) {
+        $search = mysqli_real_escape_string($con, $search);
+        $baseQuery .= " AND (up.nomor_asset_utama LIKE '%$search%' OR
+                            id.keterangan_asset LIKE '%$search%' OR
+                            up.profit_center LIKE '%$search%' OR
+                            id.profit_center_text LIKE '%$search%' OR
+                            up.mekanisme_penghapusan LIKE '%$search%')";
+    }
+
+    // Hitung total records
+    $totalQuery = "SELECT COUNT(*) as total " . $baseQuery;
+    $totalResult = mysqli_query($con, $totalQuery);
+    $totalRecords = mysqli_fetch_assoc($totalResult)['total'];
+
+    // Query dengan pagination dan ordering
+    $dataQuery = "SELECT up.*, id.keterangan_asset as nama_aset, id.asset_class_name as kategori_aset,
+                         id.subreg, id.profit_center_text " . $baseQuery . "
+                  ORDER BY $orderBy $orderDir
+                  LIMIT $start, $length";
+
+    $result = mysqli_query($con, $dataQuery);
+    $data = [];
+
+    while ($row = mysqli_fetch_assoc($result)) {
+        // Hilangkan kode "AUC-" dari nama_aset dan kategori_aset
+        $row['nama_aset'] = str_replace('AUC-', '', $row['nama_aset']);
+        $row['kategori_aset'] = str_replace('AUC-', '', $row['kategori_aset']);
+
+        // Format data untuk DataTables
+        $data[] = [
+            $row['created_at'], // Index 0 - untuk ordering
+            htmlspecialchars($row['profit_center']) . (!empty($row['profit_center_text']) ? ' - ' . htmlspecialchars($row['profit_center_text']) : ''), // Profit Center
+            htmlspecialchars($row['nomor_asset_utama']), // Nomor Aset
+            htmlspecialchars($row['nama_aset']), // Nama Aset
+            htmlspecialchars($row['mekanisme_penghapusan']), // Mekanisme Penghapusan
+            // Status Regional
+            ($row['status_approval_regional'] === 'pending' ? '<span class="badge" style="background: #FFC107; color: #000;"><i class="bi bi-hourglass-split me-1"></i>Pending</span>' :
+             ($row['status_approval_regional'] === 'approved' ? '<span class="badge" style="background: #28A745; color: #fff;"><i class="bi bi-check-circle me-1"></i>Approved</span>' :
+             ($row['status_approval_regional'] === 'rejected' ? '<span class="badge" style="background: #dc3545; color: #fff;"><i class="bi bi-x-circle me-1"></i>Rejected</span>' :
+             '<span class="badge bg-secondary">-</span>'))),
+            // Action button
+            '<button class="btn btn-sm btn-outline-primary" onclick="openFormLengkapiDokumen(' . $row['id'] . ')" title="Review dokumen untuk Regional Approval"><i class="bi bi-eye"></i> Review</button>'
+        ];
+    }
+
+    // Response untuk DataTables
+    $response = [
+        'draw' => $draw,
+        'recordsTotal' => $totalRecords,
+        'recordsFiltered' => $totalRecords, // Dalam kasus ini sama karena tidak ada filter server-side tambahan
+        'data' => $data
+    ];
+
+    echo json_encode($response);
+    exit();
+}
+
+// ========================================================
 // AJAX HANDLER: GET Detail Aset by nomor_asset_utama
 // ========================================================
 if (isset($_GET['action']) && $_GET['action'] === 'get_detail_aset' && isset($_GET['no_aset'])) {
-    header('Content-Type: application/json');
-    $no_aset = trim($_GET['no_aset']);
     
     // Split aset jika ada multiple (separated by semicolon)
     $aset_list = array_filter(array_map('trim', explode(';', $no_aset)));
@@ -1814,8 +1875,24 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
             <!--begin::Row-->
             <div class="row">
               <div class="col-sm-6"><h3 class="mb-0">Approval Regional</h3></div>
-              <div class="col-sm-6">
-                <ol class="breadcrumb float-sm-end">
+
+              <div class="col-sm-6 d-flex align-items-center justify-content-end gap-2">
+                <!-- Dropdown Filter Tahun -->
+                <form method="GET" class="d-flex align-items-center gap-2 me-3" id="formFilterTahun">
+                  <label class="mb-0 text-muted small fw-semibold text-nowrap" for="selectTahun">
+                    <i class="bi bi-calendar3 me-1"></i>Tahun:
+                  </label>
+                  <select name="tahun" id="selectTahun" class="form-select form-select-sm" style="min-width:130px;" onchange="this.form.submit()">
+                    <?php foreach($listTahun as $tahun): ?>
+                      <option value="<?= htmlspecialchars($tahun) ?>" <?= ($tahunSelected == $tahun) ? 'selected' : '' ?>>
+                        <?= htmlspecialchars($tahun) ?>
+                      </option>
+                    <?php endforeach; ?>
+                  </select>
+                </form>
+
+              
+                <ol class="breadcrumb float-sm-end mb-0">
                   <li class="breadcrumb-item"><a href="../dasbor/dasbor.php">Home</a></li>
                   <li class="breadcrumb-item active">Approval Regional</li>
                 </ol>
@@ -1836,6 +1913,12 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
             </div>
             <?php endif; ?>
+
+            <!-- Filter Info -->
+            <div class="alert alert-info alert-dismissible fade show" role="alert">
+                <small><i class="bi bi-info-circle"></i> <strong>Filter aktif:</strong> Menampilkan data tahun <strong><?= htmlspecialchars($tahunSelected) ?></strong></small>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
 
             <!--begin::Row-->
             <div class="row">
@@ -1877,7 +1960,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                             $is_regional = ($user_type === 'Regional' || strpos($user_type, 'Regional') !== false);
                             
                             if ($is_regional) {
-                              // Regional users: Get ALL documents (full access to view all uploaded documents)
+                              // Regional users: Get documents uploaded by SubReg only
                               $q_all_dok = $con->prepare(
                                   "SELECT dp.id_dokumen, dp.tahun_dokumen, dp.profit_center, dp.subreg,
                                           dp.tipe_dokumen, dp.profit_center_text, dp.file_path, dp.file_name,
@@ -1886,6 +1969,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                    FROM dokumen_penghapusan dp
                                    JOIN usulan_penghapusan up ON dp.usulan_id = up.id
                                    WHERE COALESCE(up.status_approval_subreg, '') LIKE 'approved%'
+                                         AND dp.type_user = 'Approval Sub Regional'
                                    GROUP BY dp.id_dokumen
                                    ORDER BY dp.id_dokumen DESC"
                               );
@@ -2025,6 +2109,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                       <tr>
                                         <th style="width: 50px;">ID</th>
                                         <th style="width: 70px;">Tahun</th>
+                                        <th>Nomor Aset</th>
                                         <th>Profit Center</th>
                                         <th>Subreg</th>
                                         <th>Deskripsi Dokumen</th>
@@ -2079,6 +2164,17 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                         <tr>
                                           <td><?= $dok['id_dokumen'] ?></td>
                                           <td><?= htmlspecialchars($dok['tahun_dokumen'] ?? date('Y')) ?></td>
+                                          <td style="max-width:200px; word-break:break-word;">
+                                            <?php 
+                                            $no_aset_raw = $dok['no_aset'] ?? '';
+                                            $no_list = array_filter(array_map('trim', explode(';', $no_aset_raw)));
+                                            if (count($no_list) > 1): ?>
+                                              <span class="badge bg-info text-dark mb-1"><?= count($no_list) ?> aset</span><br>
+                                              <small><?= htmlspecialchars(implode(' | ', $no_list)) ?></small>
+                                            <?php else: ?>
+                                              <?= htmlspecialchars($no_aset_raw) ?>
+                                            <?php endif; ?>
+                                          </td>
                                           <td><?= htmlspecialchars($dok['profit_center'] ?? '') ?></td>
                                           <td><?= htmlspecialchars($dok['subreg'] ?? '') ?></td>
                                           <td><?= htmlspecialchars($dok['tipe_dokumen'] ?? '') ?></td>
@@ -2153,7 +2249,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                             </div>
                             <!-- End Summary Boxes -->      
 
-                            <?php if (empty($regional_pending_data)): ?>
+                            <?php if (false): // Always false since we use server-side processing ?>
                               <div class="alert alert-warning">
                                 <i class="bi bi-info-circle me-2"></i>
                                 Belum ada usulan yang telah <strong>approved SubReg</strong> dan menunggu approval Regional.
@@ -2163,7 +2259,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                               <table id="lengkapiTable" class="display nowrap table table-striped table-sm w-100">
                                 <thead>
                                   <tr>
-                                    <th>No</th>
+                                    <th>Created At</th>
                                     <th>Profit Center</th>
                                     <th>Nomor Aset</th>
                                     <th>Nama Aset</th>
@@ -2173,43 +2269,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  <?php foreach ($regional_pending_data as $index => $row): ?>
-                                  <tr>
-                                    <td class="text-center"><?= $index + 1 ?></td>
-                                    <td><?= htmlspecialchars($row['profit_center']) . (!empty($row['profit_center_text']) ? ' - ' . htmlspecialchars($row['profit_center_text']) : '') ?></td>
-                                    <td><?= htmlspecialchars($row['nomor_asset_utama']) ?></td>
-                                    <td><?= htmlspecialchars($row['nama_aset']) ?></td>
-                                    <td><?= htmlspecialchars($row['mekanisme_penghapusan']) ?></td>
-                                    <td>
-                                      <?php
-                                        $reg_status = isset($row['status_approval_regional']) ? $row['status_approval_regional'] : '';
-                                        if ($reg_status === 'pending') {
-                                          echo '<span class="badge" style="background: #FFC107; color: #000;"><i class="bi bi-hourglass-split me-1"></i>Pending</span>';
-                                        } else if ($reg_status === 'approved') {
-                                          echo '<span class="badge" style="background: #28A745; color: #fff;"><i class="bi bi-check-circle me-1"></i>Approved</span>';
-                                        } else if ($reg_status === 'rejected') {
-                                          echo '<span class="badge" style="background: #dc3545; color: #fff;"><i class="bi bi-x-circle me-1"></i>Rejected</span>';
-                                        } else {
-                                          echo '<span class="badge bg-secondary">-</span>';
-                                        }
-                                      ?>
-                                    </td>
-                                    <td>
-                                      <button class="btn btn-sm btn-outline-primary" 
-                                              onclick="openFormLengkapiDokumen(<?= $row['id'] ?>)" 
-                                              title="Review dokumen untuk Regional Approval">
-                                        <i class="bi bi-eye"></i> Review
-                                      </button>
-
-                                      <?php
-                                        $sessionType = isset($_SESSION['Type_User']) ? strtolower($_SESSION['Type_User']) : '';
-                                        if (strpos($sessionType, 'regional') !== false) :
-                                      ?>
-                                        <!-- Approve/Reject buttons removed per request -->
-                                      <?php endif; ?>
-                                    </td>
-                                  </tr>
-                                  <?php endforeach; ?>
+                                  <!-- Data akan dimuat via AJAX server-side processing -->
                                 </tbody>
                               </table>
                             </div>
@@ -3336,37 +3396,71 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
           });
         }
 
-      // Initialize DataTable dengan responsive
-          $('#myTable').DataTable({
+      // Initialize DataTable untuk tab Lengkapi Data dengan server-side processing
+        $('#lengkapiTable').DataTable({
             responsive: false,
             autoWidth: false,
             scrollX: true,
-            scrollCollapse: true,
-            fixedHeader: true,
+            serverSide: true,
+            ajax: {
+                url: window.location.pathname + '?action=get_daftar_usulan_data',
+                type: 'GET',
+                data: function(d) {
+                    // Tambahkan parameter tahun ke request
+                    const urlParams = new URLSearchParams(window.location.search);
+                    d.tahun = urlParams.get('tahun') || '';
+                }
+            },
             paging: true,
             pageLength: 10,
             searching: true,
             ordering: true,
             info: true,
             processing: true,
-            deferRender: true,
-            retrieve: true,
-            columnDefs: [
-              {
-                targets: 0,
-                orderable: false,
-                width: '50px',
-                className: 'dt-body-center'
-              }
-            ],
             language: {
-              url: '../../dist/js/i18n/id.json'
-          },
+                url: '../../dist/js/i18n/id.json',
+                processing: '<i class="fa fa-spinner fa-spin fa-3x fa-fw"></i><span class="sr-only">Loading...</span> '
+            },
+            columns: [
+                { data: 0, visible: false }, // created_at untuk ordering
+                { data: 1, orderable: false }, // Profit Center
+                { data: 2, orderable: true }, // Nomor Aset
+                { data: 3, orderable: false }, // Nama Aset
+                { data: 4, orderable: false }, // Mekanisme Penghapusan
+                { data: 5, orderable: false }, // Status Regional
+                { data: 6, orderable: false } // Action
+            ],
             initComplete: function() {
-            console.log('DataTable initialized successfully');
-          }
+                console.log('DataTable server-side initialized successfully');
+            }
         });
       });
+
+// Function untuk refresh DataTable ketika filter tahun berubah
+function refreshDaftarUsulanTable() {
+    if ($.fn.DataTable.isDataTable('#lengkapiTable')) {
+        $('#lengkapiTable').DataTable().ajax.reload();
+    }
+}
+
+// Override form submit untuk filter tahun agar menggunakan AJAX reload
+document.getElementById('formFilterTahun').addEventListener('submit', function(e) {
+    e.preventDefault();
+    const formData = new FormData(this);
+    const tahun = formData.get('tahun');
+    
+    // Update URL tanpa reload page
+    const url = new URL(window.location);
+    if (tahun && tahun !== '') {
+        url.searchParams.set('tahun', tahun);
+    } else {
+        url.searchParams.delete('tahun');
+    }
+    window.history.pushState({}, '', url);
+    
+    // Refresh DataTable
+    refreshDaftarUsulanTable();
+});
       
       // Ensure confirm modal stacks above any open modal (fix appearing behind)
       (function() {
@@ -3393,20 +3487,31 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
         // apply to our confirm modal
         raiseStack('modalConfirmRegionalAction');
       })();
-// Initialize DataTable untuk tab Lengkapi Data
-        $('#lengkapiTable').DataTable({
-            responsive: false,
-            autoWidth: false,
-            scrollX: true,
-            paging: true,
-            pageLength: 10,
-            searching: true,
-            ordering: true,
-            info: true,
-            language: {
-                url: '../../dist/js/i18n/id.json'
-            }
-        });
+// Function untuk refresh DataTable ketika filter tahun berubah
+function refreshDaftarUsulanTable() {
+    if ($.fn.DataTable.isDataTable('#lengkapiTable')) {
+        $('#lengkapiTable').DataTable().ajax.reload();
+    }
+}
+
+// Override form submit untuk filter tahun agar menggunakan AJAX reload
+document.getElementById('formFilterTahun').addEventListener('submit', function(e) {
+    e.preventDefault();
+    const formData = new FormData(this);
+    const tahun = formData.get('tahun');
+    
+    // Update URL tanpa reload page
+    const url = new URL(window.location);
+    if (tahun && tahun !== '') {
+        url.searchParams.set('tahun', tahun);
+    } else {
+        url.searchParams.delete('tahun');
+    }
+    window.history.pushState({}, '', url);
+    
+    // Refresh DataTable
+    refreshDaftarUsulanTable();
+});
 
 // Auto-switch ke tab Lengkapi Data jika ada hash #dokumen di URL
         if (window.location.hash === '#dokumen') {
@@ -4480,6 +4585,33 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
         });
       })();
     </script>
+
+ <!-- Ensure Approve/Reject confirmation modals are on top -->
+    <style>
+      /* Modal Konfirmasi Approve/Reject harus berada paling depan */
+      #modalConfirmApproveReject,
+      #modalConfirmReject {
+        z-index: 20040 !important;
+      }
+
+      #modalConfirmApproveReject .modal-backdrop,
+      #modalConfirmApproveReject .modal-backdrop.show,
+      #modalConfirmReject .modal-backdrop,
+      #modalConfirmReject .modal-backdrop.show {
+        z-index: 20035 !important;
+      }
+
+      #modalConfirmApproveReject .modal-dialog,
+      #modalConfirmReject .modal-dialog {
+        z-index: 20045 !important;
+      }
+
+      /* Ensure all interactive elements in these modals are clickable */
+      #modalConfirmApproveReject *,
+      #modalConfirmReject * {
+        pointer-events: auto !important;
+      }
+    </style>
 
     <!--end::Script-->
   </body>
