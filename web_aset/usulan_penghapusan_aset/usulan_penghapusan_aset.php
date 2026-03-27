@@ -18,7 +18,8 @@ if (isset($_GET['tahun'])) {
 } elseif (isset($_SESSION['last_tahun_usulan']) && $_SESSION['last_tahun_usulan'] !== '') {
     $tahunSelected = $_SESSION['last_tahun_usulan']; 
 } else {
-    $tahunSelected = '';
+    $tahunSelected = '2026';
+    $_SESSION['last_tahun_usulan'] = $tahunSelected;
 }
 
 $tahunInputAset = date('Y');
@@ -95,7 +96,7 @@ if ($isSubRegional) {
 } elseif ($isCabang) {
     $tahunWhereClause .= " AND profit_center = '" . mysqli_real_escape_string($con, $userProfitCenter) . "'";
 }
-// Regional/admin: tanpa filter tambahan — ambil semua tahun yang ada di DB
+// Query list tahun berdasarkan user type
 $queryTahun = mysqli_query($con, "
     SELECT DISTINCT tahun_usulan 
     FROM usulan_penghapusan 
@@ -109,6 +110,10 @@ if ($queryTahun) {
             $listTahun[] = $row['tahun_usulan'];
         }
     }
+}
+
+if (!in_array('2026', array_map('strval', $listTahun))) {
+    array_unshift($listTahun, '2026');
 }
 
 $whereClause = "WHERE nilai_perolehan_sd != 0";
@@ -1500,7 +1505,6 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                     <i class="bi bi-calendar3 me-1"></i>Tahun:
                   </label>
                   <select name="tahun" id="selectTahun" class="form-select form-select-sm" style="min-width:130px;" onchange="this.form.submit()">
-                    <option value="">-- Pilih Tahun --</option>
                     <?php foreach($listTahun as $tahun): ?>
                       <option value="<?= htmlspecialchars($tahun) ?>" <?= ($tahunSelected == $tahun) ? 'selected' : '' ?>>
                         <?= htmlspecialchars($tahun) ?>
