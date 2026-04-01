@@ -1301,8 +1301,9 @@ $stmt_docs->close();
         <div class="detail-grid">
           ${item('Nomor Aset', `<span style="font-family:monospace;color:#2563eb;">${usulan.nomor_asset_utama}</span>`)}
           ${item('Nama Aset', val(usulan.nama_aset))}
-          ${item('SubReg', val(usulan.subreg))}
+          ${item('Kategori Aset', val(usulan.kategori_aset))}
           ${item('Profit Center', val(usulan.profit_center_text || usulan.profit_center))}
+          ${item('SubReg', val(usulan.subreg))}
         </div>
       </div>
 
@@ -1312,7 +1313,11 @@ $stmt_docs->close();
         <div class="detail-grid">
           ${item('Nilai Buku', `<span style="font-family:monospace;">${rupiah(usulan.nilai_buku)}</span>`)}
           ${item('Nilai Perolehan', `<span style="font-family:monospace;">${rupiah(usulan.nilai_perolehan)}</span>`)}
+          ${item('Tanggal Perolehan', val(usulan.tgl_perolehan))}
           ${item('Tahun Usulan', val(usulan.tahun_usulan))}
+          ${item('Umur Ekonomis', val(usulan.umur_ekonomis))}
+          ${item('Sisa Umur Ekonomis', val(usulan.sisa_umur_ekonomis))}
+          ${item('Jumlah Aset', val(usulan.jumlah_aset))}
           ${item('Mekanisme Penghapusan', mek)}
           ${item('Fisik Aset', fisik)}
           ${item('Jumlah Dokumen',
