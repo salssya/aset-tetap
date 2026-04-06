@@ -823,6 +823,12 @@ $stmt_docs->close();
                 <?php if ($tahunSelected): ?>
                   <span class="badge bg-primary ms-2">Tahun <?= $tahunSelected ?></span>
                 <?php endif; ?>
+                <a href="../export_data/export_data_usulan.php?tahun=<?= urlencode($tahunSelected) ?>"
+                   class="btn btn-sm btn-success ms-auto d-flex align-items-center gap-1"
+                   title="Export Daftar Usulan + Foto ke Excel">
+                  <i class="bi bi-file-earmark-excel"></i>
+                  <span>Export Excel</span>
+                </a>
               </div>
               <div class="card-table-body">
                 <div class="table-responsive">
@@ -937,6 +943,12 @@ $stmt_docs->close();
                 <?php if ($tahunSelected): ?>
                   <span class="badge bg-primary ms-2">Tahun <?= $tahunSelected ?></span>
                 <?php endif; ?>
+                <a href="../export_data/export_dokumen_usulan.php?tahun=<?= urlencode($tahunSelected) ?>&mode=zip"
+                   class="btn btn-sm btn-danger ms-auto d-flex align-items-center gap-1"
+                   title="Download Semua Dokumen PDF dalam ZIP">
+                  <i class="bi bi-file-zip"></i>
+                  <span>Download ZIP</span>
+                </a>
               </div>
               <div class="card-table-body">
                 <div class="table-responsive">
