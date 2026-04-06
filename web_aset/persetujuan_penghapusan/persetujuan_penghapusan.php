@@ -488,9 +488,7 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                       data-bs-toggle="tab" data-bs-target="#tab-daftar" type="button"
                       onclick="updateTabUrl('daftar')">
                 <i class="bi bi-list-check me-2"></i>Daftar Persetujuan
-                <?php if ($cnt_pending > 0): ?>
-                  <span class="badge bg-warning text-dark ms-1"><?= $cnt_pending ?></span>
-                <?php endif; ?>
+              
               </button>
             </li>
             <li class="nav-item">
@@ -498,9 +496,7 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                       data-bs-toggle="tab" data-bs-target="#tab-upload" type="button"
                       onclick="updateTabUrl('upload')">
                 <i class="bi bi-upload me-2"></i>Upload Dokumen HO
-                <?php if (count($daftar_dok_ho) > 0): ?>
-                  <span class="badge bg-success ms-1"><?= count($daftar_dok_ho) ?></span>
-                <?php endif; ?>
+               
               </button>
             </li>
           </ul>
@@ -522,8 +518,8 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
               <div class="card-table-wrap">
                 <div class="ctw-header">
                   <i class="bi bi-clock-history text-warning"></i>
-                  <h5>Menunggu Persetujuan HO — Tahun <?= $filterTahun ?></h5>
-                  <span class="badge bg-warning text-dark ms-auto"><?= $cnt_pending ?> Aset</span>
+                  <h5>Menunggu Persetujuan HO</h5>
+                  <span class="badge bg-primary me-2">Tahun <?= $filterTahun ?></span>
                 </div>
                 <div class="p-3">
                   <?php if (empty($data_pending)): ?>
