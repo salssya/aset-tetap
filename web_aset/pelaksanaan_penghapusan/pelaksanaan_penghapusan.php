@@ -95,7 +95,7 @@ if ($filterStatus !== 'all') {
 $res_main = mysqli_query($con, "SELECT pp.*,
     up.nomor_asset_utama, up.mekanisme_penghapusan, up.fisik_aset,
     up.justifikasi_alasan, up.status_approval_ho, up.catatan_ho,
-    up.tanggal_approval_ho, up.tahun_usulan,
+    up.tanggal_approval_ho, up.tahun_usulan, up.nilai_buku,
     id.keterangan_asset as nama_aset, id.asset_class_name as kategori_aset,
     id.profit_center_text, id.subreg, id.nilai_perolehan_sd,
     id.nilai_buku_sd as nilai_buku_awal, id.tgl_perolehan,
@@ -270,8 +270,8 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
   <main class="app-main">
     <div class="app-content-header py-3 px-4">
       <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
-        <div>
-          <h4 class="mb-0 fw-bold" style="color:#1f2937;"><i class="bi bi-tools me-2" style="color:#0b3a8c;"></i>Pelaksanaan Penghapusan</h4>
+        <div> 
+          <h4 class="mb-0 fw-bold" style="color:#1f2937;">Pelaksanaan Penghapusan</h4>
           <small class="text-muted">Realisasi pelaksanaan penghapusan aset yang telah disetujui HO</small>
         </div>
         <form method="GET" class="d-flex align-items-center gap-2 flex-wrap">
@@ -331,9 +331,9 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
       <div class="card-table">
         <div class="card-table-header">
           <i class="bi bi-tools text-primary"></i>
-          <h5>Daftar Pelaksanaan Penghapusan &mdash; Tahun <?= $filterTahun ?></h5>
-          <span class="badge bg-primary ms-auto"><?= count($data_pelaksanaan) ?> Data</span>
-        </div>
+          <h5>Daftar Pelaksanaan Penghapusan</h5>
+            <span class="badge bg-primary me-2">Tahun <?= $filterTahun ?></span>
+          </div>
         <div class="card-table-body">
           <?php if (empty($data_pelaksanaan)): ?>
             <div class="text-center text-muted py-5">
@@ -345,10 +345,9 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
             <table id="pelaksanaanTable" class="table table-bordered table-hover align-middle w-100">
               <thead>
                 <tr>
-                  <th>No</th><th>Nomor Aset</th><th>Nama Aset</th><th>SubReg</th>
-                  <th>Profit Center</th><th>Mekanisme</th><th>Tgl. Persetujuan</th>
-                  <th>Status</th><th>Nilai Appraisal Pasar</th><th>Nilai Penjualan</th>
-                  <th>Dokumen HO</th><th>Aksi</th>
+                  <th>No</th><th>Nomor Aset</th><th>SubReg</th><th>Profit Center</th>
+                  <th>Nama Aset</th><th>Mekanisme</th><th>Tgl Persetujuan</th>
+                  <th>Status</th><th>Dokumen HO</th><th>Aksi</th>
                 </tr>
               </thead>
               <tbody>
@@ -356,12 +355,12 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                   $stMap = ['Disetujui'=>['st-disetujui','bi-check-circle'],'Appraisal Aset'=>['st-appraisal','bi-calculator'],'Proses Lelang'=>['st-lelang','bi-hammer'],'Terjual'=>['st-terjual','bi-bag-check'],'Ditolak'=>['st-ditolak','bi-x-circle']];
                   [$stClass,$stIcon] = $stMap[$p['status_pelaksanaan']] ?? ['st-disetujui','bi-circle'];
                 ?>
-                <tr>
+                <tr style="font-size:.875rem;">
                   <td class="text-center"><?= $i+1 ?></td>
-                  <td><code style="color:#2563eb;"><?= htmlspecialchars($p['nomor_asset_utama']) ?></code></td>
-                  <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;"><?= htmlspecialchars($p['nama_aset']??'-') ?></td>
+                  <td><code style="color:#2563eb;font-size:.875rem;"><?= htmlspecialchars($p['nomor_asset_utama']) ?></code></td>
                   <td><?= htmlspecialchars($p['subreg']??'-') ?></td>
-                  <td style="font-size:.82rem;"><?= htmlspecialchars($p['profit_center_text']??$p['profit_center']??'-') ?></td>
+                  <td><?= htmlspecialchars($p['profit_center_text']??$p['profit_center']??'-') ?></td>
+                  <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;"><?= htmlspecialchars($p['nama_aset']??'-') ?></td>
                   <td>
                     <?php if ($p['mekanisme_penghapusan']==='Jual Lelang'): ?>
                       <span class="badge-pill" style="background:#dbeafe;color:#1d4ed8;">Jual Lelang</span>
@@ -371,13 +370,11 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                   </td>
                   <td><?= $p['tanggal_persetujuan'] ?? '-' ?></td>
                   <td><span class="badge-pill <?= $stClass ?>"><i class="bi <?= $stIcon ?> me-1"></i><?= $p['status_pelaksanaan'] ?></span></td>
-                  <td style="font-family:monospace;font-size:.82rem;"><?= $p['nilai_appraisal_pasar'] ? 'Rp '.number_format($p['nilai_appraisal_pasar'],0,',','.') : '&#8212;' ?></td>
-                  <td style="font-family:monospace;font-size:.82rem;"><?= $p['nilai_penjualan'] ? 'Rp '.number_format($p['nilai_penjualan'],0,',','.') : '&#8212;' ?></td>
                   <td class="text-center"><span class="badge bg-<?= (int)$p['jml_dok_ho']>0?'success':'secondary' ?>"><?= (int)$p['jml_dok_ho'] ?></span></td>
                   <td>
-                    <button class="btn btn-sm btn-outline-primary" onclick="openDetail(<?= $p['id'] ?>)" title="Detail"><i class="bi bi-eye"></i></button>
+                    <button class="btn btn-sm btn-outline-primary btn-detail-pel" data-id="<?= $p['id'] ?>" title="Detail"><i class="bi bi-eye"></i></button>
                     <?php if ($canEdit): ?>
-                    <button class="btn btn-sm btn-outline-warning ms-1" onclick="openEdit(<?= $p['id'] ?>)" title="Edit"><i class="bi bi-pencil"></i></button>
+                    <button class="btn btn-sm btn-outline-warning ms-1 btn-edit-pel" data-id="<?= $p['id'] ?>" title="Edit"><i class="bi bi-pencil"></i></button>
                     <?php endif; ?>
                   </td>
                 </tr>
@@ -417,71 +414,159 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
         <div><h5 class="modal-title mb-0"><i class="bi bi-pencil me-2"></i>Edit Data Pelaksanaan</h5><small id="editSubtitle" style="opacity:.8;font-size:.8rem;"></small></div>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
-      <form method="POST">
+      <div class="modal-body" style="padding:0;overflow-y:auto;">
+        <form method="POST" id="formEditPelaksanaan">
         <input type="hidden" name="action" value="update_pelaksanaan">
         <input type="hidden" name="id_pelaksanaan" id="edit_id">
-        <div class="modal-body">
-          <div class="mb-3">
-            <label class="form-label fw-semibold">Status Pelaksanaan <span class="text-danger">*</span></label>
-            <select name="status_pelaksanaan" id="edit_status" class="form-select" required>
-              <option value="Disetujui">Disetujui</option>
-              <option value="Appraisal Aset">Appraisal Aset</option>
-              <option value="Proses Lelang">Proses Lelang</option>
-              <option value="Terjual">Terjual</option>
-            </select>
-          </div>
-          <div class="row g-3">
-            <div class="col-md-6">
-              <label class="form-label fw-semibold">Tanggal Appraisal</label>
-              <input type="date" name="tanggal_appraisal" id="edit_tgl_appraisal" class="form-control">
-            </div>
-            <div class="col-md-6">
-              <label class="form-label fw-semibold">Tanggal Penjualan</label>
-              <input type="date" name="tanggal_penjualan" id="edit_tgl_penjualan" class="form-control">
-            </div>
-          </div>
-          <hr class="my-3">
-          <p class="fw-semibold text-muted small mb-2"><i class="bi bi-currency-dollar me-1"></i>DATA NILAI</p>
-          <div class="row g-3">
-            <div class="col-md-6">
-              <label class="form-label">Nilai Buku Bulan Berjalan</label>
-              <div class="input-group"><span class="input-group-text">Rp</span><input type="text" name="nilai_buku_bulan_berjalan" id="edit_nb_bb" class="form-control" placeholder="0"></div>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label">Nilai Appraisal Pasar</label>
-              <div class="input-group"><span class="input-group-text">Rp</span><input type="text" name="nilai_appraisal_pasar" id="edit_app_pasar" class="form-control" placeholder="0"></div>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label">Nilai Appraisal Likuidasi</label>
-              <div class="input-group"><span class="input-group-text">Rp</span><input type="text" name="nilai_appraisal_likuidasi" id="edit_app_likuidasi" class="form-control" placeholder="0"></div>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label">Nilai Penjualan</label>
-              <div class="input-group"><span class="input-group-text">Rp</span><input type="text" name="nilai_penjualan" id="edit_nilai_jual" class="form-control" placeholder="0"></div>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label">Biaya Lainnya</label>
-              <div class="input-group"><span class="input-group-text">Rp</span><input type="text" name="biaya_lainnya" id="edit_biaya" class="form-control" placeholder="0"></div>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label">Nomor Aset Pengganti</label>
-              <input type="text" name="nomor_aset_pengganti" id="edit_aset_pengganti" class="form-control" placeholder="Isi jika ada aset pengganti">
+        <div class="modal-body" style="padding:0;">
+
+          <!-- ── BLOK ATAS: Nilai Buku Aset + Nilai Buku Bulan Berjalan ── -->
+          <div style="padding:18px 22px 14px;">
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label class="form-label fw-semibold text-muted" style="font-size:.75rem;text-transform:uppercase;letter-spacing:.5px;">
+                  <i class="bi bi-book me-1"></i>Nilai Buku Aset
+                </label>
+                <div class="input-group">
+                  <span class="input-group-text bg-light text-muted">Rp</span>
+                  <input type="text" id="edit_nilai_buku_display" class="form-control"
+                         readonly style="background:#f8f9fa;color:#6b7280;cursor:not-allowed;font-family:monospace;" placeholder="—">
+                </div>
+                <div class="form-text" style="font-size:.7rem;">Dari tabel usulan_penghapusan</div>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label fw-semibold text-muted" style="font-size:.75rem;text-transform:uppercase;letter-spacing:.5px;">
+                  <i class="bi bi-book-half me-1"></i>Nilai Buku Bulan Berjalan
+                </label>
+                <div class="input-group">
+                  <span class="input-group-text bg-light text-muted">Rp</span>
+                  <input type="text" id="edit_nb_bb_display" class="form-control"
+                         readonly style="background:#f8f9fa;color:#6b7280;cursor:not-allowed;font-family:monospace;" placeholder="—">
+                </div>
+                <div class="form-text" style="font-size:.7rem;">Dari import_dat (nilai_buku_sd)</div>
+              </div>
             </div>
           </div>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Batal</button>
-          <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-save me-1"></i>Simpan</button>
-        </div>
-      </form>
+
+          <!-- ── STATUS PELAKSANAAN – badge besar, jadi fokus utama ── -->
+          <div style="padding:14px 22px;background:#f8faff;border-top:1px solid #e9ecef;border-bottom:1px solid #e9ecef;">
+            <label class="form-label fw-semibold" style="font-size:.75rem;text-transform:uppercase;letter-spacing:.5px;color:#6b7280;">
+              <i class="bi bi-flag me-1"></i>Status Pelaksanaan
+            </label>
+            <div class="d-flex align-items-center gap-3 flex-wrap">
+              <!-- preview badge live -->
+              <span id="edit_status_badge" class="badge-pill st-disetujui" style="font-size:.92rem;padding:6px 18px;border-radius:20px;">Disetujui</span>
+              <select name="status_pelaksanaan" id="edit_status" class="form-select form-select-sm" required
+                      style="max-width:220px;" onchange="updateStatusBadge(this.value)">
+                <option value="Disetujui">Disetujui</option>
+                <option value="Appraisal Aset">Appraisal Aset</option>
+                <option value="Proses Lelang">Proses Lelang</option>
+                <option value="Terjual">Terjual</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- ── SEKSI DATA APPRAISAL ── -->
+          <div style="padding:16px 22px 14px;">
+            <p class="fw-semibold mb-3" style="font-size:.72rem;text-transform:uppercase;letter-spacing:.8px;color:#9ca3af;display:flex;align-items:center;gap:6px;">
+              <i class="bi bi-calculator"></i> Data Appraisal
+              <span style="flex:1;height:1px;background:#f0f0f0;display:inline-block;"></span>
+            </p>
+
+            <!-- Nilai Appraisal Pasar | Nilai Appraisal Likuidasi -->
+            <div class="row g-3 mb-3">
+              <div class="col-md-6">
+                <label class="form-label fw-semibold">Nilai Appraisal Pasar</label>
+                <div class="input-group">
+                  <span class="input-group-text">Rp</span>
+                  <input type="text" name="nilai_appraisal_pasar" id="edit_app_pasar" class="form-control" placeholder="0" style="font-family:monospace;">
+                </div>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label fw-semibold">Nilai Appraisal Likuidasi</label>
+                <div class="input-group">
+                  <span class="input-group-text">Rp</span>
+                  <input type="text" name="nilai_appraisal_likuidasi" id="edit_app_likuidasi" class="form-control" placeholder="0" style="font-family:monospace;">
+                </div>
+              </div>
+            </div>
+
+            <!-- Tanggal Appraisal (full width) -->
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label class="form-label fw-semibold">Tanggal Appraisal</label>
+                <input type="date" name="tanggal_appraisal" id="edit_tgl_appraisal" class="form-control">
+              </div>
+            </div>
+          </div>
+
+          <!-- ── SEKSI DATA PENJUALAN ── -->
+          <div style="padding:16px 22px 14px;border-top:1px solid #f0f0f0;">
+            <p class="fw-semibold mb-3" style="font-size:.72rem;text-transform:uppercase;letter-spacing:.8px;color:#9ca3af;display:flex;align-items:center;gap:6px;">
+              <i class="bi bi-currency-dollar"></i> Data Penjualan
+              <span style="flex:1;height:1px;background:#f0f0f0;display:inline-block;"></span>
+            </p>
+
+            <!-- Nilai Penjualan | Biaya Lainnya -->
+            <div class="row g-3 mb-3">
+              <div class="col-md-6">
+                <label class="form-label fw-semibold">Nilai Penjualan</label>
+                <div class="input-group">
+                  <span class="input-group-text">Rp</span>
+                  <input type="text" name="nilai_penjualan" id="edit_nilai_jual" class="form-control" placeholder="0" style="font-family:monospace;">
+                </div>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label fw-semibold">Biaya Lainnya</label>
+                <div class="input-group">
+                  <span class="input-group-text">Rp</span>
+                  <input type="text" name="biaya_lainnya" id="edit_biaya" class="form-control" placeholder="0" style="font-family:monospace;">
+                </div>
+              </div>
+            </div>
+
+            <!-- Tanggal Penjualan (full width kiri) -->
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label class="form-label fw-semibold">Tanggal Penjualan</label>
+                <input type="date" name="tanggal_penjualan" id="edit_tgl_penjualan" class="form-control">
+              </div>
+            </div>
+          </div>
+
+          <!-- ── NOMOR ASET PENGGANTI – seksi tersendiri ── -->
+          <div style="padding:14px 22px 18px;border-top:1px solid #f0f0f0;background:#fffbf0;">
+            <p class="fw-semibold mb-2" style="font-size:.72rem;text-transform:uppercase;letter-spacing:.8px;color:#d97706;display:flex;align-items:center;gap:6px;">
+              <i class="bi bi-arrow-left-right"></i> Aset Pengganti
+              <span style="flex:1;height:1px;background:#fde68a;display:inline-block;"></span>
+              <span style="font-size:.7rem;color:#b45309;text-transform:none;letter-spacing:0;font-weight:400;">opsional</span>
+            </p>
+            <div class="row g-3">
+              <div class="col-md-8">
+                <label class="form-label fw-semibold">Nomor Aset Pengganti</label>
+                <input type="text" name="nomor_aset_pengganti" id="edit_aset_pengganti"
+                       class="form-control" placeholder="Isi jika ada aset pengganti">
+              </div>
+            </div>
+          </div>
+
+          <!-- hidden field nilai_buku_bulan_berjalan tetap dikirim -->
+          <input type="hidden" name="nilai_buku_bulan_berjalan" id="edit_nb_bb">
+
+        </div><!-- end last section -->
+        </form><!-- end form inside modal-body -->
+      </div><!-- end modal-body -->
+      <div class="modal-footer" style="border-top:1px solid #e9ecef;background:#fff;position:sticky;bottom:0;z-index:10;">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Batal</button>
+        <button type="submit" form="formEditPelaksanaan" class="btn btn-primary btn-sm"><i class="bi bi-save me-1"></i>Simpan</button>
+      </div>
     </div>
   </div>
 </div>
 
-<script src="../../dist/js/jquery.min.js"></script>
+<script src="../../dist/js/jquery-3.7.1.min.js"></script>
 <script src="../../dist/js/bootstrap.bundle.min.js"></script>
 <script src="../../dist/js/dataTables.min.js"></script>
-<script src="../../dist/js/dataTables.bootstrap5.min.js"></script>
 <script>
 const dataPelaksanaan = <?= json_encode($data_pelaksanaan) ?>;
 const dataDokHo       = <?= json_encode($daftar_dok_ho) ?>;
@@ -492,10 +577,13 @@ $(document).ready(function() {
     $('#pelaksanaanTable').DataTable({
       language:{search:"Cari:",lengthMenu:"Tampilkan _MENU_ data",info:"_START_-_END_ dari _TOTAL_ data",
         paginate:{first:"&laquo;",previous:"&lsaquo;",next:"&rsaquo;",last:"&raquo;"},zeroRecords:"Tidak ada data"},
-      pageLength:25, columnDefs:[{orderable:false,targets:[11]}]
+      pageLength:25, columnDefs:[{orderable:false,targets:[9]}]
     });
   }
 });
+
+$(document).on('click','.btn-detail-pel',function(){ openDetail($(this).data('id')); });
+$(document).on('click','.btn-edit-pel',function(){ openEdit($(this).data('id')); });
 
 const rupiah = n => (n !== null && n !== '' && n !== undefined) ? 'Rp ' + parseFloat(n).toLocaleString('id-ID',{minimumFractionDigits:0}) : '\u2014';
 const stConfig = {'Disetujui':{cls:'st-disetujui',ic:'bi-check-circle'},'Appraisal Aset':{cls:'st-appraisal',ic:'bi-calculator'},'Proses Lelang':{cls:'st-lelang',ic:'bi-hammer'},'Terjual':{cls:'st-terjual',ic:'bi-bag-check'}};
@@ -563,13 +651,34 @@ function openDetail(id) {
     <div class="detail-section"><div class="detail-section-title"><i class="bi bi-patch-check"></i> Dokumen HO</div><div style="padding:0 4px;">${dokHoHtml}</div></div>
     <div class="detail-section"><div class="detail-section-title"><i class="bi bi-file-earmark-pdf"></i> Dokumen Usulan</div><div style="padding:0 4px;">${dokUslHtml}</div></div>`;
 
-  document.getElementById('btnEditFromDetail')?.setAttribute('onclick', `openEdit(${id})`);
+  // Simpan id aktif agar tombol Edit di footer modal bisa pakai
+  window._currentDetailId = id;
   new bootstrap.Modal(document.getElementById('modalDetail')).show();
+}
+
+// Tombol "Edit Data" di footer modal detail
+document.getElementById('btnEditFromDetail')?.addEventListener('click', function() {
+  if (window._currentDetailId) openEdit(window._currentDetailId);
+});
+
+function updateStatusBadge(val) {
+  const badge = document.getElementById('edit_status_badge');
+  if (!badge) return;
+  badge.className = 'badge-pill';
+  const map = {
+    'Disetujui':    'st-disetujui',
+    'Appraisal Aset': 'st-appraisal',
+    'Proses Lelang':  'st-lelang',
+    'Terjual':        'st-terjual',
+  };
+  badge.classList.add(map[val] || 'st-disetujui');
+  badge.textContent = val;
 }
 
 function openEdit(id) {
   const p = dataPelaksanaan.find(x => x.id == id);
   if (!p) return;
+
   document.getElementById('edit_id').value             = p.id;
   document.getElementById('edit_status').value         = p.status_pelaksanaan || 'Disetujui';
   document.getElementById('edit_tgl_appraisal').value  = p.tanggal_appraisal || '';
@@ -580,11 +689,45 @@ function openEdit(id) {
   document.getElementById('edit_nilai_jual').value     = p.nilai_penjualan || '';
   document.getElementById('edit_biaya').value          = p.biaya_lainnya || '';
   document.getElementById('edit_aset_pengganti').value = p.nomor_aset_pengganti || '';
-  document.getElementById('editSubtitle').textContent  = p.nomor_asset_utama + ' \u2014 ' + (p.nama_aset||'');
+  document.getElementById('editSubtitle').textContent  = p.nomor_asset_utama + ' \u2014 ' + (p.nama_aset || '');
+
+  // Nilai Buku Aset dari tabel usulan_penghapusan (field nilai_buku via join)
+  const nbAset = p.nilai_buku ? parseFloat(p.nilai_buku).toLocaleString('id-ID', {minimumFractionDigits:0}) : '';
+  document.getElementById('edit_nilai_buku_display').value = nbAset;
+
+  // Nilai Buku Bulan Berjalan dari import_dat.nilai_buku_sd (sudah di-join sebagai nilai_buku_awal)
+  const nbSd = p.nilai_buku_awal ? parseFloat(p.nilai_buku_awal).toLocaleString('id-ID', {minimumFractionDigits:0}) : '';
+  document.getElementById('edit_nb_bb_display').value = nbSd;
+  // Sinkron ke hidden input agar terkirim ke server
+  document.getElementById('edit_nb_bb').value = p.nilai_buku_awal || p.nilai_buku_bulan_berjalan || '';
+
+  // Update badge status live
+  updateStatusBadge(p.status_pelaksanaan || 'Disetujui');
+
   const md = bootstrap.Modal.getInstance(document.getElementById('modalDetail'));
-  if (md) md.hide();
-  setTimeout(() => new bootstrap.Modal(document.getElementById('modalEdit')).show(), 200);
+  if (md) { md.hide(); setTimeout(() => new bootstrap.Modal(document.getElementById('modalEdit')).show(), 250); }
+  else { new bootstrap.Modal(document.getElementById('modalEdit')).show(); }
 }
+
+// Validasi form sebelum submit — semua wajib kecuali nomor_aset_pengganti
+document.getElementById('formEditPelaksanaan')?.addEventListener('submit', function(e) {
+  const required = [
+    { id: 'edit_tgl_appraisal',  label: 'Tanggal Appraisal' },
+    { id: 'edit_tgl_penjualan',  label: 'Tanggal Penjualan' },
+    { id: 'edit_nb_bb',          label: 'Nilai Buku Bulan Berjalan' },
+    { id: 'edit_app_pasar',      label: 'Nilai Appraisal Pasar' },
+    { id: 'edit_app_likuidasi',  label: 'Nilai Appraisal Likuidasi' },
+    { id: 'edit_nilai_jual',     label: 'Nilai Penjualan' },
+    { id: 'edit_biaya',          label: 'Biaya Lainnya' },
+  ];
+  const empty = required.filter(f => !document.getElementById(f.id)?.value?.trim());
+  if (empty.length > 0) {
+    e.preventDefault();
+    const names = empty.map(f => '• ' + f.label).join('\n');
+    alert('Field berikut wajib diisi:\n\n' + names);
+    document.getElementById(empty[0].id)?.focus();
+  }
+});
 
 function togglePrev(pid, url) {
   const el = document.getElementById(pid);
