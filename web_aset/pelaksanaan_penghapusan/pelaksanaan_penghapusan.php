@@ -54,15 +54,27 @@ if (isset($_GET['action']) && $_GET['action'] === 'view_dok_ho' && isset($_GET['
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'update_pelaksanaan' && $canEdit) {
+    function cleanAngka($val) {
+        if (!isset($val) || $val === '' || $val === null) return null;
+        $val = trim($val);
+        if (strpos($val, ',') !== false) {
+            $clean = str_replace('.', '', $val);
+            $clean = str_replace(',', '.', $clean);
+        } else {
+            $clean = $val;
+        }
+        return is_numeric($clean) ? (float)$clean : null;
+    }
+
     $id_pel              = (int)$_POST['id_pelaksanaan'];
     $status_pelaksanaan  = trim($_POST['status_pelaksanaan'] ?? '');
-    $tgl_appraisal       = !empty($_POST['tanggal_appraisal'])         ? $_POST['tanggal_appraisal']  : null;
-    $tgl_penjualan       = !empty($_POST['tanggal_penjualan'])         ? $_POST['tanggal_penjualan']  : null;
-    $nilai_buku_bb       = !empty($_POST['nilai_buku_bulan_berjalan']) ? (float)str_replace(['.', ','], ['', '.'], $_POST['nilai_buku_bulan_berjalan'])   : null;
-    $nilai_app_pasar     = !empty($_POST['nilai_appraisal_pasar'])     ? (float)str_replace(['.', ','], ['', '.'], $_POST['nilai_appraisal_pasar'])       : null;
-    $nilai_app_likuidasi = !empty($_POST['nilai_appraisal_likuidasi']) ? (float)str_replace(['.', ','], ['', '.'], $_POST['nilai_appraisal_likuidasi'])   : null;
-    $nilai_penjualan     = !empty($_POST['nilai_penjualan'])           ? (float)str_replace(['.', ','], ['', '.'], $_POST['nilai_penjualan'])             : null;
-    $biaya_lainnya       = !empty($_POST['biaya_lainnya'])             ? (float)str_replace(['.', ','], ['', '.'], $_POST['biaya_lainnya'])               : null;
+    $tgl_appraisal       = (!empty($_POST['tanggal_appraisal'])  && $_POST['tanggal_appraisal']  !== '0000-00-00') ? $_POST['tanggal_appraisal']  : null;
+    $tgl_penjualan       = (!empty($_POST['tanggal_penjualan'])  && $_POST['tanggal_penjualan']  !== '0000-00-00') ? $_POST['tanggal_penjualan']  : null;
+    $nilai_buku_bb       = cleanAngka($_POST['nilai_buku_bulan_berjalan'] ?? '');
+    $nilai_app_pasar     = cleanAngka($_POST['nilai_appraisal_pasar']     ?? '');
+    $nilai_app_likuidasi = cleanAngka($_POST['nilai_appraisal_likuidasi'] ?? '');
+    $nilai_penjualan     = cleanAngka($_POST['nilai_penjualan']           ?? '');
+    $biaya_lainnya       = cleanAngka($_POST['biaya_lainnya']             ?? '');
     $nomor_aset_pengganti = trim($_POST['nomor_aset_pengganti'] ?? '');
 
     $stmt = $con->prepare("UPDATE pelaksanaan_penghapusan SET
@@ -70,7 +82,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'updat
         nilai_buku_bulan_berjalan = ?, nilai_appraisal_pasar = ?, nilai_appraisal_likuidasi = ?,
         nilai_penjualan = ?, biaya_lainnya = ?, nomor_aset_pengganti = ?,
         nipp = ?, updated_at = NOW() WHERE id = ?");
-    $stmt->bind_param("ssddddddssi", $status_pelaksanaan, $tgl_appraisal, $tgl_penjualan,
+    $stmt->bind_param("sssdddddssi", $status_pelaksanaan, $tgl_appraisal, $tgl_penjualan,
         $nilai_buku_bb, $nilai_app_pasar, $nilai_app_likuidasi, $nilai_penjualan,
         $biaya_lainnya, $nomor_aset_pengganti, $userNipp, $id_pel);
 
@@ -246,20 +258,63 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
               INNER JOIN menus ON user_access.id_menu = menus.id_menu
               WHERE user_access.NIPP = '" . mysqli_real_escape_string($con, $un2) . "'
               ORDER BY menus.urutan_menu ASC");
-          $iMap = ['Dasboard'=>'bi bi-grid-fill','Usulan Penghapusan'=>'bi bi-clipboard-plus',
-              'Daftar Usulan Penghapusan'=>'bi bi-clipboard-check-fill','Approval SubReg'=>'bi bi-check-circle',
-              'Approval Regional'=>'bi bi-check2-square','Persetujuan Penghapusan'=>'bi bi-patch-check-fill',
-              'Daftar Persetujuan Penghapusan'=>'bi bi-journal-check','Pelaksanaan Penghapusan'=>'bi bi-tools',
-              'Daftar Pelaksanaan Penghapusan'=>'bi bi-archive-fill','Manajemen Menu'=>'bi bi-list-ul',
-              'Import DAT'=>'bi bi-file-earmark-arrow-up-fill','Daftar Aset Tetap'=>'bi bi-card-list',
-              'Manajemen User'=>'bi bi-people-fill'];
-          $cp = basename($_SERVER['PHP_SELF']);
+          $iconMap = [
+              'Dashboard'                       => 'bi bi-grid-fill',
+              'Usulan Penghapusan'              => 'bi bi-file-earmark-plus',
+              'Daftar Usulan Penghapusan'       => 'bi bi-collection',
+              'Approval SubReg'                 => 'bi bi-person-check',
+              'Approval Regional'               => 'bi bi-building-check',
+              'Persetujuan Penghapusan'         => 'bi bi-shield-check',
+              'Daftar Persetujuan Penghapusan'  => 'bi bi-journal-check',
+              'Pelaksanaan Penghapusan'         => 'bi bi-gear-wide-connected',
+              'Daftar Pelaksanaan Penghapusan'  => 'bi bi-archive-fill',
+              'Manajemen Menu'                  => 'bi bi-layout-text-sidebar',
+              'Import DAT'                      => 'bi bi-file-earmark-arrow-up',
+              'Daftar Aset Tetap'               => 'bi bi-card-list',
+              'Manajemen User'                  => 'bi bi-people',
+          ];
+          
+          $menuRows = [];
           while ($row = mysqli_fetch_assoc($rm)) {
-              $nm = trim($row['nama_menu']);
-              $ic = $iMap[$nm] ?? 'bi bi-circle';
-              $ac = ($cp === $row['menu'].'.php') ? 'active' : '';
-              if ($nm === 'Manajemen Menu') echo '<li class="nav-header"></li>';
-              echo '<li class="nav-item"><a href="../'.$row['menu'].'/'.$row['menu'].'.php" class="nav-link '.$ac.'"><i class="nav-icon '.$ic.'"></i><p>'.htmlspecialchars($nm).'</p></a></li>';
+              $menuRows[] = $row;
+          }
+          
+          $hasDaftarUsulan = false;
+          $daftarRow = null;
+          foreach ($menuRows as $row) {
+              if (trim($row['nama_menu']) === 'Daftar Usulan Penghapusan') {
+                  $hasDaftarUsulan = true;
+                  $daftarRow = $row;
+                  break;
+              }
+          }
+          
+          $currentPage = basename($_SERVER['PHP_SELF']);
+          
+          foreach ($menuRows as $row) {
+              $namaMenu = trim($row['nama_menu']);
+              
+              if ($namaMenu === 'Daftar Usulan Penghapusan') {
+                  continue;
+              }
+              
+              $icon = $iconMap[$namaMenu] ?? 'bi bi-circle';
+              $menuFile = $row['menu'].'.php';
+              $isActive = ($currentPage === $menuFile) ? 'active' : '';
+
+              if ($namaMenu === 'Manajemen Menu') {
+                  echo '<li class="nav-header"></li>';
+              }
+              
+              echo '<li class="nav-item"><a href="../'.$row['menu'].'/'.$row['menu'].'.php" class="nav-link '.$isActive.'"><i class="nav-icon '.$icon.'"></i><p>'.htmlspecialchars($namaMenu).'</p></a></li>';
+              
+              if ($namaMenu === 'Usulan Penghapusan' && $hasDaftarUsulan && $daftarRow) {
+                  $daftarIcon = $iconMap['Daftar Usulan Penghapusan'] ?? 'bi bi-circle';
+                  $daftarFile = $daftarRow['menu'].'.php';
+                  $isDaftarActive = ($currentPage === $daftarFile) ? 'active' : '';
+                  
+                  echo '<li class="nav-item"><a href="../'.$daftarRow['menu'].'/'.$daftarRow['menu'].'.php" class="nav-link '.$isDaftarActive.'"><i class="nav-icon '.$daftarIcon.'"></i><p>Daftar Usulan Penghapusan</p></a></li>';
+              }
           }
           ?>
         </ul>
@@ -432,7 +487,7 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                   <input type="text" id="edit_nilai_buku_display" class="form-control"
                          readonly style="background:#f8f9fa;color:#6b7280;cursor:not-allowed;font-family:monospace;" placeholder="—">
                 </div>
-                <div class="form-text" style="font-size:.7rem;">Dari tabel usulan_penghapusan</div>
+                <!-- <div class="form-text" style="font-size:.7rem;">Dari tabel usulan_penghapusan</div> -->
               </div>
               <div class="col-md-6">
                 <label class="form-label fw-semibold text-muted" style="font-size:.75rem;text-transform:uppercase;letter-spacing:.5px;">
@@ -443,7 +498,7 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                   <input type="text" id="edit_nb_bb_display" class="form-control"
                          readonly style="background:#f8f9fa;color:#6b7280;cursor:not-allowed;font-family:monospace;" placeholder="—">
                 </div>
-                <div class="form-text" style="font-size:.7rem;">Dari import_dat (nilai_buku_sd)</div>
+                <!-- <div class="form-text" style="font-size:.7rem;">Dari import_dat (nilai_buku_sd)</div> -->
               </div>
             </div>
           </div>
@@ -453,11 +508,14 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
             <label class="form-label fw-semibold" style="font-size:.75rem;text-transform:uppercase;letter-spacing:.5px;color:#6b7280;">
               <i class="bi bi-flag me-1"></i>Status Pelaksanaan
             </label>
-            <div class="d-flex align-items-center gap-3 flex-wrap">
-              <!-- preview badge live -->
-              <span id="edit_status_badge" class="badge-pill st-disetujui" style="font-size:.92rem;padding:6px 18px;border-radius:20px;">Disetujui</span>
-              <select name="status_pelaksanaan" id="edit_status" class="form-select form-select-sm" required
-                      style="max-width:220px;" onchange="updateStatusBadge(this.value)">
+            <div class="d-flex align-items-center gap-3" style="width:100%;">
+              <span id="edit_status_badge" class="badge-pill st-disetujui"
+                    style="font-size:.9rem;padding:0 22px;border-radius:8px;min-width:160px;text-align:center;height:38px;line-height:38px;display:inline-block;white-space:nowrap;">
+                Disetujui
+              </span>
+              <select name="status_pelaksanaan" id="edit_status" class="form-select" required
+                      style="flex:1;font-weight:600;font-size:.9rem;height:38px;"
+                      onchange="updateStatusBadge(this.value)">
                 <option value="Disetujui">Disetujui</option>
                 <option value="Appraisal Aset">Appraisal Aset</option>
                 <option value="Proses Lelang">Proses Lelang</option>
@@ -465,7 +523,6 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
               </select>
             </div>
           </div>
-
           <!-- ── SEKSI DATA APPRAISAL ── -->
           <div style="padding:16px 22px 14px;">
             <p class="fw-semibold mb-3" style="font-size:.72rem;text-transform:uppercase;letter-spacing:.8px;color:#9ca3af;display:flex;align-items:center;gap:6px;">
@@ -535,14 +592,14 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
           </div>
 
           <!-- ── NOMOR ASET PENGGANTI – seksi tersendiri ── -->
-          <div style="padding:14px 22px 18px;border-top:1px solid #f0f0f0;background:#fffbf0;">
-            <p class="fw-semibold mb-2" style="font-size:.72rem;text-transform:uppercase;letter-spacing:.8px;color:#d97706;display:flex;align-items:center;gap:6px;">
-              <i class="bi bi-arrow-left-right"></i> Aset Pengganti
-              <span style="flex:1;height:1px;background:#fde68a;display:inline-block;"></span>
-              <span style="font-size:.7rem;color:#b45309;text-transform:none;letter-spacing:0;font-weight:400;">opsional</span>
+           <div style="padding:16px 22px 14px;border-top:1px solid #f0f0f0;">
+            <p class="fw-semibold mb-3" style="font-size:.72rem;text-transform:uppercase;letter-spacing:.8px;color:#9ca3af;display:flex;align-items:center;gap:6px;">
+              <i class="bi bi-arrow-left-right"></i>Aset Pengganti
+              <span style="flex:1;height:1px;background:#f0f0f0;display:inline-block;"></span>
             </p>
+          
             <div class="row g-3">
-              <div class="col-md-8">
+              <div class="col-md-12">
                 <label class="form-label fw-semibold">Nomor Aset Pengganti</label>
                 <input type="text" name="nomor_aset_pengganti" id="edit_aset_pengganti"
                        class="form-control" placeholder="Isi jika ada aset pengganti">
@@ -633,8 +690,8 @@ function openDetail(id) {
     <div class="detail-section"><div class="detail-section-title"><i class="bi bi-calendar3"></i> Tanggal</div>
       <div class="detail-grid">
         <div class="detail-item"><div class="detail-item-label">Tgl. Persetujuan HO</div><div class="detail-item-value">${p.tanggal_persetujuan||'&mdash;'}</div></div>
-        <div class="detail-item"><div class="detail-item-label">Tgl. Appraisal</div><div class="detail-item-value">${p.tanggal_appraisal||'&mdash;'}</div></div>
-        <div class="detail-item"><div class="detail-item-label">Tgl. Penjualan</div><div class="detail-item-value">${p.tanggal_penjualan||'&mdash;'}</div></div>
+        <div class="detail-item"><div class="detail-item-label">Tgl. Appraisal</div><div class="detail-item-value">${(p.tanggal_appraisal && p.tanggal_appraisal !== '0000-00-00') ? p.tanggal_appraisal : '&mdash;'}</div></div>
+        <div class="detail-item"><div class="detail-item-label">Tgl. Penjualan</div><div class="detail-item-value">${(p.tanggal_penjualan && p.tanggal_penjualan !== '0000-00-00') ? p.tanggal_penjualan : '&mdash;'}</div></div>
         <div class="detail-item"><div class="detail-item-label">Nomor Aset Pengganti</div><div class="detail-item-value">${p.nomor_aset_pengganti||'&mdash;'}</div></div>
       </div>
     </div>
@@ -679,27 +736,33 @@ function openEdit(id) {
   const p = dataPelaksanaan.find(x => x.id == id);
   if (!p) return;
 
+  // Helper: kosongkan tanggal kalau 0000-00-00
+  const fixTgl = v => (v && v !== '0000-00-00') ? v : '';
+
   document.getElementById('edit_id').value             = p.id;
   document.getElementById('edit_status').value         = p.status_pelaksanaan || 'Disetujui';
-  document.getElementById('edit_tgl_appraisal').value  = p.tanggal_appraisal || '';
-  document.getElementById('edit_tgl_penjualan').value  = p.tanggal_penjualan || '';
-  document.getElementById('edit_nb_bb').value          = p.nilai_buku_bulan_berjalan || '';
-  document.getElementById('edit_app_pasar').value      = p.nilai_appraisal_pasar || '';
-  document.getElementById('edit_app_likuidasi').value  = p.nilai_appraisal_likuidasi || '';
-  document.getElementById('edit_nilai_jual').value     = p.nilai_penjualan || '';
-  document.getElementById('edit_biaya').value          = p.biaya_lainnya || '';
-  document.getElementById('edit_aset_pengganti').value = p.nomor_aset_pengganti || '';
+  document.getElementById('edit_tgl_appraisal').value  = fixTgl(p.tanggal_appraisal);
+  document.getElementById('edit_tgl_penjualan').value  = fixTgl(p.tanggal_penjualan);
+
+  // Nilai diisi sebagai integer (Math.round) agar tidak ada .00 yang dikira titik ribuan
+  const toInt = v => (v !== null && v !== '' && v !== undefined) ? Math.round(parseFloat(v)) : '';
+  document.getElementById('edit_app_pasar').value      = toInt(p.nilai_appraisal_pasar);
+  document.getElementById('edit_app_likuidasi').value  = toInt(p.nilai_appraisal_likuidasi);
+  document.getElementById('edit_nilai_jual').value     = toInt(p.nilai_penjualan);
+  document.getElementById('edit_biaya').value          = toInt(p.biaya_lainnya);
+  document.getElementById('edit_aset_pengganti').value = p.nomor_aset_pengganti      || '';
   document.getElementById('editSubtitle').textContent  = p.nomor_asset_utama + ' \u2014 ' + (p.nama_aset || '');
 
-  // Nilai Buku Aset dari tabel usulan_penghapusan (field nilai_buku via join)
+  // Display-only (readonly) boleh pakai format rupiah
   const nbAset = p.nilai_buku ? parseFloat(p.nilai_buku).toLocaleString('id-ID', {minimumFractionDigits:0}) : '';
   document.getElementById('edit_nilai_buku_display').value = nbAset;
 
-  // Nilai Buku Bulan Berjalan dari import_dat.nilai_buku_sd (sudah di-join sebagai nilai_buku_awal)
-  const nbSd = p.nilai_buku_awal ? parseFloat(p.nilai_buku_awal).toLocaleString('id-ID', {minimumFractionDigits:0}) : '';
+  const nbSdRaw = p.nilai_buku_awal || p.nilai_buku_bulan_berjalan;
+  const nbSd = nbSdRaw ? parseFloat(nbSdRaw).toLocaleString('id-ID', {minimumFractionDigits:0}) : '';
   document.getElementById('edit_nb_bb_display').value = nbSd;
-  // Sinkron ke hidden input agar terkirim ke server
-  document.getElementById('edit_nb_bb').value = p.nilai_buku_awal || p.nilai_buku_bulan_berjalan || '';
+
+  // Hidden field pakai angka integer (bukan formatted) agar tidak dobel nol
+  document.getElementById('edit_nb_bb').value = toInt(p.nilai_buku_awal || p.nilai_buku_bulan_berjalan);
 
   // Update badge status live
   updateStatusBadge(p.status_pelaksanaan || 'Disetujui');
@@ -709,12 +772,9 @@ function openEdit(id) {
   else { new bootstrap.Modal(document.getElementById('modalEdit')).show(); }
 }
 
-// Validasi form sebelum submit — semua wajib kecuali nomor_aset_pengganti
+// Validasi form sebelum submit — nilai appraisal dan penjualan wajib; tanggal & nomor aset opsional
 document.getElementById('formEditPelaksanaan')?.addEventListener('submit', function(e) {
   const required = [
-    { id: 'edit_tgl_appraisal',  label: 'Tanggal Appraisal' },
-    { id: 'edit_tgl_penjualan',  label: 'Tanggal Penjualan' },
-    { id: 'edit_nb_bb',          label: 'Nilai Buku Bulan Berjalan' },
     { id: 'edit_app_pasar',      label: 'Nilai Appraisal Pasar' },
     { id: 'edit_app_likuidasi',  label: 'Nilai Appraisal Likuidasi' },
     { id: 'edit_nilai_jual',     label: 'Nilai Penjualan' },
