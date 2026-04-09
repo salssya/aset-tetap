@@ -25,16 +25,82 @@ $canEdit = (
 
 function serveFileFromDb($filePathDb, $fileName, $forceDownload = false) {
     $fileName = !empty($fileName) ? basename($fileName) : 'dokumen.pdf';
+
+    // Format: data URI dengan gzip
     if (strpos($filePathDb, 'data:') === 0 && strpos($filePathDb, ';gzip,') !== false) {
         $fileData = gzdecode(base64_decode(substr($filePathDb, strrpos($filePathDb, ',') + 1)));
-    } elseif (strpos($filePathDb, 'data:') === 0 && strpos($filePathDb, ';base64,') !== false) {
+        header('Content-Type: application/pdf');
+        header('Content-Disposition: ' . ($forceDownload ? 'attachment' : 'inline') . '; filename="' . $fileName . '"');
+        header('Content-Length: ' . strlen($fileData));
+        header('Cache-Control: no-cache');
+        echo $fileData; exit();
+    }
+
+    // Format: data URI dengan base64
+    if (strpos($filePathDb, 'data:') === 0 && strpos($filePathDb, ';base64,') !== false) {
         $fileData = base64_decode(substr($filePathDb, strpos($filePathDb, ',') + 1));
-    } else { http_response_code(404); echo 'Format file tidak dikenali.'; exit(); }
-    header('Content-Type: application/pdf');
-    header('Content-Disposition: ' . ($forceDownload ? 'attachment' : 'inline') . '; filename="' . $fileName . '"');
-    header('Content-Length: ' . strlen($fileData));
-    header('Cache-Control: no-cache');
-    echo $fileData; exit();
+        header('Content-Type: application/pdf');
+        header('Content-Disposition: ' . ($forceDownload ? 'attachment' : 'inline') . '; filename="' . $fileName . '"');
+        header('Content-Length: ' . strlen($fileData));
+        header('Cache-Control: no-cache');
+        echo $fileData; exit();
+    }
+
+    // Format: raw binary blob (longblob dari DB)
+    if (!empty($filePathDb) && (
+        substr($filePathDb, 0, 4) === '%PDF' ||
+        substr($filePathDb, 0, 4) === "\x25\x50\x44\x46" ||
+        strpos($filePathDb, "\x00") !== false
+    )) {
+        header('Content-Type: application/pdf');
+        header('Content-Disposition: ' . ($forceDownload ? 'attachment' : 'inline') . '; filename="' . $fileName . '"');
+        header('Content-Length: ' . strlen($filePathDb));
+        header('Cache-Control: no-cache');
+        echo $filePathDb; exit();
+    }
+
+    // Format: path file di filesystem
+    $resolvedPath = $filePathDb;
+    if (!file_exists($resolvedPath)) {
+        $resolvedPath = __DIR__ . '/' . ltrim($filePathDb, '/\\');
+    }
+    if (file_exists($resolvedPath) && is_file($resolvedPath)) {
+        header('Content-Type: application/pdf');
+        header('Content-Disposition: ' . ($forceDownload ? 'attachment' : 'inline') . '; filename="' . $fileName . '"');
+        header('Content-Length: ' . filesize($resolvedPath));
+        header('Cache-Control: no-cache');
+        readfile($resolvedPath); exit();
+    }
+
+    http_response_code(404); echo 'File tidak ditemukan.'; exit();
+}
+
+// ── Helper: normalize path foto ──────────────────────────────────────────────
+function normalize_foto_path($p) {
+  if (empty($p)) return '';
+  $p = (string)$p;
+  if (strpos($p, "\x00") !== false) {
+    if (substr($p,0,8)==="\x89PNG\r\n\x1a\n") return 'data:image/png;base64,'.base64_encode($p);
+    if (substr($p,0,3)==="\xff\xd8\xff")      return 'data:image/jpeg;base64,'.base64_encode($p);
+    if (substr($p,0,4)==='GIF8')               return 'data:image/gif;base64,'.base64_encode($p);
+    return '';
+  }
+  $p = trim($p);
+  if (preg_match('#^data:image/#i',$p)) return $p;
+  if (preg_match('#^https?://#i',$p))  return $p;
+  if (strpos($p,'/')===0)              return $p;
+  $p2 = str_replace('\\','/',$p);
+  $docroot = str_replace('\\','/',realpath($_SERVER['DOCUMENT_ROOT']??'')?: '');
+  if ($docroot!=='') {
+    $abs = @realpath($p2);
+    if ($abs) {
+      $abs = str_replace('\\','/',$abs);
+      if (strpos($abs,$docroot)===0) return '/'.ltrim(substr($abs,strlen($docroot)),'/');
+    }
+  }
+  if (preg_match('#^(uploads/|\.\./uploads|/uploads)#',$p2))
+    return strpos($p2,'/uploads')===0 ? $p2 : '../../'.ltrim($p2,'/');
+  return $p;
 }
 
 if (isset($_GET['action']) && $_GET['action'] === 'view_dok_usulan' && isset($_GET['id_dok'])) {
@@ -105,7 +171,7 @@ if ($filterStatus !== 'all') {
 }
 
 $res_main = mysqli_query($con, "SELECT pp.*,
-    up.nomor_asset_utama, up.mekanisme_penghapusan, up.fisik_aset,
+    up.nomor_asset_utama, up.mekanisme_penghapusan, up.fisik_aset, up.foto_path,
     up.justifikasi_alasan, up.status_approval_ho, up.catatan_ho,
     up.tanggal_approval_ho, up.tahun_usulan, up.nilai_buku,
     id.keterangan_asset as nama_aset, id.asset_class_name as kategori_aset,
@@ -123,6 +189,7 @@ $res_main = mysqli_query($con, "SELECT pp.*,
 $data_pelaksanaan = [];
 while ($r = mysqli_fetch_assoc($res_main)) {
     $r['nama_aset'] = str_replace('AUC-', '', $r['nama_aset'] ?? '');
+    $r['foto_path'] = normalize_foto_path($r['foto_path'] ?? '');
     $data_pelaksanaan[] = $r;
 }
 
@@ -131,7 +198,12 @@ $res_dho = mysqli_query($con, "SELECT dp.*, pp.usulan_id FROM dokumen_pelaksanaa
 while ($r = mysqli_fetch_assoc($res_dho)) $daftar_dok_ho[] = $r;
 
 $daftar_dok_usulan = [];
-$res_du = mysqli_query($con, "SELECT dp.id_dokumen, dp.usulan_id, dp.tipe_dokumen, dp.file_name FROM dokumen_penghapusan dp JOIN usulan_penghapusan up ON dp.usulan_id = up.id JOIN pelaksanaan_penghapusan pp ON pp.usulan_id = up.id ORDER BY dp.id_dokumen DESC");
+$res_du = mysqli_query($con, "SELECT dp.id_dokumen, dp.usulan_id, dp.tipe_dokumen, dp.file_name,
+    YEAR(up.created_at) as tahun_usulan
+    FROM dokumen_penghapusan dp
+    JOIN usulan_penghapusan up ON dp.usulan_id = up.id
+    JOIN pelaksanaan_penghapusan pp ON pp.usulan_id = up.id
+    ORDER BY dp.id_dokumen DESC");
 while ($r = mysqli_fetch_assoc($res_du)) $daftar_dok_usulan[] = $r;
 
 $cnt_disetujui = $cnt_appraisal = $cnt_lelang = $cnt_terjual = 0;
@@ -213,6 +285,8 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
     .st-node:last-child::after{display:none;}
     .st-circle{width:32px;height:32px;border-radius:50%;margin:0 auto 5px;display:flex;align-items:center;justify-content:center;font-size:.85rem;position:relative;z-index:1;}
     .st-name{font-size:.75rem;font-weight:600;}
+    .foto-aset-img{max-height:220px;object-fit:contain;cursor:pointer;border-radius:8px;border:1px solid #e9ecef;transition:box-shadow .2s;}
+    .foto-aset-img:hover{box-shadow:0 4px 16px rgba(0,0,0,.12);}
   </style>
 </head>
 <body class="layout-fixed sidebar-expand-lg sidebar-open bg-body-tertiary">
@@ -232,6 +306,19 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
               <img src="../../dist/assets/img/profile.png" class="rounded-circle shadow mb-2" style="width:80px;height:80px;">
               <p class="mb-0 fw-bold"><?= htmlspecialchars($_SESSION['name']) ?></p>
               <small>NIPP: <?= htmlspecialchars($_SESSION['nipp']) ?></small>
+            </li>
+            <li class="user-menu-body">
+              <div class="row ps-3 pe-3 pt-2 pb-2">
+                <div class="col-6 text-start">
+                  <small class="text-muted">Type User:</small><br>
+                  <span class="badge bg-primary"><?php echo htmlspecialchars($_SESSION['Type_User']); ?></span>
+                </div>
+                <div class="col-6 text-end">
+                  <small class="text-muted">Cabang:</small><br>
+                  <p class="fw-semibold small mb-0"><?php echo htmlspecialchars($_SESSION['Cabang'] . ' - ' . $_SESSION['profit_center_text']); ?></p>
+                </div>
+              </div>
+              <hr class="m-0"/>
             </li>
             <li class="user-footer d-flex align-items-center px-3 py-2">
               <a href="../profile/profile.php" class="btn btn-sm btn-outline-primary"><i class="bi bi-person"></i> Profile</a>
@@ -400,9 +487,16 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
             <table id="pelaksanaanTable" class="table table-bordered table-hover align-middle w-100">
               <thead>
                 <tr>
-                  <th>No</th><th>Nomor Aset</th><th>SubReg</th><th>Profit Center</th>
-                  <th>Nama Aset</th><th>Mekanisme</th><th>Tgl Persetujuan</th>
-                  <th>Status</th><th>Dokumen HO</th><th>Aksi</th>
+                  <th>No</th>
+                  <th>Nomor Aset</th>
+                  <th>SubReg</th>
+                  <th>Profit Center</th>
+                  <th>Nama Aset</th>
+                  <th>Mekanisme</th>
+                  <th>Tgl Persetujuan</th>
+                  <th>Status</th>
+                  <th>Dokumen Aset</th>
+                  <th>Aksi</th>
                 </tr>
               </thead>
               <tbody>
@@ -420,13 +514,20 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                     <?php if ($p['mekanisme_penghapusan']==='Jual Lelang'): ?>
                       <span class="badge-pill" style="background:#dbeafe;color:#1d4ed8;">Jual Lelang</span>
                     <?php elseif ($p['mekanisme_penghapusan']==='Hapus Administrasi'): ?>
-                      <span class="badge-pill" style="background:#f3e8ff;color:#7c3aed;">Hapus Adm.</span>
+                      <span class="badge-pill" style="background:#f3e8ff;color:#7c3aed;">Hapus Administrasi</span>
                     <?php else: ?>&#8212;<?php endif; ?>
                   </td>
                   <td><?= $p['tanggal_persetujuan'] ?? '-' ?></td>
                   <td><span class="badge-pill <?= $stClass ?>"><i class="bi <?= $stIcon ?> me-1"></i><?= $p['status_pelaksanaan'] ?></span></td>
-                  <td class="text-center"><span class="badge bg-<?= (int)$p['jml_dok_ho']>0?'success':'secondary' ?>"><?= (int)$p['jml_dok_ho'] ?></span></td>
-                  <td>
+                  <?php 
+                  $total_dokumen = (int)$p['jml_dok_ho'] + (int)$p['jml_dok_usulan']; 
+                  ?>
+                    <td class="text-center">
+                      <span class="badge bg-<?= $total_dokumen > 0 ? 'success' : 'secondary' ?>">
+                        <?= $total_dokumen ?>
+                      </span>
+                    </td>
+                  <td class="text-center">
                     <button class="btn btn-sm btn-outline-primary btn-detail-pel" data-id="<?= $p['id'] ?>" title="Detail"><i class="bi bi-eye"></i></button>
                     <?php if ($canEdit): ?>
                     <button class="btn btn-sm btn-outline-warning ms-1 btn-edit-pel" data-id="<?= $p['id'] ?>" title="Edit"><i class="bi bi-pencil"></i></button>
@@ -665,23 +766,87 @@ function openDetail(id) {
     const url = isHo ? `?action=view_dok_ho&id_dok=${d.id_dokumen}` : `?action=view_dok_usulan&id_dok=${d.id_dokumen}`;
     const pid = `d${isHo?'h':'u'}-${d.id_dokumen}`;
     const label = isHo ? (d.deskripsi_dokumen||'Dokumen HO') : (d.tipe_dokumen||'Dokumen');
-    const extra = isHo ? `<span style="color:#9ca3af;font-size:.75rem;margin-left:6px;">Tahun ${d.tahun_dokumen||'--'}</span>` : '';
-    return `<div style="padding:8px 0;${i>0?'border-top:1px solid #f3f4f6':''}"><div style="display:flex;align-items:center;justify-content:space-between;"><div><span style="font-weight:600;font-size:.88rem;">${label}</span>${extra}</div><div style="display:flex;gap:6px;"><button onclick="togglePrev('${pid}','${url}')" class="btn btn-sm btn-outline-info" style="font-size:.75rem;padding:2px 8px;"><i class="bi bi-eye me-1"></i>Preview</button><a href="${url}" target="_blank" class="btn btn-sm btn-outline-secondary" style="font-size:.75rem;padding:2px 8px;"><i class="bi bi-box-arrow-up-right"></i></a></div></div><div id="${pid}" style="display:none;margin-top:8px;"><iframe id="${pid}-frame" src="" style="width:100%;height:420px;border:1px solid #e2e8f0;border-radius:8px;"></iframe></div></div>`;
+    const tahunInfo = isHo
+      ? `<span style="color:#9ca3af;font-size:.75rem;">Tahun ${d.tahun_dokumen||'--'}</span>`
+      : `<span style="color:#9ca3af;font-size:.75rem;">Tahun ${d.tahun_usulan||'--'}</span>`;
+    return `<div style="padding:10px 0;${i>0?'border-top:1px solid #f3f4f6':''}">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;">
+        <div style="flex:1;">
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;">
+            <span style="font-weight:600;font-size:0.88rem;">${label}</span>
+            ${tahunInfo}
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0;margin-left:12px;">
+          <button onclick="togglePrev('${pid}','${url}')"
+                  class="btn btn-sm btn-outline-info"
+                  style="font-size:0.76rem;padding:2px 9px;"
+                  title="Preview Dokumen">
+            <i class="bi bi-file-text me-1"></i>
+          </button>
+          <a href="${url}" target="_blank"
+             class="btn btn-sm btn-outline-primary"
+             style="font-size:0.76rem;padding:2px 9px;"
+             title="Buka di tab baru">
+            <i class="bi bi-box-arrow-up-right me-1"></i>Buka
+          </a>
+        </div>
+      </div>
+      <div id="${pid}" style="display:none;margin-top:8px;">
+        <div style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;background:#f8fafc;">
+          <div style="padding:6px 12px;background:#f1f5f9;border-bottom:1px solid #e2e8f0;font-size:0.75rem;color:#64748b;display:flex;align-items:center;justify-content:space-between;">
+            <span><i class="bi bi-file-earmark-pdf text-danger me-1"></i>Preview Dokumen</span>
+            <button onclick="togglePrev('${pid}',null)"
+                    class="btn btn-sm" style="padding:0 4px;font-size:0.7rem;color:#94a3b8;line-height:1;">
+              <i class="bi bi-x-lg"></i> Tutup
+            </button>
+          </div>
+          <iframe id="${pid}-frame" src=""
+                  style="width:100%;height:560px;border:none;display:block;"
+                  title="Preview Dokumen PDF">
+          </iframe>
+        </div>
+      </div>
+    </div>`;
   };
 
   const dokHoHtml  = dokHo.length  ? dokHo.map((d,i)  => makeDokRow(d,i,null,null,true)).join('')  : '<p class="text-muted small mb-0">Belum ada dokumen HO.</p>';
   const dokUslHtml = dokUsl.length ? dokUsl.map((d,i) => makeDokRow(d,i,null,null,false)).join('') : '<p class="text-muted small mb-0">Belum ada dokumen usulan.</p>';
 
+  const totalDokumen = (parseInt(p.jml_dok_ho || 0, 10) + parseInt(p.jml_dok_usulan || 0, 10));
+  const mekanismeBadge = p.mekanisme_penghapusan === 'Hapus Administrasi' ? '<span class="badge" style="background:#8b5cf6;color:#fff;">Hapus Administrasi</span>' : p.mekanisme_penghapusan === 'Jual Lelang' ? '<span class="badge bg-primary">Jual Lelang</span>' : (p.mekanisme_penghapusan || '&mdash;');
+  const fotoHtml = p.foto_path
+    ? `<div class="text-center py-3" style="background:#f8f9fa;border-bottom:1px solid #f0f0f0;">
+         <img src="${p.foto_path}" class="foto-aset-img img-fluid"
+              onclick="bukaLightbox('${p.foto_path}')"
+              title="Klik untuk perbesar">
+         <div class="mt-1" style="font-size:0.72rem;color:#9ca3af;">Klik foto untuk memperbesar</div>
+       </div>`
+    : '';
   document.getElementById('modalSubtitle').textContent = p.nama_aset || p.nomor_asset_utama;
   document.getElementById('modalDetailBody').innerHTML = `
+    ${fotoHtml}
     <div class="detail-section"><div class="detail-section-title"><i class="bi bi-tag"></i> Identitas Aset</div>
       <div class="detail-grid">
         <div class="detail-item"><div class="detail-item-label">Nomor Aset</div><div class="detail-item-value" style="font-family:monospace;color:#2563eb;">${p.nomor_asset_utama}</div></div>
         <div class="detail-item"><div class="detail-item-label">Nama Aset</div><div class="detail-item-value">${p.nama_aset||'&mdash;'}</div></div>
-        <div class="detail-item"><div class="detail-item-label">SubReg</div><div class="detail-item-value">${p.subreg||'&mdash;'}</div></div>
+        <div class="detail-item"><div class="detail-item-label">Kategori Aset</div><div class="detail-item-value">${p.kategori_aset||'&mdash;'}</div></div>
         <div class="detail-item"><div class="detail-item-label">Profit Center</div><div class="detail-item-value">${p.profit_center_text||p.profit_center||'&mdash;'}</div></div>
-        <div class="detail-item"><div class="detail-item-label">Mekanisme</div><div class="detail-item-value">${p.mekanisme_penghapusan||'&mdash;'}</div></div>
-        <div class="detail-item"><div class="detail-item-label">Kategori</div><div class="detail-item-value">${p.kategori_aset||'&mdash;'}</div></div>
+        <div class="detail-item"><div class="detail-item-label">SubReg</div><div class="detail-item-value">${p.subreg||'&mdash;'}</div></div>
+      </div>
+    </div>
+    <div class="detail-section"><div class="detail-section-title"><i class="bi bi-clipboard-data"></i> Detail Usulan</div>
+      <div class="detail-grid">
+        <div class="detail-item"><div class="detail-item-label">Nilai Buku</div><div class="detail-item-value">${rupiah(p.nilai_buku)}</div></div>
+        <div class="detail-item"><div class="detail-item-label">Nilai Perolehan</div><div class="detail-item-value">${rupiah(p.nilai_perolehan_sd)}</div></div>
+        <div class="detail-item"><div class="detail-item-label">Tanggal Perolehan</div><div class="detail-item-value">${p.tgl_perolehan||'&mdash;'}</div></div>
+        <div class="detail-item"><div class="detail-item-label">Tahun Usulan</div><div class="detail-item-value">${p.tahun_usulan||'&mdash;'}</div></div>
+        <div class="detail-item"><div class="detail-item-label">Umur Ekonomis</div><div class="detail-item-value">${p.umur_ekonomis||'&mdash;'}</div></div>
+        <div class="detail-item"><div class="detail-item-label">Sisa Umur Ekonomis</div><div class="detail-item-value">${p.sisa_umur_ekonomis||'&mdash;'}</div></div>
+        <div class="detail-item"><div class="detail-item-label">Jumlah Aset</div><div class="detail-item-value">${p.jumlah_aset||'&mdash;'}</div></div>
+        <div class="detail-item"><div class="detail-item-label">Mekanisme Penghapusan</div><div class="detail-item-value">${mekanismeBadge}</div></div>
+        <div class="detail-item"><div class="detail-item-label">Fisik Aset</div><div class="detail-item-value">${p.fisik_aset||'&mdash;'}</div></div>
+        <div class="detail-item"><div class="detail-item-label">Jumlah Dokumen</div><div class="detail-item-value"><span class="badge-pill" style="background:#0ea5e9;color:#fff;">${totalDokumen} file(s)</span></div></div>
       </div>
     </div>
     <div class="detail-section" style="background:#f8faff;"><div class="detail-section-title"><i class="bi bi-arrow-right-circle"></i> Progres Pelaksanaan</div>
@@ -772,33 +937,63 @@ function openEdit(id) {
   else { new bootstrap.Modal(document.getElementById('modalEdit')).show(); }
 }
 
-// Validasi form sebelum submit — nilai appraisal dan penjualan wajib; tanggal & nomor aset opsional
 document.getElementById('formEditPelaksanaan')?.addEventListener('submit', function(e) {
-  const required = [
-    { id: 'edit_app_pasar',      label: 'Nilai Appraisal Pasar' },
-    { id: 'edit_app_likuidasi',  label: 'Nilai Appraisal Likuidasi' },
-    { id: 'edit_nilai_jual',     label: 'Nilai Penjualan' },
-    { id: 'edit_biaya',          label: 'Biaya Lainnya' },
-  ];
-  const empty = required.filter(f => !document.getElementById(f.id)?.value?.trim());
-  if (empty.length > 0) {
-    e.preventDefault();
-    const names = empty.map(f => '• ' + f.label).join('\n');
-    alert('Field berikut wajib diisi:\n\n' + names);
-    document.getElementById(empty[0].id)?.focus();
-  }
 });
 
 function togglePrev(pid, url) {
-  const el = document.getElementById(pid);
+  const el    = document.getElementById(pid);
   const frame = document.getElementById(pid + '-frame');
-  const hidden = !el || el.style.display === 'none' || el.style.display === '';
-  if (el) el.style.display = hidden ? 'block' : 'none';
-  if (hidden && frame && (!frame.src || frame.src === window.location.href)) frame.src = url;
+  if (!el) return;
+  const isVisible = el.style.display !== 'none' && el.style.display !== '';
+  if (isVisible || url === null) {
+    el.style.display = 'none';
+    if (frame) frame.src = '';
+  } else {
+    if (frame && url) frame.src = url;
+    el.style.display = 'block';
+    setTimeout(function() { el.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, 150);
+  }
 }
 </script>
 <script src="../../dist/js/overlayscrollbars.browser.es6.min.js"></script>
 <script src="../../dist/js/popper.min.js"></script>
 <script src="../../dist/js/adminlte.js"></script>
+
+<!-- Lightbox Foto Aset -->
+<div id="lightboxOverlay" onclick="tutupLightbox()"
+     style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.88);
+            align-items:center;justify-content:center;cursor:zoom-out;">
+  <div style="position:relative;max-width:90vw;max-height:90vh;" onclick="event.stopPropagation()">
+    <img id="lightboxImg" src="" alt="Foto Aset"
+         style="max-width:90vw;max-height:85vh;object-fit:contain;border-radius:8px;
+                box-shadow:0 8px 40px rgba(0,0,0,.6);display:block;">
+    <button onclick="tutupLightbox()"
+            style="position:absolute;top:-14px;right:-14px;width:32px;height:32px;border-radius:50%;
+                   border:none;background:#fff;color:#333;font-size:1rem;cursor:pointer;
+                   display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,.3);">
+      <i class="bi bi-x-lg"></i>
+    </button>
+    <div style="text-align:center;margin-top:8px;font-size:0.75rem;color:#ccc;">
+      Klik di luar foto atau tombol × untuk menutup
+    </div>
+  </div>
+</div>
+
+<script>
+function bukaLightbox(src) {
+  if (!src) return;
+  document.getElementById('lightboxImg').src = src;
+  document.getElementById('lightboxOverlay').style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+}
+function tutupLightbox() {
+  document.getElementById('lightboxOverlay').style.display = 'none';
+  document.getElementById('lightboxImg').src = '';
+  document.body.style.overflow = '';
+}
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') tutupLightbox();
+});
+</script>
 </body>
 </html>
