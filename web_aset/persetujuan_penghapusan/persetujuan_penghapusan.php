@@ -16,24 +16,71 @@ if (!isset($_SESSION["nipp"]) || !isset($_SESSION["name"])) {
 $userNipp = $_SESSION['nipp'];
 $userType = isset($_SESSION['Type_User']) ? $_SESSION['Type_User'] : '';
 
-// ── Helper: serve file dari DB ───────────────────────────────────────────────
+// ── Helper: serve file dari DB atau filesystem ─────────────────────────────────
 function serveFileFromDb($filePathDb, $fileName, $forceDownload = false) {
     $fileName = !empty($fileName) ? basename($fileName) : 'dokumen.pdf';
+
     if (strpos($filePathDb, 'data:') === 0 && strpos($filePathDb, ';gzip,') !== false) {
         $fileData = gzdecode(base64_decode(substr($filePathDb, strrpos($filePathDb, ',') + 1)));
+        header('Content-Type: application/pdf');
+        header('Content-Disposition: ' . ($forceDownload ? 'attachment' : 'inline') . '; filename="' . $fileName . '"');
+        header('Content-Length: ' . strlen($fileData));
+        header('Cache-Control: no-cache');
+        echo $fileData; exit();
     } elseif (strpos($filePathDb, 'data:') === 0 && strpos($filePathDb, ';base64,') !== false) {
         $fileData = base64_decode(substr($filePathDb, strpos($filePathDb, ',') + 1));
-    } else {
-        http_response_code(404); echo 'Format file tidak dikenali.'; exit();
+        header('Content-Type: application/pdf');
+        header('Content-Disposition: ' . ($forceDownload ? 'attachment' : 'inline') . '; filename="' . $fileName . '"');
+        header('Content-Length: ' . strlen($fileData));
+        header('Cache-Control: no-cache');
+        echo $fileData; exit();
     }
+
+    $resolvedPath = $filePathDb;
+    if (!file_exists($resolvedPath)) {
+        $resolvedPath = __DIR__ . '/' . ltrim($filePathDb, '/\\');
+    }
+
+    if (!file_exists($resolvedPath) || !is_file($resolvedPath)) {
+        http_response_code(404); echo 'File tidak ditemukan.'; exit();
+    }
+
     header('Content-Type: application/pdf');
     header('Content-Disposition: ' . ($forceDownload ? 'attachment' : 'inline') . '; filename="' . $fileName . '"');
-    header('Content-Length: ' . strlen($fileData));
+    header('Content-Length: ' . filesize($resolvedPath));
     header('Cache-Control: no-cache');
-    echo $fileData; exit();
+    readfile($resolvedPath); exit();
 }
 
-// ── ACTION: Serve Dokumen Usulan ─────────────────────────────────────────────
+// ── Helper: normalize path foto ──────────────────────────────────────────────
+function normalize_foto_path($p) {
+  if (empty($p)) return '';
+  $p = (string)$p;
+  if (strpos($p, "\x00") !== false) {
+    if (substr($p,0,8)==="\x89PNG\r\n\x1a\n") return 'data:image/png;base64,'.base64_encode($p);
+    if (substr($p,0,3)==="\xff\xd8\xff")      return 'data:image/jpeg;base64,'.base64_encode($p);
+    if (substr($p,0,4)==='GIF8')               return 'data:image/gif;base64,'.base64_encode($p);
+    return '';
+  }
+  $p = trim($p);
+  if (preg_match('#^data:image/#i',$p)) return $p;
+  if (preg_match('#^https?://#i',$p))  return $p;
+  if (strpos($p,'/')===0)              return $p;
+  $p2 = str_replace('\\','/',$p);
+  $docroot = str_replace('\\','/',realpath($_SERVER['DOCUMENT_ROOT']??'')?: '');
+  if ($docroot!=='') {
+    $abs = @realpath($p2);
+    if ($abs) {
+      $abs = str_replace('\\','/',$abs);
+      if (strpos($abs,$docroot)===0) return '/'.ltrim(substr($abs,strlen($docroot)),'/');
+    }
+  }
+  if (preg_match('#^(uploads/|\.\./uploads|/uploads)#',$p2))
+    return strpos($p2,'/uploads')===0 ? $p2 : '../../'.ltrim($p2,'/');
+  return $p;
+}
+
+
 if (isset($_GET['action']) && $_GET['action'] === 'view_dok_usulan' && isset($_GET['id_dok'])) {
     $id_dok = (int)$_GET['id_dok'];
     $res = mysqli_query($con, "SELECT file_path, file_name FROM dokumen_penghapusan WHERE id_dokumen = $id_dok LIMIT 1");
@@ -103,6 +150,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delet
     $filterTahun = isset($_POST['tahun']) ? (int)$_POST['tahun'] : date('Y'); // fix: define before use
     $dokumen_id  = (int)($_POST['dokumen_id'] ?? 0);
     if ($dokumen_id > 0) {
+        $filePath = null;
+        $stmt = $con->prepare("SELECT lokasi_file FROM dokumen_pelaksanaan WHERE id_dokumen = ? LIMIT 1");
+        $stmt->bind_param('i', $dokumen_id);
+        $stmt->execute();
+        $stmt->bind_result($filePath);
+        $stmt->fetch();
+        $stmt->close();
+
+        if (!empty($filePath) && strpos($filePath, 'data:') !== 0 && file_exists($filePath)) {
+            @unlink($filePath);
+        }
+
         $stmt = $con->prepare("DELETE FROM dokumen_pelaksanaan WHERE id_dokumen = ?");
         $stmt->bind_param('i', $dokumen_id);
         $stmt->execute();
@@ -133,10 +192,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
         $_SESSION['warning_message'] = 'Pilih minimal 1 aset!';
     } else {
         $ids         = array_filter(array_map('intval', explode(',', $ids_str)));
-        $compressed  = gzencode(file_get_contents($file['tmp_name']), 9);
-        $lokasi_file = 'data:application/pdf;base64;gzip,' . base64_encode($compressed);
         $file_name   = basename($file['name']);
-        $file_size   = strlen($compressed);
+        $file_size   = $file['size'];
+
+        $uploadBaseDir = realpath(__DIR__ . '/../../uploads/dokumen_penghapusan') ?: (__DIR__ . '/../../uploads/dokumen_penghapusan');
+        if (!is_dir($uploadBaseDir) && !mkdir($uploadBaseDir, 0777, true) && !is_dir($uploadBaseDir)) {
+            $_SESSION['warning_message'] = 'Gagal membuat direktori upload.';
+            header("Location: " . $_SERVER['PHP_SELF'] . "?tab=upload&tahun=" . $tahun_dok);
+            exit();
+        }
+
+        $safeName = preg_replace('/[^A-Za-z0-9._-]/', '_', $file_name);
+        $targetFile = $uploadBaseDir . '/ho_' . uniqid('', true) . '_' . $safeName;
+        if (!move_uploaded_file($file['tmp_name'], $targetFile)) {
+            $_SESSION['warning_message'] = 'Gagal menyimpan file upload.';
+            header("Location: " . $_SERVER['PHP_SELF'] . "?tab=upload&tahun=" . $tahun_dok);
+            exit();
+        }
+
+        $lokasi_file = $targetFile;
         $no_aset_list = [];
 
         foreach ($ids as $uid) {
@@ -202,7 +276,11 @@ $res_p = mysqli_query($con, "SELECT up.*, id.keterangan_asset as nama_aset, id.a
       AND YEAR(up.created_at) = $filterTahun
     ORDER BY up.created_at DESC");
 $data_pending = [];
-while ($r = mysqli_fetch_assoc($res_p)) { $r['nama_aset'] = str_replace('AUC-', '', $r['nama_aset']??''); $data_pending[] = $r; }
+while ($r = mysqli_fetch_assoc($res_p)) {
+    $r['nama_aset'] = str_replace('AUC-', '', $r['nama_aset']??'');
+    $r['foto_path'] = normalize_foto_path($r['foto_path'] ?? '');
+    $data_pending[] = $r;
+}
 
 // Tab Upload: yang sudah approved HO
 $res_a = mysqli_query($con, "SELECT up.*, id.keterangan_asset as nama_aset, id.asset_class_name as kategori_aset,
@@ -218,7 +296,8 @@ $data_approved = [];
 while ($r = mysqli_fetch_assoc($res_a)) { $r['nama_aset'] = str_replace('AUC-', '', $r['nama_aset']??''); $data_approved[] = $r; }
 
 // Dokumen usulan untuk preview di modal detail
-$res_du = mysqli_query($con, "SELECT dp.id_dokumen, dp.usulan_id, dp.tipe_dokumen, dp.file_name
+$res_du = mysqli_query($con, "SELECT dp.id_dokumen, dp.usulan_id, dp.tipe_dokumen, dp.file_name,
+    YEAR(up.created_at) as tahun_usulan
     FROM dokumen_penghapusan dp
     JOIN usulan_penghapusan up ON dp.usulan_id = up.id
     WHERE up.status_approval_regional = 'approved' ORDER BY dp.id_dokumen DESC");
@@ -305,6 +384,10 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
     .card-table-wrap .ctw-header{padding:14px 20px;border-bottom:1px solid #dee2e6;background:#fff;display:flex;align-items:center;gap:8px;}
     .card-table-wrap .ctw-header h5{margin:0;font-size:.95rem;font-weight:600;color:#1f2937;}
 
+    /* Foto aset */
+    .foto-aset-img{max-height:220px;object-fit:contain;cursor:pointer;border-radius:8px;border:1px solid #e9ecef;transition:box-shadow .2s;}
+    .foto-aset-img:hover{box-shadow:0 4px 16px rgba(0,0,0,.12);}
+
     /* Detail modal */
     .detail-section{padding:16px 22px;border-bottom:1px solid #f0f0f0;}
     .detail-section:last-child{border-bottom:none;}
@@ -354,6 +437,10 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                 <div class="col-6 text-start">
                   <small class="text-muted">Type User:</small><br>
                   <span class="badge bg-primary"><?= htmlspecialchars($userType) ?></span>
+                </div>
+                <div class="col-6 text-end">
+                  <small class="text-muted">Cabang:</small><br>
+                  <p class="fw-semibold small mb-0"><?php echo htmlspecialchars($_SESSION['Cabang'] . ' - ' . $_SESSION['profit_center_text']); ?></p>
                 </div>
               </div>
               <hr class="m-0"/>
@@ -585,14 +672,13 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                           <td class="text-center">
                             <input type="checkbox" class="form-check-input row-check"
                                    value="<?= $u['id'] ?>"
-                                   data-no="<?= htmlspecialchars($u['nomor_asset_utama']) ?>"
-                                   onchange="updateSelectedBar()">
+                                   data-no="<?= htmlspecialchars($u['nomor_asset_utama']) ?>">
                           </td>
                           <td class="text-center"><?= $i+1 ?></td>
                           <td><code style="color:#2563eb;"><?= htmlspecialchars($u['nomor_asset_utama']) ?></code></td>
                           <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;"><?= htmlspecialchars($u['nama_aset']??'-') ?></td>
                           <td><?= htmlspecialchars($u['subreg']??'-') ?></td>
-                          <td style="font-size:.82rem;"><?= htmlspecialchars($u['profit_center_text']??$u['profit_center']??'-') ?></td>
+                          <td><?= htmlspecialchars($u['profit_center_text']??$u['profit_center']??'-') ?></td>
                           <td>
                             <?php if ($u['mekanisme_penghapusan']==='Jual Lelang'): ?>
                               <span class="badge-pill" style="background:#dbeafe;color:#1d4ed8;">Jual Lelang</span>
@@ -649,11 +735,8 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
 
                     <div class="mb-3">
                       <label class="form-label">Tahun Dokumen <span class="text-danger">*</span></label>
-                      <select class="form-control" name="tahun_dokumen" id="uploadTahun" required onchange="document.getElementById('uploadTahunHidden').value=this.value">
-                        <?php $thnIni = date('Y'); for ($y=$thnIni; $y>=2015; $y--): ?>
-                          <option value="<?= $y ?>" <?= $y==$filterTahun?'selected':'' ?>><?= $y ?></option>
-                        <?php endfor; ?>
-                      </select>
+                      <input type="text" class="form-control" value="<?= htmlspecialchars($filterTahun) ?>" readonly disabled>
+                      <!-- <div class="form-text">Tahun dokumen diambil dari data yang tersimpan, tidak dapat diubah manual.</div> -->
                     </div>
 
                     <div class="mb-3">
@@ -792,15 +875,15 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                 <th>Nama Aset</th>
                 <th>Mekanisme</th>
                 <th>Profit Center</th>
-                <th>SubReg</th>
-                <th>Dok HO</th>
+                <th>SubReg</th>         
               </tr>
             </thead>
             <tbody>
               <?php foreach ($data_approved as $u): ?>
               <tr>
                 <td class="text-center">
-                  <input type="checkbox" class="form-check-input picker-check"
+                  <input type="checkbox" 
+                        class="form-check-input picker-check"
                          value="<?= $u['id'] ?>"
                          data-nomor="<?= htmlspecialchars($u['nomor_asset_utama']) ?>"
                          data-nama="<?= htmlspecialchars($u['nama_aset']??'-') ?>">
@@ -808,9 +891,8 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                 <td><code style="color:#2563eb;font-size:.82rem;"><?= htmlspecialchars($u['nomor_asset_utama']) ?></code></td>
                 <td><?= htmlspecialchars($u['nama_aset']??'-') ?></td>
                 <td><?= htmlspecialchars($u['mekanisme_penghapusan']??'-') ?></td>
-                <td style="font-size:.82rem;"><?= htmlspecialchars($u['profit_center_text']??$u['profit_center']??'-') ?></td>
-                <td><?= htmlspecialchars($u['subreg']??'-') ?></td>
-                <td class="text-center"><span class="badge bg-success"><?= (int)($u['jml_dok_ho']??0) ?></span></td>
+                <td><?= htmlspecialchars($u['profit_center_text']??$u['profit_center']??'-') ?></td>
+                <td><?= htmlspecialchars($u['subreg']??'-') ?></td>           
               </tr>
               <?php endforeach; ?>
             </tbody>
@@ -956,6 +1038,7 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
 <script>
 const dataPending   = <?= json_encode($data_pending) ?>;
 const dataDokUsulan = <?= json_encode($daftar_dok_usulan) ?>;
+const usulanDgkDok  = new Set(<?= json_encode(array_unique(array_map(fn($d) => (int)($d['usulan_id'] ?? 0), $daftar_dok_ho))) ?>);
 let   _currentDetailId = null;
 
 $(document).ready(function() {
@@ -996,38 +1079,98 @@ $(document).ready(function() {
   //   });
   // }
 
-  // asetPickerTable: 7 kolom (0=checkbox,...,6=Dok HO) → non-orderable: checkbox
-  if ($('#asetPickerTable').length) $('#asetPickerTable').DataTable({
-    ...dtOpts,
-    columnDefs:[{orderable:false, targets:[0]}],
-    pageLength:10
-  });
+  // asetPickerTable: 7 kolom (0=checkbox,...,6=Dok HO) → nonorderable: checkbox
+  // Tidak pakai DataTable untuk picker karena kompleksitas state management
+  // Gunakan handler sederhana saja
+  
+  let pickerDT = null;
 
-  // OverlayScrollbars
-  const sw = document.querySelector('.sidebar-wrapper');
-  if (sw && typeof OverlayScrollbarsGlobal !== 'undefined') {
-    OverlayScrollbarsGlobal.OverlayScrollbars(sw, {scrollbars:{theme:'os-theme-light',autoHide:'leave',clickScroll:true}});
+  function syncPickerCheckboxes() {
+    const savedIds = new Set((document.getElementById('upload_ids_input').value || '')
+      .split(',').map(id => id.trim()).filter(Boolean));
+    $('#asetPickerTable .picker-check').each(function() {
+      const checkId = $(this).val();
+      const isSelected = savedIds.has(checkId);
+      const hasDoc = usulanDgkDok.has(parseInt(checkId, 10));
+      const shouldDisable = hasDoc;
+
+      if (hasDoc) savedIds.delete(checkId);
+      $(this).prop('checked', isSelected || hasDoc);
+      $(this).prop('disabled', shouldDisable);
+      $(this).attr('data-has-doc', hasDoc ? '1' : '0');
+      $(this).closest('tr').toggleClass('table-secondary', hasDoc);
+    });
+    document.getElementById('upload_ids_input').value = [...savedIds].join(',');
+    updatePickerCount();
   }
 
-  // Picker: select all
+  // Picker: select all checkbox
   $('#selectAllPicker').on('change', function() {
-    $('.picker-check').prop('checked', this.checked);
+    const shouldCheck = this.checked;
+    const savedIds = new Set((document.getElementById('upload_ids_input').value || '')
+      .split(',').map(id => id.trim()).filter(Boolean));
+
+    $('#asetPickerTable .picker-check:not(:disabled)').each(function() {
+      $(this).prop('checked', shouldCheck);
+      if (shouldCheck) savedIds.add(this.value);
+      else savedIds.delete(this.value);
+    });
+
+    document.getElementById('upload_ids_input').value = [...savedIds].join(',');
     updatePickerCount();
   });
-  $(document).on('change', '.picker-check', updatePickerCount);
+
+  // Tiap checkbox diklik: langsung update hidden input dan sync state
+  $(document).on('change', '.picker-check:not(:disabled)', function() {
+    const savedIds = new Set((document.getElementById('upload_ids_input').value || '')
+      .split(',').map(id => id.trim()).filter(Boolean));
+    if (this.checked) savedIds.add(this.value);
+    else savedIds.delete(this.value);
+    document.getElementById('upload_ids_input').value = [...savedIds].join(',');
+    syncPickerCheckboxes();
+  });
+
+  function restoreUploadSelection() {
+    syncPickerCheckboxes();
+
+    const allNomor = [];
+    $('#asetPickerTable .picker-check:not(:disabled):checked').each(function() {
+      allNomor.push($(this).data('nomor'));
+    });
+    
+    const listEl = document.getElementById('uploadSelectedAssetsList');
+    if (allNomor.length) {
+      document.getElementById('uploadNomorAset').value = allNomor.length === 1 ? allNomor[0] : allNomor.length + ' aset dipilih';
+      listEl.style.display = 'block';
+      listEl.innerHTML = '<strong>Dipilih (' + allNomor.length + '):</strong> ' + allNomor.join(', ');
+      document.getElementById('btnUpload').disabled = false;
+    } else {
+      document.getElementById('uploadNomorAset').value = '';
+      listEl.style.display = 'none';
+      listEl.innerHTML = '';
+      document.getElementById('btnUpload').disabled = true;
+    }
+  }
+
+  $('#modalAsetPicker').on('shown.bs.modal', restoreUploadSelection);
+  restoreUploadSelection();
 
   // Picker: confirm
   $('#btnConfirmPicker').on('click', function() {
-    const checked = [...document.querySelectorAll('.picker-check:checked')];
+    const checked = [...document.querySelectorAll('.picker-check:not(:disabled):checked')];
     if (!checked.length) { alert('Pilih minimal 1 aset!'); return; }
-    const ids   = checked.map(c => c.value);
+    
+    const checked_ids = new Set(checked.map(c => c.value));
     const nomor = checked.map(c => c.dataset.nomor);
-    document.getElementById('upload_ids_input').value = ids.join(',');
+    
+    document.getElementById('upload_ids_input').value = [...checked_ids].join(',');
     document.getElementById('uploadNomorAset').value  = nomor.length === 1 ? nomor[0] : nomor.length + ' aset dipilih';
+    
     const listEl = document.getElementById('uploadSelectedAssetsList');
     listEl.style.display = 'block';
-    listEl.innerHTML = '<strong>Dipilih (' + ids.length + '):</strong> ' + nomor.join(', ');
+    listEl.innerHTML = '<strong>Dipilih (' + checked_ids.size + '):</strong> ' + nomor.join(', ');
     document.getElementById('btnUpload').disabled = false;
+    
     bootstrap.Modal.getInstance(document.getElementById('modalAsetPicker'))?.hide();
   });
 
@@ -1060,6 +1203,8 @@ document.getElementById('checkAll')?.addEventListener('change', function() {
   updateSelectedBar();
 });
 
+document.querySelectorAll('.row-check').forEach(c => c.addEventListener('change', updateSelectedBar));
+
 function updateSelectedBar() {
   const checked = [...document.querySelectorAll('.row-check:checked')];
   document.getElementById('selectedCount').textContent = checked.length + ' aset dipilih';
@@ -1090,11 +1235,11 @@ function openReject(id, noAset) {
 }
 
 function updatePickerCount() {
-  const n = document.querySelectorAll('.picker-check:checked').length;
+  const selectable = document.querySelectorAll('.picker-check:not(:disabled)');
+  const n = document.querySelectorAll('.picker-check:not(:disabled):checked').length;
   document.getElementById('pickerCountNum').textContent = n;
   document.getElementById('pickerSelectedCount').style.display = n ? 'flex' : 'none';
-  const all = document.querySelectorAll('.picker-check');
-  document.getElementById('selectAllPicker').checked = n > 0 && n === all.length;
+  document.getElementById('selectAllPicker').checked = n > 0 && n === selectable.length;
 }
 
 function openAsetPickerModal() {
@@ -1104,9 +1249,16 @@ function openAsetPickerModal() {
 function togglePrev(pid, url) {
   const row   = document.getElementById(pid);
   const frame = document.getElementById(pid + '-frame');
-  const hidden = row.style.display === 'none' || row.style.display === '';
-  row.style.display = hidden ? 'table-row' : 'none';
-  if (hidden && (!frame.src || frame.src === window.location.href)) frame.src = url;
+  if (!row) return;
+  const isVisible = row.style.display !== 'none' && row.style.display !== '';
+  if (isVisible || url === null) {
+    row.style.display = 'none';
+    if (frame) frame.src = '';
+  } else {
+    if (frame && url) frame.src = url;
+    row.style.display = 'block';
+    setTimeout(function() { row.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, 150);
+  }
 }
 
 function confirmDeleteDokumen(id, nama, tahun) {
@@ -1121,28 +1273,66 @@ function openDetail(uid) {
   if (!u) return;
   _currentDetailId = uid;
   const rupiah = n => n ? 'Rp ' + parseInt(n).toLocaleString('id-ID') : '—';
+  const mekanismeBadge = u.mekanisme_penghapusan === 'Hapus Administrasi' ? '<span class="badge" style="background:#8b5cf6;color:#fff;">Hapus Administrasi</span>' : u.mekanisme_penghapusan === 'Jual Lelang' ? '<span class="badge bg-primary">Jual Lelang</span>' : (u.mekanisme_penghapusan || '—');
+  const fotoPath = u.foto_path || u.foto_aset || '';
+  const fotoHtml = fotoPath
+    ? `<div class="text-center py-3" style="background:#f8f9fa;border-bottom:1px solid #f0f0f0;">
+         <img src="${fotoPath}" class="foto-aset-img img-fluid"
+              onclick="bukaLightbox('${fotoPath}')"
+              title="Klik untuk perbesar">
+         <div class="mt-1" style="font-size:0.72rem;color:#9ca3af;">Klik foto untuk memperbesar</div>
+       </div>`
+    : '';
   const dok = dataDokUsulan.filter(d => String(d.usulan_id) === String(u.id));
   const dokHtml = dok.length === 0
     ? '<p class="text-muted small mb-0">Belum ada dokumen pendukung.</p>'
     : dok.map((d,i) => {
         const url = `?action=view_dok_usulan&id_dok=${d.id_dokumen}`;
         const pid = `dd-${d.id_dokumen}`;
-        return `<div style="padding:8px 0;${i>0?'border-top:1px solid #f3f4f6':''}">
-          <div style="display:flex;align-items:center;justify-content:space-between;">
-            <span style="font-weight:600;font-size:.88rem;">${d.tipe_dokumen||'Dokumen'}</span>
-            <div style="display:flex;gap:6px;">
-              <button onclick="togglePrev('${pid}','${url}')" class="btn btn-sm btn-outline-info" style="font-size:.75rem;padding:2px 8px;"><i class="bi bi-eye me-1"></i>Preview</button>
-              <a href="${url}" target="_blank" class="btn btn-sm btn-outline-primary" style="font-size:.75rem;padding:2px 8px;"><i class="bi bi-box-arrow-up-right me-1"></i>Buka</a>
+        return `<div style="padding:10px 0;${i>0?'border-top:1px solid #f3f4f6':''}">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;">
+            <div style="flex:1;">
+              <div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;">
+                <span style="font-weight:600;font-size:0.88rem;">${d.tipe_dokumen||'Dokumen'}</span>
+                <span style="color:#9ca3af;font-size:0.76rem;">Tahun ${d.tahun_usulan||'—'}</span>
+              </div>
+            </div>
+            <div style="display:flex;gap:6px;flex-shrink:0;margin-left:12px;">
+              <button onclick="togglePrev('${pid}','${url}')"
+                      class="btn btn-sm btn-outline-info"
+                      style="font-size:0.76rem;padding:2px 9px;"
+                      title="Preview Dokumen">
+                <i class="bi bi-file-text me-1"></i>
+              </button>
+              <a href="${url}" target="_blank"
+                 class="btn btn-sm btn-outline-primary"
+                 style="font-size:0.76rem;padding:2px 9px;"
+                 title="Buka di tab baru">
+                <i class="bi bi-box-arrow-up-right me-1"></i>Buka
+              </a>
             </div>
           </div>
           <div id="${pid}" style="display:none;margin-top:8px;">
-            <iframe id="${pid}-frame" src="" style="width:100%;height:420px;border:1px solid #e2e8f0;border-radius:8px;"></iframe>
+            <div style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;background:#f8fafc;">
+              <div style="padding:6px 12px;background:#f1f5f9;border-bottom:1px solid #e2e8f0;font-size:0.75rem;color:#64748b;display:flex;align-items:center;justify-content:space-between;">
+                <span><i class="bi bi-file-earmark-pdf text-danger me-1"></i>Preview Dokumen</span>
+                <button onclick="togglePrev('${pid}',null)"
+                        class="btn btn-sm" style="padding:0 4px;font-size:0.7rem;color:#94a3b8;line-height:1;">
+                  <i class="bi bi-x-lg"></i> Tutup
+                </button>
+              </div>
+              <iframe id="${pid}-frame" src=""
+                      style="width:100%;height:560px;border:none;display:block;"
+                      title="Preview Dokumen PDF">
+              </iframe>
+            </div>
           </div>
         </div>`;
       }).join('');
 
   document.getElementById('modalSubtitle').textContent = u.nama_aset || u.nomor_asset_utama;
   document.getElementById('modalDetailBody').innerHTML = `
+    ${fotoHtml}
     <div class="detail-section">
       <div class="detail-section-title"><i class="bi bi-tag"></i> Identitas Aset</div>
       <div class="detail-grid">
@@ -1159,7 +1349,7 @@ function openDetail(uid) {
       <div class="detail-grid">
         <div class="detail-item"><div class="detail-item-label">Nilai Buku</div><div class="detail-item-value" style="font-family:monospace;">${rupiah(u.nilai_buku)}</div></div>
         <div class="detail-item"><div class="detail-item-label">Nilai Perolehan</div><div class="detail-item-value" style="font-family:monospace;">${rupiah(u.nilai_perolehan_sd)}</div></div>
-        <div class="detail-item"><div class="detail-item-label">Mekanisme</div><div class="detail-item-value">${u.mekanisme_penghapusan||'—'}</div></div>
+        <div class="detail-item"><div class="detail-item-label">Mekanisme</div><div class="detail-item-value">${mekanismeBadge}</div></div>
         <div class="detail-item"><div class="detail-item-label">Fisik Aset</div><div class="detail-item-value">${u.fisik_aset||'—'}</div></div>
         <div class="detail-item"><div class="detail-item-label">Umur Ekonomis</div><div class="detail-item-value">${u.umur_ekonomis||'—'}</div></div>
         <div class="detail-item"><div class="detail-item-label">Sisa Umur</div><div class="detail-item-value">${u.sisa_umur_ekonomis||'—'}</div></div>
@@ -1167,10 +1357,49 @@ function openDetail(uid) {
     </div>
     <div class="detail-section">
       <div class="detail-section-title"><i class="bi bi-file-earmark-pdf"></i> Dokumen Pendukung Usulan</div>
-      <div style="padding:0 4px;">${dokHtml}</div>
+      <div style="padding:0 16px;">${dokHtml}</div>
     </div>`;
   new bootstrap.Modal(document.getElementById('modalDetail')).show();
 }
+</script>
+
+<!-- Lightbox Foto Aset -->
+<div id="lightboxOverlay" onclick="tutupLightbox()"
+     style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.88);
+            align-items:center;justify-content:center;cursor:zoom-out;">
+  <div style="position:relative;max-width:90vw;max-height:90vh;" onclick="event.stopPropagation()">
+    <img id="lightboxImg" src="" alt="Foto Aset"
+         style="max-width:90vw;max-height:85vh;object-fit:contain;border-radius:8px;
+                box-shadow:0 8px 40px rgba(0,0,0,.6);display:block;">
+    <button onclick="tutupLightbox()"
+            style="position:absolute;top:-14px;right:-14px;width:32px;height:32px;border-radius:50%;
+                   border:none;background:#fff;color:#333;font-size:1rem;cursor:pointer;
+                   display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,.3);">
+      <i class="bi bi-x-lg"></i>
+    </button>
+    <div style="text-align:center;margin-top:8px;font-size:0.75rem;color:#ccc;">
+      Klik di luar foto atau tombol × untuk menutup
+    </div>
+  </div>
+</div>
+
+<script>
+function bukaLightbox(src) {
+  if (!src) return;
+  const overlay = document.getElementById('lightboxOverlay');
+  const img     = document.getElementById('lightboxImg');
+  img.src = src;
+  overlay.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+}
+function tutupLightbox() {
+  document.getElementById('lightboxOverlay').style.display = 'none';
+  document.getElementById('lightboxImg').src = '';
+  document.body.style.overflow = '';
+}
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') tutupLightbox();
+});
 </script>
 </body>
 </html>
