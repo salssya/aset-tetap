@@ -5,6 +5,33 @@ $password   = "";
 $dbname     = "asetreg3_db";
 
 $con = mysqli_connect($servername, $username, $password, $dbname);
+if (!$con) {
+    die("Connection failed: " . mysqli_connect_error());
+}
+mysqli_set_charset($con, "utf8mb4");
+
+// Set connection timeout for long-running operations
+@mysqli_query($con, "SET SESSION wait_timeout=28800");
+@mysqli_query($con, "SET SESSION interactive_timeout=28800");
+
+// Extend PHP execution time for long-running operations
+set_time_limit(0);
+
+// Function to check and reconnect if connection is lost
+function ensureConnection(&$con, $servername, $username, $password, $dbname) {
+    if (!$con || !mysqli_ping($con)) {
+        $con = mysqli_connect($servername, $username, $password, $dbname);
+        if (!$con) {
+            throw new Exception("Failed to reconnect to database: " . mysqli_connect_error());
+        }
+        mysqli_set_charset($con, "utf8mb4");
+        // Reapply timeout settings
+        @mysqli_query($con, "SET SESSION wait_timeout=28800");
+        @mysqli_query($con, "SET SESSION interactive_timeout=28800");
+    }
+    return true;
+}
+
 session_start();
 
 // Ambil tahun dari GET, fallback dari session
@@ -125,24 +152,9 @@ if ($isSubRegional) {
     $whereClause .= " AND profit_center = '12101'";
 }
 
-$query = "SELECT * FROM import_dat " . $whereClause . " ORDER BY nomor_asset_utama ASC";
-
-$stmt = $con->prepare($query);
-
-if ($isSubRegional) {
-    $stmt->bind_param("s", $userSubreg);
-} elseif ($isCabang) {
-    $stmt->bind_param("s", $userProfitCenter);
-}
-
-$stmt->execute();
-$result = $stmt->get_result();
-
-$asset_data = [];
-while ($row = $result->fetch_assoc()) {
-    $asset_data[] = $row;
-}
-$stmt->close();
+// ── LAZY LOAD: Hanya ambil data import_dat jika user request tab aset (AJAX) ──
+// Data import_dat TIDAK diload saat page load pertama kali untuk mempercepat
+$asset_data = []; // kosong, diisi via AJAX endpoint get_aset_data
 
 // $tahunSelected kosong 
 $tahunFilterSQL = $tahunSelected ? " AND tahun_usulan = " . intval($tahunSelected) : " AND 1=0";
@@ -574,6 +586,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             exit();
         }
         
+        // Keep connection alive after long compression process
+        try {
+            ensureConnection($con, $servername, $username, $password, $dbname);
+        } catch (Exception $e) {
+            $_SESSION['warning_message'] = "Koneksi database terputus setelah kompresi file. Silakan coba lagi.";
+            header("Location: " . $_SERVER['PHP_SELF'] . "?tahun=" . ($tahunSelected ?: date('Y')) . "#upload");
+            exit();
+        }
+        
         $base64_compressed = base64_encode($compressed_data);
         $file_path = 'data:application/pdf;base64;gzip,' . $base64_compressed;
         
@@ -589,63 +610,104 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         $first_id = !empty($ids) ? intval(reset($ids)) : 0; 
 
         if ($first_id > 0) {
-          $stmt = $con->prepare("SELECT nomor_asset_utama, profit_center, subreg FROM usulan_penghapusan WHERE id = ?");
-          $stmt->bind_param("i", $first_id);
-          $stmt->execute();
-          $result = $stmt->get_result();
-          $stmt->close();
+          $retry_count = 0;
+          $max_retries = 3;
+          
+          while ($retry_count < $max_retries) {
+            try {
+              // Always ensure connection before any operation
+              ensureConnection($con, $servername, $username, $password, $dbname);
+              
+              $stmt = $con->prepare("SELECT nomor_asset_utama, profit_center, subreg FROM usulan_penghapusan WHERE id = ?");
+              if (!$stmt) {
+                throw new Exception("Prepare SELECT failed: " . $con->error);
+              }
+              
+              $stmt->bind_param("i", $first_id);
+              if (!$stmt->execute()) {
+                throw new Exception("Execute SELECT failed: " . $stmt->error);
+              }
+              
+              $result = $stmt->get_result();
+              $stmt->close();
 
-          if ($result->num_rows > 0) {
-            $usulan = $result->fetch_assoc();
+              if ($result->num_rows > 0) {
+                $usulan = $result->fetch_assoc();
 
-            $profit_center_text = null;
-            $qimp = $con->prepare("SELECT profit_center_text, subreg FROM import_dat WHERE nomor_asset_utama = ? LIMIT 1");
-            $qimp->bind_param("s", $usulan['nomor_asset_utama']);
-            $qimp->execute();
-            $rimp = $qimp->get_result();
-            if ($rimp && $rimp->num_rows > 0) {
-              $rowimp = $rimp->fetch_assoc();
-              $profit_center_text = $rowimp['profit_center_text'];
-              if (empty($usulan['subreg'])) {
-                $usulan['subreg'] = $rowimp['subreg'];
+                $profit_center_text = null;
+                $qimp = $con->prepare("SELECT profit_center_text, subreg FROM import_dat WHERE nomor_asset_utama = ? LIMIT 1");
+                $qimp->bind_param("s", $usulan['nomor_asset_utama']);
+                $qimp->execute();
+                $rimp = $qimp->get_result();
+                if ($rimp && $rimp->num_rows > 0) {
+                  $rowimp = $rimp->fetch_assoc();
+                  $profit_center_text = $rowimp['profit_center_text'];
+                  if (empty($usulan['subreg'])) {
+                    $usulan['subreg'] = $rowimp['subreg'];
+                  }
+                }
+                $qimp->close();
+
+                $no_aset_save = !empty($no_aset_raw) ? $no_aset_raw : $usulan['nomor_asset_utama'];
+                
+                // Final check before INSERT
+                ensureConnection($con, $servername, $username, $password, $dbname);
+                
+                $insert_query = "INSERT INTO dokumen_penghapusan 
+                        (usulan_id, tahun_dokumen, tipe_dokumen, no_aset, subreg, profit_center, profit_center_text, type_user, nipp, file_name, file_path, file_size) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                $stmt_insert = $con->prepare($insert_query);
+                
+                if (!$stmt_insert) {
+                  throw new Exception("Prepare INSERT failed: " . $con->error);
+                }
+
+                $compressed_size = strlen($compressed_data);
+                
+                $stmt_insert->bind_param("iisssssssssi", 
+                  $first_id,     
+                  $tahun_dokumen, 
+                  $tipe_dokumen, 
+                  $no_aset_save, 
+                  $usulan['subreg'],
+                  $usulan['profit_center'],
+                  $profit_center_text,
+                  $type_user,
+                  $nipp,
+                  $new_filename,
+                  $file_path,
+                  $compressed_size
+                );
+
+                if ($stmt_insert->execute()) {
+                  $success_count++;
+                  $stmt_insert->close();
+                  break; // Success, exit retry loop
+                } else {
+                  throw new Exception("Execute INSERT failed: " . $stmt_insert->error);
+                }
+              }
+              break; // Result processed, exit retry loop
+              
+            } catch (Exception $e) {
+              $retry_count++;
+              if ($retry_count >= $max_retries) {
+                error_log("Database error in document upload (after " . $max_retries . " retries): " . $e->getMessage());
+                $_SESSION['error_message'] = "Gagal menyimpan dokumen setelah beberapa kali percobaan: " . $e->getMessage();
+              } else {
+                // Wait a bit before retry
+                usleep(500000); // 0.5 second
               }
             }
-            $qimp->close();
-
-            $no_aset_save = !empty($no_aset_raw) ? $no_aset_raw : $usulan['nomor_asset_utama'];
-            $insert_query = "INSERT INTO dokumen_penghapusan 
-                    (usulan_id, tahun_dokumen, tipe_dokumen, no_aset, subreg, profit_center, profit_center_text, type_user, nipp, file_name, file_path, file_size) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-            $stmt_insert = $con->prepare($insert_query);
-
-            $compressed_size = strlen($compressed_data);
-            
-            $stmt_insert->bind_param("iisssssssssi", 
-              $first_id,     
-              $tahun_dokumen, 
-              $tipe_dokumen, 
-              $no_aset_save, 
-              $usulan['subreg'],
-              $usulan['profit_center'],
-              $profit_center_text,
-              $type_user,
-              $nipp,
-              $new_filename,
-              $file_path,
-              $compressed_size
-            );
-
-            if ($stmt_insert->execute()) {
-              $success_count++;
-            }
-            $stmt_insert->close();
           }
         }
 
         if ($success_count > 0) {
           $_SESSION['success_message'] = "✅ Berhasil upload dokumen untuk " . count($ids) . " aset!";
         } else {
-          $_SESSION['warning_message'] = "Gagal menyimpan dokumen!";
+          if (empty($_SESSION['error_message'])) {
+            $_SESSION['warning_message'] = "Gagal menyimpan dokumen!";
+          }
         }
     }
     header("Location: " . $_SERVER['PHP_SELF'] . "?tahun=" . ($tahunSelected ?: date('Y')) . "#upload");
@@ -759,6 +821,116 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
 }
 
 // HANDLER GET: View / Serve Dokumen PDF
+// ── AJAX: Lazy load data aset (import_dat) ────────────────────────────────────
+if (isset($_GET['action']) && $_GET['action'] === 'get_aset_data') {
+    header('Content-Type: application/json');
+
+    $tahunAjax = isset($_GET['tahun']) && $_GET['tahun'] !== '' ? intval($_GET['tahun']) : 0;
+    $nippAjax  = $_SESSION['nipp'];
+
+    if ($tahunAjax > 0) {
+        $tahunJoinCond    = " AND up.tahun_usulan = $tahunAjax";
+        $tahunJoinCondAll = " AND up_all.tahun_usulan = $tahunAjax";
+        $excludeOtherYear = " AND id.nomor_asset_utama NOT IN (
+            SELECT nomor_asset_utama FROM usulan_penghapusan
+            WHERE tahun_usulan IS NOT NULL AND tahun_usulan != $tahunAjax
+        )";
+    } else {
+        $tahunJoinCond    = " AND 1=0";
+        $tahunJoinCondAll = " AND 1=0";
+        $excludeOtherYear = "";
+    }
+
+    if ($isSubRegional) {
+        $q = "SELECT id.*,
+              up.id as draft_id, up.mekanisme_penghapusan, up.fisik_aset, up.status as draft_status, up.created_by as usulan_created_by,
+              up_all.status as any_status, up_all.mekanisme_penghapusan as any_mekanisme, up_all.fisik_aset as any_fisik, up_all.created_by as any_created_by
+              FROM import_dat id
+              LEFT JOIN usulan_penghapusan up ON id.nomor_asset_utama = up.nomor_asset_utama AND up.created_by = ?{$tahunJoinCond}
+              LEFT JOIN usulan_penghapusan up_all ON id.nomor_asset_utama = up_all.nomor_asset_utama{$tahunJoinCondAll}
+              WHERE id.nilai_perolehan_sd != 0{$excludeOtherYear} AND id.subreg = ?
+              GROUP BY id.id
+              ORDER BY CASE WHEN up_all.status IS NOT NULL THEN 0 ELSE 1 END ASC, id.nomor_asset_utama ASC";
+        $st = $con->prepare($q); $st->bind_param("ss", $nippAjax, $userSubreg);
+    } elseif ($isCabang) {
+        $q = "SELECT id.*,
+              up.id as draft_id, up.mekanisme_penghapusan, up.fisik_aset, up.status as draft_status, up.created_by as usulan_created_by
+              FROM import_dat id
+              LEFT JOIN usulan_penghapusan up ON id.nomor_asset_utama = up.nomor_asset_utama AND up.created_by = ?{$tahunJoinCond}
+              WHERE id.nilai_perolehan_sd != 0{$excludeOtherYear} AND id.profit_center = ?
+              GROUP BY id.id
+              ORDER BY CASE WHEN up.status IS NOT NULL THEN 0 ELSE 1 END ASC, id.nomor_asset_utama ASC";
+        $st = $con->prepare($q); $st->bind_param("ss", $nippAjax, $userProfitCenter);
+    } elseif ($isUserEntryRegional) {
+        $q = "SELECT id.*,
+              up.id as draft_id, up.mekanisme_penghapusan, up.fisik_aset, up.status as draft_status, up.created_by as usulan_created_by,
+              up_all.status as any_status, up_all.mekanisme_penghapusan as any_mekanisme, up_all.fisik_aset as any_fisik, up_all.created_by as any_created_by
+              FROM import_dat id
+              LEFT JOIN usulan_penghapusan up ON id.nomor_asset_utama = up.nomor_asset_utama AND up.created_by = ?{$tahunJoinCond}
+              LEFT JOIN usulan_penghapusan up_all ON id.nomor_asset_utama = up_all.nomor_asset_utama{$tahunJoinCondAll}
+              WHERE id.nilai_perolehan_sd != 0{$excludeOtherYear} AND id.profit_center = '12101'
+              GROUP BY id.id
+              ORDER BY CASE WHEN up_all.status IS NOT NULL THEN 0 ELSE 1 END ASC, id.nomor_asset_utama ASC";
+        $st = $con->prepare($q); $st->bind_param("s", $nippAjax);
+    } else {
+        $q = "SELECT id.*,
+              up.id as draft_id, up.mekanisme_penghapusan, up.fisik_aset, up.status as draft_status, up.created_by as usulan_created_by,
+              up_all.status as any_status, up_all.mekanisme_penghapusan as any_mekanisme, up_all.fisik_aset as any_fisik, up_all.created_by as any_created_by
+              FROM import_dat id
+              LEFT JOIN usulan_penghapusan up ON id.nomor_asset_utama = up.nomor_asset_utama AND up.created_by = ?{$tahunJoinCond}
+              LEFT JOIN usulan_penghapusan up_all ON id.nomor_asset_utama = up_all.nomor_asset_utama{$tahunJoinCondAll}
+              WHERE id.nilai_perolehan_sd != 0{$excludeOtherYear}
+              GROUP BY id.id
+              ORDER BY CASE WHEN up_all.status IS NOT NULL THEN 0 ELSE 1 END ASC, id.nomor_asset_utama ASC";
+        $st = $con->prepare($q); $st->bind_param("s", $nippAjax);
+    }
+    $st->execute();
+    $res_aj = $st->get_result();
+    $rows_aj = [];
+    while ($r = $res_aj->fetch_assoc()) {
+        $r['keterangan_asset'] = stripAUC($r['keterangan_asset']);
+        $r['asset_class_name'] = stripAUC($r['asset_class_name']);
+        $rows_aj[] = $r;
+    }
+    $st->close();
+    echo json_encode([
+        'status' => 'success',
+        'data'   => $rows_aj,
+        'draft_numbers'     => $draft_asset_numbers,
+        'lengkapi_numbers'  => $lengkapi_asset_numbers,
+        'submitted_numbers' => $submitted_asset_numbers,
+        'nipp'              => $nippAjax,
+    ]);
+    exit();
+}
+
+// ── SMART INITIAL TAB: tentukan tab awal berdasarkan kondisi user ─────────────
+// Logika:
+// 1. Jika ada ?tab=xxx di URL → gunakan itu
+// 2. Jika ada hash di redirect (dari POST) → JS yang handle
+// 3. Jika user punya data lengkapi/upload → skip tab aset, langsung ke lengkapi
+// 4. Jika user baru / tidak ada data apapun → tampilkan tab aset
+$smartInitialTab = 'aset'; // default
+
+if (!empty($lengkapi_data)) {
+    // Ada data yang perlu dilengkapi → langsung ke lengkapi
+    $smartInitialTab = 'dokumen';
+} elseif (!empty($upload_data)) {
+    // Ada data siap upload → langsung ke upload
+    $smartInitialTab = 'upload';
+} elseif (!empty($draft_data)) {
+    // Ada draft → tetap di tab aset (user masih memilih)
+    $smartInitialTab = 'aset';
+}
+
+// Override jika ada ?tab= di URL
+if (isset($_GET['tab'])) {
+    $allowedTabs = ['aset', 'dokumen', 'upload', 'summary'];
+    if (in_array($_GET['tab'], $allowedTabs)) {
+        $smartInitialTab = $_GET['tab'];
+    }
+}
+
 if (isset($_GET['action']) && $_GET['action'] === 'view_dokumen' && isset($_GET['id_dok'])) {
     $id_dok = (int)$_GET['id_dok'];
     $nipp_sess = trim((string)($_SESSION['nipp'] ?? ''));
@@ -1552,23 +1724,22 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                     <!-- Nav tabs -->
                     <ul class="nav nav-tabs mb-3" id="myTab" role="tablist">
                       <li class="nav-item" role="presentation">
-                        <button class="nav-link active" id="daftar-aset-tab" data-bs-toggle="tab" data-bs-target="#aset" type="button" role="tab" aria-controls="aset" aria-selected="true">
+                        <button class="nav-link <?= $smartInitialTab==='aset'?'active':'' ?>" id="daftar-aset-tab" data-bs-toggle="tab" data-bs-target="#aset" type="button" role="tab" aria-controls="aset" aria-selected="<?= $smartInitialTab==='aset'?'true':'false' ?>">
                           <i class="bi bi-list-ul me-2"></i>Daftar Aset Tetap
                         </button>
                       </li>
                       <li class="nav-item" role="presentation">
-                        <button class="nav-link" id="lengkapi-dokumen-tab" data-bs-toggle="tab" data-bs-target="#dokumen" type="button" role="tab" aria-controls="dokumen" aria-selected="false">
+                        <button class="nav-link <?= $smartInitialTab==='dokumen'?'active':'' ?>" id="lengkapi-dokumen-tab" data-bs-toggle="tab" data-bs-target="#dokumen" type="button" role="tab" aria-controls="dokumen" aria-selected="<?= $smartInitialTab==='dokumen'?'true':'false' ?>">
                           <i class="bi bi-file-earmark-check me-2"></i>Lengkapi Data Aset
-                          
                         </button>
                       </li>
                       <li class="nav-item" role="presentation">
-                        <button class="nav-link" id="upload-dokumen-tab" data-bs-toggle="tab" data-bs-target="#upload" type="button" role="tab" aria-controls="upload" aria-selected="false">
+                        <button class="nav-link <?= $smartInitialTab==='upload'?'active':'' ?>" id="upload-dokumen-tab" data-bs-toggle="tab" data-bs-target="#upload" type="button" role="tab" aria-controls="upload" aria-selected="<?= $smartInitialTab==='upload'?'true':'false' ?>">
                           <i class="bi bi-cloud-upload me-2"></i>Upload Dokumen
                         </button>
                       </li>
                       <li class="nav-item" role="presentation">
-                        <button class="nav-link" id="summary-tab" data-bs-toggle="tab" data-bs-target="#summary" type="button" role="tab" aria-controls="summary" aria-selected="false">
+                        <button class="nav-link <?= $smartInitialTab==='summary'?'active':'' ?>" id="summary-tab" data-bs-toggle="tab" data-bs-target="#summary" type="button" role="tab" aria-controls="summary" aria-selected="<?= $smartInitialTab==='summary'?'true':'false' ?>">
                           <i class="bi bi-clipboard-data me-2"></i>Summary
                         </button>
                       </li>
@@ -1577,10 +1748,15 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                     <div class="tab-content" id="usulanTabsContent">
                       
                           <!-- Tab Pilih Aset -->
-                          <div class="tab-pane fade show active" id="aset" role="tabpanel">
-                            <h5>Pilih untuk Usulan Penghapusan</h5>  
+                          <div class="tab-pane fade <?= $smartInitialTab==='aset'?'show active':'' ?>" id="aset" role="tabpanel">
+                            <h5>Pilih untuk Usulan Penghapusan</h5>
+                            <!-- Loading indicator untuk lazy load -->
+                            <div id="asetLoadingIndicator" style="display:none;text-align:center;padding:40px 0;">
+                              <div class="spinner-border text-primary" role="status"></div>
+                              <div class="mt-2 text-muted">Memuat data aset, mohon tunggu...</div>
+                            </div>
                             <!-- Table -->
-                            <div class="table-responsive">
+                            <div class="table-responsive" id="asetTableWrapper">
                               <table id="myTable" class="display nowrap table table-striped table-sm w-100">
                                 <thead>
                                   <tr>
@@ -1600,200 +1776,14 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                     <th>Nilai Perolehan</th>
                                   </tr>
                                 </thead>
-                                <tbody>
-                                  
-                                  <?php
-                                    // Jika tahun tidak dipilih: JOIN dipaksa tidak match (AND 1=0)
-                                    // sehingga draft_id, any_status, dll = NULL → tidak ada centang
-                                    if ($tahunSelected) {
-                                        $tahunJoinCond    = " AND up.tahun_usulan = " . intval($tahunSelected);
-                                        $tahunJoinCondAll = " AND up_all.tahun_usulan = " . intval($tahunSelected);
-                                        // Exclude aset yang sudah diusulkan di tahun LAIN
-                                        // → aset hanya muncul di tahun usulannya saja
-                                        $excludeOtherYear = " AND id.nomor_asset_utama NOT IN (
-                                            SELECT nomor_asset_utama FROM usulan_penghapusan
-                                            WHERE tahun_usulan IS NOT NULL
-                                              AND tahun_usulan != " . intval($tahunSelected) . "
-                                        )";
-                                    } else {
-                                        $tahunJoinCond    = " AND 1=0";
-                                        $tahunJoinCondAll = " AND 1=0";
-                                        $excludeOtherYear = "";
-                                    }
-
-                                    if ($isSubRegional) {
-                                        $q_tab1 = "SELECT id.*, 
-                                                  up.id as draft_id,
-                                                  up.mekanisme_penghapusan, 
-                                                  up.fisik_aset,
-                                                  up.status as draft_status,
-                                                  up.created_by as usulan_created_by,
-                                                  up_all.status as any_status,
-                                                  up_all.mekanisme_penghapusan as any_mekanisme,
-                                                  up_all.fisik_aset as any_fisik,
-                                                  up_all.created_by as any_created_by
-                                                  FROM import_dat id 
-                                                  LEFT JOIN usulan_penghapusan up 
-                                                        ON id.nomor_asset_utama = up.nomor_asset_utama AND up.created_by = ?{$tahunJoinCond}
-                                                  LEFT JOIN usulan_penghapusan up_all
-                                                        ON id.nomor_asset_utama = up_all.nomor_asset_utama{$tahunJoinCondAll}
-                                                  WHERE id.nilai_perolehan_sd != 0{$excludeOtherYear}
-                                                    AND id.subreg = ?
-                                                  GROUP BY id.id
-                                                  ORDER BY CASE WHEN up_all.status IS NOT NULL THEN 0 ELSE 1 END ASC, id.nomor_asset_utama ASC";
-                                        $stmt = $con->prepare($q_tab1);
-                                        $stmt->bind_param("ss", $_SESSION['nipp'], $userSubreg);
-                                    } elseif ($isCabang) {
-                                        $q_tab1 = "SELECT id.*, 
-                                                  up.id as draft_id,
-                                                  up.mekanisme_penghapusan, 
-                                                  up.fisik_aset,
-                                                  up.status as draft_status,
-                                                  up.created_by as usulan_created_by
-                                                  FROM import_dat id 
-                                                  LEFT JOIN usulan_penghapusan up 
-                                                        ON id.nomor_asset_utama = up.nomor_asset_utama AND up.created_by = ?{$tahunJoinCond}
-                                                  WHERE id.nilai_perolehan_sd != 0{$excludeOtherYear}
-                                                    AND id.profit_center = ?
-                                                  GROUP BY id.id
-                                                  ORDER BY CASE WHEN up.status IS NOT NULL THEN 0 ELSE 1 END ASC, id.nomor_asset_utama ASC";
-                                        $stmt = $con->prepare($q_tab1);
-                                        $stmt->bind_param("ss", $_SESSION['nipp'], $userProfitCenter);
-                                    } elseif ($isUserEntryRegional) {
-                                                  $q_tab1 = "SELECT id.*, 
-                                                  up.id as draft_id,
-                                                  up.mekanisme_penghapusan, 
-                                                  up.fisik_aset,
-                                                  up.status as draft_status,
-                                                  up.created_by as usulan_created_by,
-                                                  up_all.status as any_status,
-                                                  up_all.mekanisme_penghapusan as any_mekanisme,
-                                                  up_all.fisik_aset as any_fisik,
-                                                  up_all.created_by as any_created_by
-                                                  FROM import_dat id 
-                                                  LEFT JOIN usulan_penghapusan up 
-                                                        ON id.nomor_asset_utama = up.nomor_asset_utama AND up.created_by = ?{$tahunJoinCond}
-                                                  LEFT JOIN usulan_penghapusan up_all
-                                                        ON id.nomor_asset_utama = up_all.nomor_asset_utama{$tahunJoinCondAll}
-                                                  WHERE id.nilai_perolehan_sd != 0{$excludeOtherYear}
-                                                    AND id.profit_center = '12101'
-                                                  GROUP BY id.id
-                                                  ORDER BY CASE WHEN up_all.status IS NOT NULL THEN 0 ELSE 1 END ASC, id.nomor_asset_utama ASC";
-                                        $stmt = $con->prepare($q_tab1);
-                                        $stmt->bind_param("s", $_SESSION['nipp']);
-                                    } else {
-                                        $q_tab1 = "SELECT id.*, 
-                                                  up.id as draft_id,
-                                                  up.mekanisme_penghapusan, 
-                                                  up.fisik_aset,
-                                                  up.status as draft_status,
-                                                  up.created_by as usulan_created_by,
-                                                  up_all.status as any_status,
-                                                  up_all.mekanisme_penghapusan as any_mekanisme,
-                                                  up_all.fisik_aset as any_fisik,
-                                                  up_all.created_by as any_created_by
-                                                  FROM import_dat id 
-                                                  LEFT JOIN usulan_penghapusan up 
-                                                        ON id.nomor_asset_utama = up.nomor_asset_utama AND up.created_by = ?{$tahunJoinCond}
-                                                  LEFT JOIN usulan_penghapusan up_all
-                                                        ON id.nomor_asset_utama = up_all.nomor_asset_utama{$tahunJoinCondAll}
-                                                  WHERE id.nilai_perolehan_sd != 0{$excludeOtherYear}
-                                                  GROUP BY id.id
-                                                  ORDER BY CASE WHEN up_all.status IS NOT NULL THEN 0 ELSE 1 END ASC, id.nomor_asset_utama ASC";
-                                        $stmt = $con->prepare($q_tab1);
-                                        $stmt->bind_param("s", $_SESSION['nipp']);
-                                    }
-                                    $stmt->execute();
-                                    $result = $stmt->get_result();
-
-                                    if (!$result) {
-                                      echo '<tr><td colspan="14">Error: ' . mysqli_error($con) . '</td></tr>';
-                                    } elseif ($result->num_rows == 0) {
-                                      echo '<tr><td colspan="14" class="text-center">Tidak ada data aset</td></tr>';
-                                    } else {
-                                     while ($row = $result->fetch_assoc()) {
-                                        $isInDraft     = in_array($row['nomor_asset_utama'], $draft_asset_numbers);
-                                        $isLengkapi    = in_array($row['nomor_asset_utama'], $lengkapi_asset_numbers);
-                                        $isSubmitted   = in_array($row['nomor_asset_utama'], $submitted_asset_numbers);
-                                        
-                                        $any_status      = !empty($row['any_status']) ? $row['any_status'] : null;
-                                        $any_created_by  = !empty($row['any_created_by']) ? $row['any_created_by'] : null;
-                                        $isByOtherUser   = $any_status && ($any_created_by !== $_SESSION['nipp']);
-                                        // Aset milik sendiri yang sudah di-approve/reject juga tidak bisa dipilih ulang
-                                        $isOwnApproved   = $any_status && ($any_created_by === $_SESSION['nipp']) && in_array($any_status, ['approved_subreg','pending_subreg','pending_regional','approved_regional','approved','rejected']);
-                                        $isAnySelected   = $isInDraft || $isLengkapi || $isSubmitted || $isByOtherUser || $isOwnApproved;
-                                        $isAnySelected   = $isInDraft || $isLengkapi || $isSubmitted || $isByOtherUser || $isOwnApproved;
-                                        
-                                        $display_mekanisme = !empty($row['mekanisme_penghapusan']) 
-                                                            ? $row['mekanisme_penghapusan'] 
-                                                            : (!empty($row['any_mekanisme']) ? $row['any_mekanisme'] : '');
-                                        $display_fisik     = !empty($row['fisik_aset']) 
-                                                            ? $row['fisik_aset'] 
-                                                            : (!empty($row['any_fisik']) ? $row['any_fisik'] : '');
-                                        
-                                        $checkedAttr    = $isAnySelected ? ' checked' : '';
-                                        $disabledAttr   = ($isLengkapi || $isSubmitted || $isByOtherUser || $isOwnApproved) ? ' disabled title="Aset sudah dalam usulan"' : '';
-                                        $draftClass     = $isInDraft ? ' is-draft' : '';
-                                        $submittedClass = ($isSubmitted || $isByOtherUser || $isOwnApproved) ? ' is-submitted' : '';
-
-                                        $nilai_buku = isset($row['nilai_buku_sd']) ? 'Rp ' . number_format($row['nilai_buku_sd'], 0, ',', '.') : '-';
-                                        $nilai_perolehan = isset($row['nilai_perolehan_sd']) ? 'Rp ' . number_format($row['nilai_perolehan_sd'], 0, ',', '.') : '-';
-                                        
-                                        $kategori_aset = stripAUC($row['asset_class_name']);
-                                        $nama_aset = stripAUC($row['keterangan_asset']);
-                                        
-                                        $mekanisme = !empty($display_mekanisme) ? htmlspecialchars($display_mekanisme) : '-';
-                                        $fisik = !empty($display_fisik) ? htmlspecialchars($display_fisik) : '-';
-                                        
-                                        $hapusDraftBtn = '';
-                                        if ($isInDraft && !empty($row['draft_id']) && $row['draft_status'] === 'draft') {
-                                            $hapusDraftBtn = '<button type="button" class="btn btn-sm btn-outline-danger" 
-                                                onclick="confirmCancelDraft('.intval($row['draft_id']).', \''.htmlspecialchars(addslashes($row['nomor_asset_utama'])).'\', \''.htmlspecialchars(addslashes($nama_aset)).'\')" 
-                                                title="Batalkan draft usulan ini">
-                                                <i class="bi bi-x-circle"></i>
-                                            </button>';
-                                        }
-                                        
-                                        // Dropdown Mekanisme Penghapusan
-                                        $selectedMekanisme = !empty($display_mekanisme) ? $display_mekanisme : '';
-                                        $mekanismeDropdown = '<select class="form-select form-select-sm mekanisme-dropdown" data-asset-id="'.htmlspecialchars($row['id']).'" data-nomor-aset="'.htmlspecialchars($row['nomor_asset_utama']).'" '.($isSubmitted || $isByOtherUser || $isOwnApproved ? 'disabled' : '').'>
-                                            <option value="">-</option>
-                                            <option value="Jual Lelang"'.($selectedMekanisme === 'Jual Lelang' ? ' selected' : '').'>Jual Lelang</option>
-                                            <option value="Hapus Administrasi"'.($selectedMekanisme === 'Hapus Administrasi' ? ' selected' : '').'>Hapus Administrasi</option>
-                                        </select>';
-                                        
-                                        // Dropdown Fisik Aset
-                                        $selectedFisik = !empty($display_fisik) ? $display_fisik : '';
-                                        $fisikDropdown = '<select class="form-select form-select-sm fisik-dropdown" data-asset-id="'.htmlspecialchars($row['id']).'" data-nomor-aset="'.htmlspecialchars($row['nomor_asset_utama']).'" '.($isSubmitted || $isByOtherUser || $isOwnApproved ? 'disabled' : '').'>
-                                            <option value="">-</option>
-                                            <option value="Ada"'.($selectedFisik === 'Ada' ? ' selected' : '').'>Ada</option>
-                                            <option value="Tidak Ada"'.($selectedFisik === 'Tidak Ada' ? ' selected' : '').'>Tidak Ada</option>
-                                        </select>';
-                                        
-                                        echo '<tr>
-                                          <td style="text-align:center;">'.$hapusDraftBtn.'</td>
-                                          <td style="text-align:center;">
-                                            <input type="checkbox" class="row-checkbox form-check-input'.$draftClass.$submittedClass.'" value="'.htmlspecialchars($row['id']).'"'.$checkedAttr.$disabledAttr.'>
-                                          </td>
-                                          <td>'.$mekanismeDropdown.'</td>
-                                          <td>'.$fisikDropdown.'</td>
-                                          <td>'.htmlspecialchars($row['nomor_asset_utama']).'</td>
-                                          <td>'.htmlspecialchars($row['subreg']).'</td>
-                                          <td>'.htmlspecialchars($row['profit_center']).(!empty($row['profit_center_text']) ? ' - '.htmlspecialchars($row['profit_center_text']) : '').'</td>
-                                          <td>'.htmlspecialchars($nama_aset).'</td>
-                                          <td>'.htmlspecialchars($kategori_aset).'</td>
-                                          <td>'.htmlspecialchars($row['masa_manfaat']).'</td>
-                                          <td>'.htmlspecialchars($row['sisa_manfaat']).'</td>
-                                          <td>'.htmlspecialchars($row['tgl_perolehan']).'</td>
-                                          <td style="text-align:right;">'.$nilai_buku.'</td>
-                                          <td style="text-align:right;">'.$nilai_perolehan.'</td>
-                                        </tr>';
-                                      }
-                                    }
-                                    $stmt->close();
-                                  ?>
+                                <tbody id="myTableBody">
+                                  <!-- Diisi via AJAX saat tab diklik -->
                                 </tbody>
                               </table>
+                            </div>
+                            <!-- Placeholder saat data belum dimuat (di luar table agar tidak konflik dengan DataTables) -->
+                            <div id="asetPlaceholderMsg" style="text-align:center;padding:40px 0;color:#6c757d;">
+                              <i class="bi bi-arrow-up-circle me-2"></i>Klik tab ini untuk memuat data aset
                             </div>
  
                              <!-- Action Buttons -->
@@ -1822,7 +1812,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                           <!-- End Tab Pilih Aset -->
 
                           <!-- Tab Lengkapi Data -->
-                          <div class="tab-pane fade" id="dokumen" role="tabpanel">
+                          <div class="tab-pane fade <?= $smartInitialTab==='dokumen'?'show active':'' ?>" id="dokumen" role="tabpanel">
                             
                             
                             <!-- Summary Boxes -->
@@ -1933,7 +1923,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                           </div>
         
                     <!-- Tab 3: Upload Dokumen -->
-                     <div class="tab-pane fade" id="upload" role="tabpanel">
+                     <div class="tab-pane fade <?= $smartInitialTab==='upload'?'show active':'' ?>" id="upload" role="tabpanel">
 
                             <?php
                             if (isset($_SESSION['error_message'])) {
@@ -2534,7 +2524,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                           <!-- End Tab Upload Dokumen -->
 
                     <!-- Tab 4: Summary -->
-                    <div class="tab-pane fade" id="summary" role="tabpanel"> 
+                    <div class="tab-pane fade <?= $smartInitialTab==='summary'?'show active':'' ?>" id="summary" role="tabpanel">
 
                       <?php 
                       $total_dokumen_lengkap = count($upload_data);
@@ -3181,25 +3171,9 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
           });
         }
 
-      // Initialize DataTable dengan responsive
-          $('#myTable').DataTable({
-            responsive: false,
-            autoWidth: false,
-            scrollX: true,
-            scrollCollapse: true,
-            paging: true,
-            pageLength: 10,
-            searching: true,
-            ordering: false,
-            info: true,
-            deferRender: true,
-            columnDefs: [
-              { targets: 0, orderable: false, className: 'dt-body-center', width: '90px' },
-              { targets: 1, orderable: false, className: 'dt-body-center', width: '50px' },
-              { targets: [2, 3], orderable: false },
-            ],
-            language: { url: '../../dist/js/i18n/id.json' },
-        });
+        // CATATAN: #myTable DataTable TIDAK diinisialisasi di sini.
+        // DataTable untuk tab Daftar Aset diinisialisasi di dalam callback loadAsetData()
+        // setelah data diisi via AJAX, untuk menghindari error "unknown parameter".
       });
 
 // Initialize DataTable untuk tab Lengkapi Data
@@ -3250,19 +3224,164 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
             summaryTab.show();
         }
 
-// Update info text saat berpindah tab
+// ── LAZY LOAD DATA ASET ────────────────────────────────────────────────────
+        // _asetLoaded: null = belum pernah load, true = sudah load & fresh, false = perlu reload
+        let _asetLoaded = false;
+        // Flag ini di-set true setelah user menyimpan draft/usulan baru di tab ini,
+        // supaya saat kembali ke tab aset data langsung di-refresh
+        let _forceReloadOnTabSwitch = false;
+
+        function buildAsetRow(row, draftNumbers, lengkapiNumbers, submittedNumbers, currentNipp) {
+            const noAset = row.nomor_asset_utama || '';
+            const isInDraft   = draftNumbers.includes(noAset);
+            const isLengkapi  = lengkapiNumbers.includes(noAset);
+            const isSubmitted = submittedNumbers.includes(noAset);
+            const anyStatus   = row.any_status || null;
+            const anyCreatedBy = row.any_created_by || null;
+            const isByOtherUser  = anyStatus && anyCreatedBy !== currentNipp;
+            const isOwnApproved  = anyStatus && anyCreatedBy === currentNipp &&
+                ['approved_subreg','pending_subreg','pending_regional','approved_regional','approved','rejected'].includes(anyStatus);
+            const isAnySelected  = isInDraft || isLengkapi || isSubmitted || isByOtherUser || isOwnApproved;
+
+            const displayMekanisme = row.mekanisme_penghapusan || row.any_mekanisme || '';
+            const displayFisik     = row.fisik_aset || row.any_fisik || '';
+
+            const checkedAttr  = isAnySelected ? ' checked' : '';
+            const disabledAttr = (isLengkapi || isSubmitted || isByOtherUser || isOwnApproved) ? ' disabled title="Aset sudah dalam usulan"' : '';
+            const draftClass   = isInDraft ? ' is-draft' : '';
+            const submittedCls = (isSubmitted || isByOtherUser || isOwnApproved) ? ' is-submitted' : '';
+
+            const nBuku = row.nilai_buku_sd ? 'Rp ' + parseInt(row.nilai_buku_sd).toLocaleString('id-ID') : '-';
+            const nPerol = row.nilai_perolehan_sd ? 'Rp ' + parseInt(row.nilai_perolehan_sd).toLocaleString('id-ID') : '-';
+
+            const hapusDraftBtn = (isInDraft && row.draft_id && row.draft_status === 'draft')
+                ? `<button type="button" class="btn btn-sm btn-outline-danger"
+                    onclick="confirmCancelDraft(${row.draft_id},'${noAset.replace(/'/g,"\\'")}','${(row.keterangan_asset||'').replace(/'/g,"\\'")}')">
+                    <i class="bi bi-x-circle"></i></button>`
+                : '';
+
+            const mOpts = ['Jual Lelang','Hapus Administrasi'].map(v =>
+                `<option value="${v}"${displayMekanisme===v?' selected':''}>${v}</option>`).join('');
+            const fOpts = ['Ada','Tidak Ada'].map(v =>
+                `<option value="${v}"${displayFisik===v?' selected':''}>${v}</option>`).join('');
+            const disabledDd = (isSubmitted || isByOtherUser || isOwnApproved) ? 'disabled' : '';
+
+            return `<tr>
+                <td style="text-align:center;">${hapusDraftBtn}</td>
+                <td style="text-align:center;">
+                    <input type="checkbox" class="row-checkbox form-check-input${draftClass}${submittedCls}"
+                        value="${row.id}"${checkedAttr}${disabledAttr}>
+                </td>
+                <td><select class="form-select form-select-sm mekanisme-dropdown"
+                    data-asset-id="${row.id}" data-nomor-aset="${noAset}" ${disabledDd}>
+                    <option value="">-</option>${mOpts}</select></td>
+                <td><select class="form-select form-select-sm fisik-dropdown"
+                    data-asset-id="${row.id}" data-nomor-aset="${noAset}" ${disabledDd}>
+                    <option value="">-</option>${fOpts}</select></td>
+                <td>${noAset}</td>
+                <td>${row.subreg||''}</td>
+                <td>${row.profit_center||''}${row.profit_center_text?' - '+row.profit_center_text:''}</td>
+                <td>${row.keterangan_asset||''}</td>
+                <td>${row.asset_class_name||''}</td>
+                <td>${row.masa_manfaat||''}</td>
+                <td>${row.sisa_manfaat||''}</td>
+                <td>${row.tgl_perolehan||''}</td>
+                <td style="text-align:right;">${nBuku}</td>
+                <td style="text-align:right;">${nPerol}</td>
+            </tr>`;
+        }
+
+        function loadAsetData(forceReload) {
+            if (_asetLoaded && !forceReload) return;
+            _asetLoaded = true;
+            _forceReloadOnTabSwitch = false;
+
+            // Sembunyikan placeholder, tampilkan loading
+            const placeholder = document.getElementById('asetPlaceholderMsg');
+            if (placeholder) placeholder.style.display = 'none';
+
+            document.getElementById('asetLoadingIndicator').style.display = 'block';
+            document.getElementById('asetTableWrapper').style.display = 'none';
+
+            const tahun = '<?= htmlspecialchars($tahunSelected) ?>';
+            fetch(`?action=get_aset_data&tahun=${tahun}`)
+                .then(r => r.json())
+                .then(res => {
+                    document.getElementById('asetLoadingIndicator').style.display = 'none';
+                    document.getElementById('asetTableWrapper').style.display = '';
+
+                    if (res.status !== 'success' || !res.data.length) {
+                        document.getElementById('myTableBody').innerHTML =
+                            '<tr><td colspan="14" class="text-center text-muted">Tidak ada data aset</td></tr>';
+                        return;
+                    }
+
+                    const rows = res.data.map(row =>
+                        buildAsetRow(row, res.draft_numbers, res.lengkapi_numbers, res.submitted_numbers, res.nipp)
+                    ).join('');
+                    document.getElementById('myTableBody').innerHTML = rows;
+
+                    // Init DataTable setelah data diisi
+                    if ($.fn.DataTable.isDataTable('#myTable')) {
+                        $('#myTable').DataTable().destroy();
+                    }
+                    $('#myTable').DataTable({
+                        pageLength: 10,
+                        lengthMenu: [10, 25, 50, 100],
+                        language: { url: '../../dist/js/i18n/id.json' },
+                        columnDefs: [
+                            { targets: 0, width: '40px', className: 'text-center', orderable: false },
+                            { targets: 1, width: '50px', className: 'text-center', orderable: false },
+                        ]
+                    });
+
+                    // Re-bind dropdown listeners
+                    bindDropdownListeners();
+                })
+                .catch(() => {
+                    document.getElementById('asetLoadingIndicator').style.display = 'none';
+                    document.getElementById('asetTableWrapper').style.display = '';
+                    document.getElementById('myTableBody').innerHTML =
+                        '<tr><td colspan="14" class="text-center text-danger">Gagal memuat data. Coba lagi.</td></tr>';
+                    _asetLoaded = false; // allow retry
+                    _forceReloadOnTabSwitch = false;
+                });
+        }
+
+        // Trigger load saat tab aset diklik
         document.getElementById('daftar-aset-tab').addEventListener('shown.bs.tab', function () {
             document.getElementById('infoTextContent').textContent = 'Pilih aset yang akan diusulkan untuk penghapusan';
+            // Reload jika belum pernah load, atau jika user baru saja submit/simpan dari tab lain
+            loadAsetData(_forceReloadOnTabSwitch);
             if ($.fn.DataTable.isDataTable('#myTable')) $('#myTable').DataTable().columns.adjust();
         });
 
+        // Ketika user pindah ke tab lain, set flag supaya saat balik ke Daftar Aset data di-refresh
+        // (mengantisipasi kemungkinan user hapus usulan di tab Lengkapi, lalu mau pilih lagi)
+        document.getElementById('lengkapi-dokumen-tab').addEventListener('shown.bs.tab', function () {
+            _forceReloadOnTabSwitch = true;
+        });
+        document.getElementById('upload-dokumen-tab').addEventListener('shown.bs.tab', function () {
+            _forceReloadOnTabSwitch = true;
+        });
+
+        // Load data aset:
+        // - Jika smartInitialTab adalah 'aset' → load langsung saat page load
+        // - Jika tab lain yang aktif pertama, data baru dimuat saat user klik tab Daftar Aset
+        // - Selalu load ulang jika user berpindah dari tab lain (flag _forceReloadOnTabSwitch)
+        <?php if ($smartInitialTab === 'aset'): ?>
+        loadAsetData();
+        <?php endif; ?>
+
         document.getElementById('lengkapi-dokumen-tab').addEventListener('shown.bs.tab', function () {
             document.getElementById('infoTextContent').textContent = 'Lengkapi data pendukung untuk aset yang sudah diusulkan';
+            _forceReloadOnTabSwitch = true; // set flag supaya kembali ke tab aset akan reload
             if ($.fn.DataTable.isDataTable('#lengkapiTable')) $('#lengkapiTable').DataTable().columns.adjust();
         });
 
         document.getElementById('upload-dokumen-tab').addEventListener('shown.bs.tab', function () {
           document.getElementById('infoTextContent').textContent = 'Unggah dokumen pendukung untuk melengkapi usulan penghapusan aset.';
+          _forceReloadOnTabSwitch = true; // set flag supaya kembali ke tab aset akan reload
           if ($.fn.DataTable.isDataTable('#uploadTable')) $('#uploadTable').DataTable().columns.adjust();
         });
 
@@ -3506,6 +3625,12 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
             document.getElementById('draftActionForm').submit();
         
         //dropdown Mekanisme Penghapusan dan Fisik Aset
+        // Dropdown listeners sudah pakai event delegation $(document).on('change',...)
+        // Fungsi ini dipanggil setelah AJAX load selesai untuk keperluan extension
+        function bindDropdownListeners() {
+            // Event delegation sudah handle otomatis — tidak perlu rebind
+        }
+
         $(document).on('change', '.mekanisme-dropdown, .fisik-dropdown', function() {
             const dropdown = $(this);
             const assetId = dropdown.data('asset-id');
