@@ -335,10 +335,49 @@ if (isset($_SESSION['Type_User']) && (stripos($_SESSION['Type_User'], 'Sub') !==
   $stmt_upload->close();
 }
 
+// ========================================================
+// Query terpisah untuk ASET PICKER di modal upload dokumen
+// Menampilkan semua aset yang sudah submitted dalam subreg,
+// terlepas dari status approval — agar aset yang sudah di-upload
+// dokumennya tetap muncul di picker dan tidak hilang
+// ========================================================
+$upload_data_picker = [];
+if (isset($_SESSION['Type_User']) && (stripos($_SESSION['Type_User'], 'Sub') !== false || stripos($_SESSION['Type_User'], 'Cabang') !== false || stripos($_SESSION['Type_User'], 'Regional') !== false)) {
+  // Lebih longgar: semua aset submitted dalam subreg, tanpa filter status_approval_subreg
+  $pickerWhereClause = $filterCondition . " AND up.status IN ('submitted','dokumen_lengkap','approved','approved_subreg','pending_regional','approved_regional','pending_subreg')";
+  if (!empty($tahunSelected)) {
+    $pickerWhereClause .= " AND up.tahun_usulan = '" . mysqli_real_escape_string($con, $tahunSelected) . "'";
+  }
+  $query_picker = "SELECT up.id, up.nomor_asset_utama, up.mekanisme_penghapusan, up.fisik_aset,
+                   up.status, up.status_approval_subreg,
+                   id.keterangan_asset as nama_aset,
+                   id.asset_class_name as kategori_aset,
+                   id.profit_center_text,
+                   id.subreg,
+                   (SELECT COUNT(*) FROM dokumen_penghapusan WHERE usulan_id = up.id) as jumlah_dokumen
+                   FROM usulan_penghapusan up
+                   LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama
+                   " . $pickerWhereClause . "
+                   ORDER BY up.updated_at DESC";
+  $result_picker = mysqli_query($con, $query_picker);
+  if ($result_picker) {
+    while ($row = mysqli_fetch_assoc($result_picker)) {
+      $row['nama_aset'] = str_replace('AUC-', '', $row['nama_aset'] ?? '');
+      $row['kategori_aset'] = str_replace('AUC-', '', $row['kategori_aset'] ?? '');
+      $upload_data_picker[] = $row;
+    }
+  }
+} else {
+  // Non-reviewer: sama dengan upload_data
+  $upload_data_picker = $upload_data;
+}
+
+// ========================================================
 // Hitung jumlah untuk summary boxes
-// - Pending: hanya yang berstatus 'dokumen_lengkap' dan menunggu approval SubReg
-// - Approved: hitung semua usulan dengan kolom status_approval_subreg = 'approved' (terlepas dari nilai kolom status)
+// - Pending: hanya yang berstatus 'submitted' dan menunggu approval SubReg
+// - Approved: hitung semua usulan dengan kolom status_approval_subreg = 'approved'
 // - Rejected: hitung semua usulan dengan kolom status_approval_subreg yang menunjukkan rejected
+// ========================================================
 $count_pending = 0;
 $count_approved = 0;
 $count_rejected = 0;
@@ -1931,7 +1970,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                       <li class="nav-item" role="presentation">
                         <button class="nav-link" id="upload-dokumen-tab" data-bs-toggle="tab" data-bs-target="#upload" type="button" role="tab" aria-controls="upload" aria-selected="false">
                           <i class="bi bi-cloud-upload me-2"></i>Upload Dokumen
-                          <span class="badge bg-primary ms-1"><?= count($upload_data) ?></span>
+                          <span class="badge bg-primary ms-1"><?= count($upload_data_picker) ?></span>
                         </button>
                       </li>
                     </ul>
@@ -1956,7 +1995,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                               </div>
                               <div class="card-body" style="padding: 20px;">
 
-                                <?php if (empty($upload_data)): ?>
+                                <?php if (empty($upload_data_picker)): ?>
                                   <div class="alert alert-warning mb-0">
                                     <i class="bi bi-info-circle me-2"></i>
                                     <strong>Belum ada usulan</strong>
@@ -2037,37 +2076,65 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                             <?php
                             // Initialize $semua_dokumen sebelum if statement agar bisa diakses di luar scope
                             $semua_dokumen = [];
-                            if (!empty($upload_data)): ?>
-
-                     <!-- TABEL PREVIEW DOKUMEN-->
-                            <?php
-                            
                             $seen_dok_ids = [];
-                            foreach ($upload_data as $usulan) {
-                                $nomor_ua = $usulan['nomor_asset_utama'];
-                                $q_dok = $con->prepare(
+
+                            // Tentukan subreg user untuk filter dokumen
+                            $docsSubreg = $determinedSubreg ?? '';
+
+                            if (!empty($docsSubreg)) {
+                                // SubReg: Tampilkan semua dokumen dari usulan dalam subreg ini
+                                // (terlepas dari siapa yang upload, mencakup semua cabang dalam subreg)
+                                $q_all_dok = $con->prepare(
                                     "SELECT dp.id_dokumen, dp.tahun_dokumen, dp.profit_center, dp.subreg,
                                             dp.tipe_dokumen, dp.profit_center_text, dp.file_path, dp.file_name,
                                             dp.no_aset,
                                             up.nomor_asset_utama, up.id as usulan_id
                                      FROM dokumen_penghapusan dp
                                      JOIN usulan_penghapusan up ON dp.usulan_id = up.id
-                                     WHERE dp.usulan_id = ?
-                                        OR (dp.no_aset LIKE CONCAT('%', ?, '%') AND dp.no_aset LIKE '%-%')
+                                     WHERE dp.subreg = ?
                                      GROUP BY dp.id_dokumen
                                      ORDER BY dp.id_dokumen DESC"
                                 );
-                                $q_dok->bind_param("is", $usulan['id'], $nomor_ua);
-                                $q_dok->execute();
-                                $r_dok = $q_dok->get_result();
-                                while ($d = $r_dok->fetch_assoc()) {
+                                $q_all_dok->bind_param("s", $docsSubreg);
+                                $q_all_dok->execute();
+                                $r_all_dok = $q_all_dok->get_result();
+                                while ($d = $r_all_dok->fetch_assoc()) {
                                     if (in_array($d['id_dokumen'], $seen_dok_ids)) continue;
                                     $seen_dok_ids[] = $d['id_dokumen'];
                                     $semua_dokumen[] = $d;
                                 }
-                                $q_dok->close();
+                                $q_all_dok->close();
+                            } else {
+                                // Fallback: ambil dari upload_data_picker (termasuk aset yang sudah approved)
+                                foreach ($upload_data_picker as $usulan) {
+                                    $nomor_ua = $usulan['nomor_asset_utama'];
+                                    $q_dok = $con->prepare(
+                                        "SELECT dp.id_dokumen, dp.tahun_dokumen, dp.profit_center, dp.subreg,
+                                                dp.tipe_dokumen, dp.profit_center_text, dp.file_path, dp.file_name,
+                                                dp.no_aset,
+                                                up.nomor_asset_utama, up.id as usulan_id
+                                         FROM dokumen_penghapusan dp
+                                         JOIN usulan_penghapusan up ON dp.usulan_id = up.id
+                                         WHERE dp.usulan_id = ?
+                                            OR (dp.no_aset LIKE CONCAT('%', ?, '%') AND dp.no_aset LIKE '%-%')
+                                         GROUP BY dp.id_dokumen
+                                         ORDER BY dp.id_dokumen DESC"
+                                    );
+                                    $q_dok->bind_param("is", $usulan['id'], $nomor_ua);
+                                    $q_dok->execute();
+                                    $r_dok = $q_dok->get_result();
+                                    while ($d = $r_dok->fetch_assoc()) {
+                                        if (in_array($d['id_dokumen'], $seen_dok_ids)) continue;
+                                        $seen_dok_ids[] = $d['id_dokumen'];
+                                        $semua_dokumen[] = $d;
+                                    }
+                                    $q_dok->close();
+                                }
                             }
-                            ?>
+
+                            if (!empty($upload_data_picker) || !empty($semua_dokumen)): ?>
+
+                     <!-- TABEL PREVIEW DOKUMEN-->
                             <div class="card mt-3" style="border: 1px solid #28a745; box-shadow: 0 1px 3px rgba(40, 167, 69, 0.1);">
                               <div class="card-header" style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white; padding: 12px 20px; border-radius: 4px 4px 0 0;">
                                 <strong><i class="bi bi-file-earmark-pdf me-2"></i>Preview Dokumen Terupload (<?= count($semua_dokumen) ?>)</strong>
@@ -2192,7 +2259,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                           </tr>
                                         </thead>
                                         <tbody>
-                                          <?php foreach ($upload_data as $ua): ?>
+                                          <?php foreach ($upload_data_picker as $ua): ?>
                                           <tr>
                                             <td class="text-center">
                                               <input type="checkbox" 
@@ -2201,7 +2268,14 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                                     data-nomor="<?= htmlspecialchars($ua['nomor_asset_utama']) ?>"
                                                     data-nama="<?= htmlspecialchars(str_replace('AUC-', '', $ua['nama_aset'] ?? '-')) ?>">
                                             </td>
-                                            <td><?= htmlspecialchars($ua['nomor_asset_utama']) ?></td>
+                                            <td>
+                                              <?= htmlspecialchars($ua['nomor_asset_utama']) ?>
+                                              <?php if (!empty($ua['jumlah_dokumen']) && $ua['jumlah_dokumen'] > 0): ?>
+                                                <span class="badge bg-success ms-1" title="Sudah ada <?= $ua['jumlah_dokumen'] ?> dokumen">
+                                                  <i class="bi bi-file-check"></i> <?= $ua['jumlah_dokumen'] ?>
+                                                </span>
+                                              <?php endif; ?>
+                                            </td>
                                             <td>
                                               <?= !empty($ua['mekanisme_penghapusan']) ? htmlspecialchars($ua['mekanisme_penghapusan']) : '-' ?> 
                                             </td>
@@ -3045,10 +3119,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
       }
 
           // Show confirm modal for Approve/Reject from reviewer UI
-          function showApproveRejectConfirm(action, usulanId) {
-            // If action is 'approve', use the simple confirmation modal.
-            // For 'reject', open the detailed form modal (single form) so reviewer
-            // can enter the reject reason there (avoid duplicate reject confirmation).
+          function showApproveRejectConfirm(action, usulanId, namaAset, nomorAset) {
             if (action === 'approve') {
               const titleEl = document.getElementById('confirmApproveRejectTitle');
               const msgEl = document.getElementById('confirmApproveRejectMessage');
@@ -3058,9 +3129,19 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
 
                 titleEl.innerHTML = '<i class="bi bi-check-circle-fill me-2"></i>Konfirmasi Approve';
                 msgEl.textContent = 'Anda akan menyetujui usulan ini. Lanjutkan?';
-                // Set preview content (usulan id)
+                // Tampilkan nomor + nama aset, bukan ID usulan
                 const previewEl = document.getElementById('confirmApprovePreview');
-                if (previewEl) previewEl.textContent = 'Usulan ID: ' + usulanId;
+                if (previewEl) {
+                  const label = (namaAset && namaAset !== '-') ? namaAset : '';
+                  const nomor = (nomorAset && nomorAset !== '-') ? nomorAset : '';
+                  if (nomor && label) {
+                    previewEl.textContent = nomor + ' — ' + label;
+                  } else if (nomor) {
+                    previewEl.textContent = nomor;
+                  } else {
+                    previewEl.textContent = 'Usulan ID: ' + usulanId;
+                  }
+                }
 
               const modal = new bootstrap.Modal(document.getElementById('modalConfirmApproveReject'));
               modal.show();
@@ -3760,7 +3841,9 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
         // Attach modal button handlers (use current usulan id)
         document.getElementById('btnModalApprove').onclick = function() {
           const id = document.getElementById('usulan_id').value;
-          if (id) showApproveRejectConfirm('approve', id);
+          const namaAset = document.getElementById('display_nama_aset').textContent || '';
+          const nomorAset = document.getElementById('display_nomor_aset').textContent || '';
+          if (id) showApproveRejectConfirm('approve', id, namaAset, nomorAset);
         };
         document.getElementById('btnModalReject').onclick = function() {
           const id = document.getElementById('usulan_id').value;
@@ -4007,7 +4090,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                 <p class="text-muted mb-2">Usulan akan dikirimkan ke Regional untuk persetujuan.</p>
                 <div>
                   <small class="text-muted">Usulan:</small>
-                  <div id="confirmApprovePreview" class="p-2 mt-1" style="background:#f8f9fa;border-radius:6px;">(ID usulan akan ditampilkan di sini)</div>
+                  <div id="confirmApprovePreview" class="p-2 mt-1" style="background:#f8f9fa;border-radius:6px;">(Nama aset akan ditampilkan di sini)</div>
                 </div>
               </div>
             </div>
