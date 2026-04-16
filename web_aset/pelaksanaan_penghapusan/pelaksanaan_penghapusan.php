@@ -172,7 +172,8 @@ if ($filterStatus !== 'all') {
 
 $res_main = mysqli_query($con, "SELECT pp.*,
     up.nomor_asset_utama, up.mekanisme_penghapusan, up.fisik_aset, up.foto_path,
-    up.justifikasi_alasan, up.status_approval_ho, up.catatan_ho,
+    up.justifikasi_alasan, up.kajian_hukum, up.kajian_ekonomis, up.kajian_risiko,
+    up.status_approval_ho, up.catatan_ho,
     up.tanggal_approval_ho, up.tahun_usulan, up.nilai_buku,
     id.keterangan_asset as nama_aset, id.asset_class_name as kategori_aset,
     id.profit_center_text, id.subreg, id.nilai_perolehan_sd,
@@ -287,6 +288,12 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
     .st-name{font-size:.75rem;font-weight:600;}
     .foto-aset-img{max-height:220px;object-fit:contain;cursor:pointer;border-radius:8px;border:1px solid #e9ecef;transition:box-shadow .2s;}
     .foto-aset-img:hover{box-shadow:0 4px 16px rgba(0,0,0,.12);}
+    /* Kajian */
+    .kajian-item{margin-bottom:14px;}
+    .kajian-item:last-child{margin-bottom:0;}
+    .kajian-label{font-size:.72rem;font-weight:600;color:#6b7280;margin-bottom:5px;}
+    .kajian-box{background:#f8f9fa;border-left:3px solid #0d6efd;border-radius:0 6px 6px 0;padding:9px 13px;font-size:.875rem;color:#374151;white-space:pre-wrap;word-break:break-word;line-height:1.6;}
+    .kajian-box.empty{border-left-color:#e5e7eb;color:#9ca3af;font-style:italic;}
   </style>
 </head>
 <body class="layout-fixed sidebar-expand-lg sidebar-open bg-body-tertiary">
@@ -704,6 +711,11 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                 <label class="form-label fw-semibold">Nomor Aset Pengganti</label>
                 <input type="text" name="nomor_aset_pengganti" id="edit_aset_pengganti"
                        class="form-control" placeholder="Isi jika ada aset pengganti">
+                <div class="form-text text-muted mt-1" style="font-size:0.75rem;">
+                  <i class="bi bi-info-circle me-1"></i>
+                  Format: <code>10 digit nomor aset</code> - <code>sub aset</code> &nbsp;
+                  <span style="color:#6b7280;">Contoh: <em>120502001183-0</em></span>
+                </div>
               </div>
             </div>
           </div>
@@ -750,6 +762,13 @@ function openDetail(id) {
   const p = dataPelaksanaan.find(x => x.id == id);
   if (!p) return;
   const steps = ['Disetujui','Appraisal Aset','Proses Lelang','Terjual'];
+  const kajian = (label, value) => {
+    const isEmpty = !value || String(value).trim() === '';
+    return `<div class="kajian-item">
+      <div class="kajian-label">${label}</div>
+      <div class="kajian-box${isEmpty?' empty':''}">${isEmpty?'Tidak diisi':value}</div>
+    </div>`;
+  };
   const curIdx = steps.indexOf(p.status_pelaksanaan);
   const trackHtml = steps.map((s,i) => {
     const done = i < curIdx, active = i === curIdx;
@@ -845,8 +864,16 @@ function openDetail(id) {
         <div class="detail-item"><div class="detail-item-label">Sisa Umur Ekonomis</div><div class="detail-item-value">${p.sisa_umur_ekonomis||'&mdash;'}</div></div>
         <div class="detail-item"><div class="detail-item-label">Jumlah Aset</div><div class="detail-item-value">${p.jumlah_aset||'&mdash;'}</div></div>
         <div class="detail-item"><div class="detail-item-label">Mekanisme Penghapusan</div><div class="detail-item-value">${mekanismeBadge}</div></div>
-        <div class="detail-item"><div class="detail-item-label">Fisik Aset</div><div class="detail-item-value">${p.fisik_aset||'&mdash;'}</div></div>
+        <div class="detail-item"><div class="detail-item-label">Fisik Aset</div><div class="detail-item-value">${p.fisik_aset ? `<span class="badge-pill" style="background:${p.fisik_aset==='Ada'?'#d1fae5':'#fee2e2'};color:${p.fisik_aset==='Ada'?'#065f46':'#991b1b'};">${p.fisik_aset}</span>` : '&mdash;'}</div></div>
         <div class="detail-item"><div class="detail-item-label">Jumlah Dokumen</div><div class="detail-item-value"><span class="badge-pill" style="background:#0ea5e9;color:#fff;">${totalDokumen} file(s)</span></div></div>
+      </div>
+    </div>
+    <div class="detail-section"><div class="detail-section-title"><i class="bi bi-journal-text"></i> Kajian & Justifikasi</div>
+      <div style="padding:4px 0;">
+        ${kajian('Justifikasi & Alasan Penghapusan', p.justifikasi_alasan)}
+        ${kajian('Kajian Hukum', p.kajian_hukum)}
+        ${kajian('Kajian Ekonomis', p.kajian_ekonomis)}
+        ${kajian('Kajian Risiko', p.kajian_risiko)}
       </div>
     </div>
     <div class="detail-section" style="background:#f8faff;"><div class="detail-section-title"><i class="bi bi-arrow-right-circle"></i> Progres Pelaksanaan</div>
