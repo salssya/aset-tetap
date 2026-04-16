@@ -268,6 +268,8 @@ $activeTab   = isset($_GET['tab']) ? $_GET['tab'] : 'daftar';
 $res_p = mysqli_query($con, "SELECT up.*, id.keterangan_asset as nama_aset, id.asset_class_name as kategori_aset,
     id.profit_center_text, id.subreg, id.nilai_perolehan_sd, id.nilai_buku_sd as nilai_buku,
     id.tgl_perolehan, id.masa_manfaat as umur_ekonomis, id.sisa_manfaat as sisa_umur_ekonomis,
+    up.justifikasi_alasan, up.kajian_hukum, up.kajian_ekonomis, up.kajian_risiko,
+    YEAR(up.created_at) as tahun_usulan,
     (SELECT COUNT(*) FROM dokumen_penghapusan dp WHERE dp.usulan_id = up.id) as jml_dok_usulan
     FROM usulan_penghapusan up
     LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama
@@ -387,6 +389,12 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
     /* Foto aset */
     .foto-aset-img{max-height:220px;object-fit:contain;cursor:pointer;border-radius:8px;border:1px solid #e9ecef;transition:box-shadow .2s;}
     .foto-aset-img:hover{box-shadow:0 4px 16px rgba(0,0,0,.12);}
+    /* Kajian */
+    .kajian-item{margin-bottom:14px;}
+    .kajian-item:last-child{margin-bottom:0;}
+    .kajian-label{font-size:.72rem;font-weight:600;color:#6b7280;margin-bottom:5px;}
+    .kajian-box{background:#f8f9fa;border-left:3px solid #0d6efd;border-radius:0 6px 6px 0;padding:9px 13px;font-size:.875rem;color:#374151;white-space:pre-wrap;word-break:break-word;line-height:1.6;}
+    .kajian-box.empty{border-left-color:#e5e7eb;color:#9ca3af;font-style:italic;}
 
     /* Detail modal */
     .detail-section{padding:16px 22px;border-bottom:1px solid #f0f0f0;}
@@ -1273,6 +1281,13 @@ function openDetail(uid) {
   if (!u) return;
   _currentDetailId = uid;
   const rupiah = n => n ? 'Rp ' + parseInt(n).toLocaleString('id-ID') : '—';
+  const kajian = (label, value) => {
+    const isEmpty = !value || String(value).trim() === '';
+    return `<div class="kajian-item">
+      <div class="kajian-label">${label}</div>
+      <div class="kajian-box${isEmpty?' empty':''}">${isEmpty?'Tidak diisi':value}</div>
+    </div>`;
+  };
   const mekanismeBadge = u.mekanisme_penghapusan === 'Hapus Administrasi' ? '<span class="badge" style="background:#8b5cf6;color:#fff;">Hapus Administrasi</span>' : u.mekanisme_penghapusan === 'Jual Lelang' ? '<span class="badge bg-primary">Jual Lelang</span>' : (u.mekanisme_penghapusan || '—');
   const fotoPath = u.foto_path || u.foto_aset || '';
   const fotoHtml = fotoPath
@@ -1338,10 +1353,9 @@ function openDetail(uid) {
       <div class="detail-grid">
         <div class="detail-item"><div class="detail-item-label">Nomor Aset</div><div class="detail-item-value" style="font-family:monospace;color:#2563eb;">${u.nomor_asset_utama}</div></div>
         <div class="detail-item"><div class="detail-item-label">Nama Aset</div><div class="detail-item-value">${u.nama_aset||'—'}</div></div>
-        <div class="detail-item"><div class="detail-item-label">SubReg</div><div class="detail-item-value">${u.subreg||'—'}</div></div>
+        <div class="detail-item"><div class="detail-item-label">Kategori Aset</div><div class="detail-item-value">${u.kategori_aset||'—'}</div></div>
         <div class="detail-item"><div class="detail-item-label">Profit Center</div><div class="detail-item-value">${u.profit_center_text||u.profit_center||'—'}</div></div>
-        <div class="detail-item"><div class="detail-item-label">Kategori</div><div class="detail-item-value">${u.kategori_aset||'—'}</div></div>
-        <div class="detail-item"><div class="detail-item-label">Tgl. Perolehan</div><div class="detail-item-value">${u.tgl_perolehan||'—'}</div></div>
+        <div class="detail-item"><div class="detail-item-label">SubReg</div><div class="detail-item-value">${u.subreg||'—'}</div></div>
       </div>
     </div>
     <div class="detail-section">
@@ -1349,10 +1363,23 @@ function openDetail(uid) {
       <div class="detail-grid">
         <div class="detail-item"><div class="detail-item-label">Nilai Buku</div><div class="detail-item-value" style="font-family:monospace;">${rupiah(u.nilai_buku)}</div></div>
         <div class="detail-item"><div class="detail-item-label">Nilai Perolehan</div><div class="detail-item-value" style="font-family:monospace;">${rupiah(u.nilai_perolehan_sd)}</div></div>
-        <div class="detail-item"><div class="detail-item-label">Mekanisme</div><div class="detail-item-value">${mekanismeBadge}</div></div>
-        <div class="detail-item"><div class="detail-item-label">Fisik Aset</div><div class="detail-item-value">${u.fisik_aset||'—'}</div></div>
+        <div class="detail-item"><div class="detail-item-label">Tanggal Perolehan</div><div class="detail-item-value">${u.tgl_perolehan||'—'}</div></div>
+        <div class="detail-item"><div class="detail-item-label">Tahun Usulan</div><div class="detail-item-value">${u.tahun_usulan||'—'}</div></div>
         <div class="detail-item"><div class="detail-item-label">Umur Ekonomis</div><div class="detail-item-value">${u.umur_ekonomis||'—'}</div></div>
-        <div class="detail-item"><div class="detail-item-label">Sisa Umur</div><div class="detail-item-value">${u.sisa_umur_ekonomis||'—'}</div></div>
+        <div class="detail-item"><div class="detail-item-label">Sisa Umur Ekonomis</div><div class="detail-item-value">${u.sisa_umur_ekonomis||'—'}</div></div>
+        <div class="detail-item"><div class="detail-item-label">Jumlah Aset</div><div class="detail-item-value">${u.jumlah_aset||'—'}</div></div>
+        <div class="detail-item"><div class="detail-item-label">Mekanisme Penghapusan</div><div class="detail-item-value">${mekanismeBadge}</div></div>
+        <div class="detail-item"><div class="detail-item-label">Fisik Aset</div><div class="detail-item-value">${u.fisik_aset ? `<span class="badge-pill" style="background:${u.fisik_aset==='Ada'?'#d1fae5':'#fee2e2'};color:${u.fisik_aset==='Ada'?'#065f46':'#991b1b'};">${u.fisik_aset}</span>` : '—'}</div></div>
+        <div class="detail-item"><div class="detail-item-label">Jumlah Dokumen</div><div class="detail-item-value"><span class="badge-pill" style="background:#0ea5e9;color:#fff;">${u.jml_dok_usulan||0} file(s)</span></div></div>
+      </div>
+    </div>
+    <div class="detail-section">
+      <div class="detail-section-title"><i class="bi bi-journal-text"></i> Kajian & Justifikasi</div>
+      <div style="padding:4px 0;">
+        ${kajian('Justifikasi & Alasan Penghapusan', u.justifikasi_alasan)}
+        ${kajian('Kajian Hukum', u.kajian_hukum)}
+        ${kajian('Kajian Ekonomis', u.kajian_ekonomis)}
+        ${kajian('Kajian Risiko', u.kajian_risiko)}
       </div>
     </div>
     <div class="detail-section">
