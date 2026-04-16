@@ -248,7 +248,45 @@ $stmt_upload->close();
   }
 }
 
-// Hitung jumlah per status_approval_regional dari tabel usulan_penghapusan untuk summary boxes (Regional overview)
+// ========================================================
+// Query terpisah untuk ASET PICKER di modal upload dokumen
+// Menampilkan semua aset yang sudah disetujui SubReg,
+// terlepas dari status approval Regional — agar aset yang sudah
+// di-upload dokumennya tetap muncul di picker dan tidak hilang
+// ========================================================
+$upload_data_picker = [];
+$pickerWhereClause = "WHERE COALESCE(up.status_approval_subreg, '') LIKE 'approved%'";
+if (!empty($tahunSelected)) {
+    $pickerWhereClause .= " AND up.tahun_usulan = ?";
+}
+$query_picker = "SELECT DISTINCT up.id, up.*,
+                 id.keterangan_asset as nama_aset,
+                 id.profit_center_text,
+                 id.subreg,
+                 (SELECT COUNT(*) FROM dokumen_penghapusan WHERE usulan_id = up.id) as jumlah_dokumen
+                 FROM usulan_penghapusan up
+                 LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama
+                 " . $pickerWhereClause . "
+                 ORDER BY up.updated_at DESC";
+$stmt_picker = $con->prepare($query_picker);
+if ($stmt_picker) {
+    if (!empty($tahunSelected)) {
+        $stmt_picker->bind_param("s", $tahunSelected);
+    }
+    $stmt_picker->execute();
+    $result_picker = $stmt_picker->get_result();
+    while ($row = $result_picker->fetch_assoc()) {
+        $row['nama_aset'] = str_replace('AUC-', '', $row['nama_aset']);
+        $upload_data_picker[] = $row;
+    }
+    $stmt_picker->close();
+}
+// Fallback jika picker kosong
+if (empty($upload_data_picker) && !empty($upload_data)) {
+    $upload_data_picker = $upload_data;
+}
+
+
 // Hanya hitung usulan yang sudah disetujui SubReg (tidak lagi discoping)
 $count_pending = 0;
 $count_approved = 0;
@@ -1097,7 +1135,13 @@ if (isset($_GET['action']) && $_GET['action'] === 'get_daftar_usulan_data') {
             htmlspecialchars($row['profit_center']) . (!empty($row['profit_center_text']) ? ' - ' . htmlspecialchars($row['profit_center_text']) : ''), // Profit Center
             htmlspecialchars($row['nomor_asset_utama']), // Nomor Aset
             htmlspecialchars($row['nama_aset']), // Nama Aset
-            htmlspecialchars($row['mekanisme_penghapusan']), // Mekanisme Penghapusan
+            // Mekanisme badge
+            (function() use ($row) {
+                $mek = $row['mekanisme_penghapusan'] ?? '';
+                if ($mek === 'Hapus Administrasi') return '<span class="badge" style="background:#6f42c1; color:#fff;">Hapus Administrasi</span>';
+                if ($mek === 'Jual Lelang') return '<span class="badge" style="background:#0d6efd; color:#fff;">Jual Lelang</span>';
+                return $mek !== '' ? '<span class="badge bg-secondary">' . htmlspecialchars($mek) . '</span>' : '-';
+            })(),
             // Status Regional
             ($row['status_approval_regional'] === 'pending' ? '<span class="badge" style="background: #FFC107; color: #000;"><i class="bi bi-hourglass-split me-1"></i>Pending</span>' :
              ($row['status_approval_regional'] === 'approved' ? '<span class="badge" style="background: #28A745; color: #fff;"><i class="bi bi-check-circle me-1"></i>Approved</span>' :
@@ -1124,7 +1168,9 @@ if (isset($_GET['action']) && $_GET['action'] === 'get_daftar_usulan_data') {
 // AJAX HANDLER: GET Detail Aset by nomor_asset_utama
 // ========================================================
 if (isset($_GET['action']) && $_GET['action'] === 'get_detail_aset' && isset($_GET['no_aset'])) {
-    
+    header('Content-Type: application/json');
+    $no_aset = trim($_GET['no_aset']);
+
     // Split aset jika ada multiple (separated by semicolon)
     $aset_list = array_filter(array_map('trim', explode(';', $no_aset)));
     
@@ -1660,6 +1706,14 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
     />
     <link rel="stylesheet"
       href="../../dist/css/dataTables.dataTables.min.css"/>
+  <style>
+    .modal-backdrop, .modal-backdrop.show { z-index: 20000 !important; }
+    .modal, .modal.show { z-index: 20010 !important; }
+    .modal .modal-dialog { z-index: 20020 !important; }
+    .modal-content, .modal-header, .modal-footer, .modal button { pointer-events: auto !important; }
+    .modal-body { pointer-events: auto !important; }
+    .app-wrapper, .app-sidebar, .app-main { z-index: auto !important; }
+  </style>
   </head>
   <body class="layout-fixed sidebar-expand-lg sidebar-open bg-body-tertiary">
     <!--begin::App Wrapper-->
@@ -1936,7 +1990,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                       <li class="nav-item" role="presentation">
                         <button class="nav-link" id="upload-dokumen-tab" data-bs-toggle="tab" data-bs-target="#upload" type="button" role="tab" aria-controls="upload" aria-selected="false">
                           <i class="bi bi-cloud-upload me-2"></i>Upload Dokumen
-                          <span class="badge bg-primary ms-1"><?= count($upload_data) ?></span>
+                          <span class="badge bg-primary ms-1"><?= count($upload_data_picker) ?></span>
                         </button>
                       </li>
                     </ul>
@@ -1954,60 +2008,28 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                             // Initialize semua_dokumen untuk digunakan di bawah
                             $semua_dokumen = [];
                             $seen_dok_ids = [];
-                            
-                            // Get user type untuk check if regional reviewer
-                            $user_type = isset($_SESSION['Type_User']) ? $_SESSION['Type_User'] : '';
-                            $is_regional = ($user_type === 'Regional' || strpos($user_type, 'Regional') !== false);
-                            
-                            if ($is_regional) {
-                              // Regional users: Get documents uploaded by SubReg only
-                              $q_all_dok = $con->prepare(
-                                  "SELECT dp.id_dokumen, dp.tahun_dokumen, dp.profit_center, dp.subreg,
-                                          dp.tipe_dokumen, dp.profit_center_text, dp.file_path, dp.file_name,
-                                          dp.no_aset,
-                                          up.nomor_asset_utama, up.id as usulan_id
-                                   FROM dokumen_penghapusan dp
-                                   JOIN usulan_penghapusan up ON dp.usulan_id = up.id
-                                   WHERE COALESCE(up.status_approval_subreg, '') LIKE 'approved%'
-                                         AND dp.type_user = 'Approval Sub Regional'
-                                   GROUP BY dp.id_dokumen
-                                   ORDER BY dp.id_dokumen DESC"
-                              );
-                              $q_all_dok->execute();
-                              $r_all_dok = $q_all_dok->get_result();
-                              while ($d = $r_all_dok->fetch_assoc()) {
-                                  if (in_array($d['id_dokumen'], $seen_dok_ids)) continue;
-                                  $seen_dok_ids[] = $d['id_dokumen'];
-                                  $semua_dokumen[] = $d;
-                              }
-                              $q_all_dok->close();
-                            } else {
-                              // Non-regional users: Get documents dari upload_data (current behavior)
-                              foreach ($upload_data as $usulan) {
-                                  $nomor_ua = $usulan['nomor_asset_utama'];
-                                  $q_dok = $con->prepare(
-                                      "SELECT dp.id_dokumen, dp.tahun_dokumen, dp.profit_center, dp.subreg,
-                                              dp.tipe_dokumen, dp.profit_center_text, dp.file_path, dp.file_name,
-                                              dp.no_aset,
-                                              up.nomor_asset_utama, up.id as usulan_id
-                                       FROM dokumen_penghapusan dp
-                                       JOIN usulan_penghapusan up ON dp.usulan_id = up.id
-                                       WHERE dp.usulan_id = ?
-                                          OR (dp.no_aset LIKE CONCAT('%', ?, '%') AND dp.no_aset LIKE '%-%')
-                                       GROUP BY dp.id_dokumen
-                                       ORDER BY dp.id_dokumen DESC"
-                                  );
-                                  $q_dok->bind_param("is", $usulan['id'], $nomor_ua);
-                                  $q_dok->execute();
-                                  $r_dok = $q_dok->get_result();
-                                  while ($d = $r_dok->fetch_assoc()) {
-                                      if (in_array($d['id_dokumen'], $seen_dok_ids)) continue;
-                                      $seen_dok_ids[] = $d['id_dokumen'];
-                                      $semua_dokumen[] = $d;
-                                  }
-                                  $q_dok->close();
-                              }
+
+                            // Regional: Tampilkan SEMUA dokumen dari usulan yang sudah disetujui SubReg
+                            // Tanpa filter siapa yang upload (cabang, subreg, maupun regional sendiri)
+                            $q_all_dok = $con->prepare(
+                                "SELECT dp.id_dokumen, dp.tahun_dokumen, dp.profit_center, dp.subreg,
+                                        dp.tipe_dokumen, dp.profit_center_text, dp.file_path, dp.file_name,
+                                        dp.no_aset,
+                                        up.nomor_asset_utama, up.id as usulan_id
+                                 FROM dokumen_penghapusan dp
+                                 JOIN usulan_penghapusan up ON dp.usulan_id = up.id
+                                 WHERE COALESCE(up.status_approval_subreg, '') LIKE 'approved%'
+                                 GROUP BY dp.id_dokumen
+                                 ORDER BY dp.id_dokumen DESC"
+                            );
+                            $q_all_dok->execute();
+                            $r_all_dok = $q_all_dok->get_result();
+                            while ($d = $r_all_dok->fetch_assoc()) {
+                                if (in_array($d['id_dokumen'], $seen_dok_ids)) continue;
+                                $seen_dok_ids[] = $d['id_dokumen'];
+                                $semua_dokumen[] = $d;
                             }
+                            $q_all_dok->close();
                             ?>
                             <div class="card mb-0" style="border: 1px solid #dee2e6; border-radius: 4px;">
                               <div class="card-header" style="background: #fff; border-bottom: 1px solid #dee2e6; padding: 12px 20px;">
@@ -2015,7 +2037,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                               </div>
                               <div class="card-body" style="padding: 20px;">
 
-                                <?php if (empty($upload_data)): ?>
+                                <?php if (empty($upload_data_picker)): ?>
                                   <div class="alert alert-warning mb-0">
                                     <i class="bi bi-info-circle me-2"></i>
                                     <strong>Belum ada usulan</strong>
@@ -2095,10 +2117,9 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                 <?php endif; ?>
                               </div>
                             </div>
-                            <?php if (!empty($upload_data) || !empty($semua_dokumen)): ?>
-
+                            <?php if (!empty($upload_data_picker) || !empty($semua_dokumen)): ?>
                      <!-- TABEL PREVIEW DOKUMEN-->
-                            <div class="card mt-3" style="border: 1px solid #28a745; box-shadow: 0 1px 3px rgba(40, 167, 69, 0.1);">
+                            <div class="card mt-3" style="border: 1px solid #28a745; box-shadow: 0 1px 3px rgba(40, 167, 69, 0.1); border-radius: 4px;">
                               <div class="card-header" style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white; padding: 12px 20px; border-radius: 4px 4px 0 0;">
                                 <strong><i class="bi bi-file-earmark-pdf me-2"></i>Preview Dokumen Terupload (<?= count($semua_dokumen) ?>)</strong>
                               </div>
@@ -2121,41 +2142,6 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                       <?php if (empty($semua_dokumen)): ?>
                                         <tr>
                                           <td colspan="8" class="text-center text-muted py-3">
-                                  <!-- Modal stacking fix: ensure bootstrap modals and backdrops render above app UI -->
-                                  <style>
-                                    /* Make modal backdrop and modal content higher than any app elements */
-                                    .modal-backdrop,
-                                    .modal-backdrop.show {
-                                      z-index: 20000 !important;
-                                    }
-
-                                    .modal,
-                                    .modal.show {
-                                      z-index: 20010 !important;
-                                    }
-
-                                    /* Ensure dialog itself sits above the backdrop */
-                                    .modal .modal-dialog {
-                                      z-index: 20020 !important;
-                                    }
-
-                                    /* Ensure buttons and interactive elements in modal are clickable */
-                                    .modal-content,
-                                    .modal-header,
-                                    .modal-footer,
-                                    .modal button {
-                                      pointer-events: auto !important;
-                                    }
-
-                                    .modal-body {
-                                      pointer-events: auto !important;
-                                    }
-
-                                    /* If any app wrapper uses very high z-index, lower it for stacking context issues */
-                                    .app-wrapper, .app-sidebar, .app-main {
-                                      z-index: auto !important;
-                                    }
-                                  </style>
                                             Belum ada dokumen yang diupload
                                           </td>
                                         </tr>
@@ -2211,16 +2197,15 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                               </div>
                             </div>
                             <?php endif; ?>
-                          </div>
                           <!-- End Tab Upload Dokumen -->
                       </div>
                       <!-- End Tab Upload Pane -->
 
                       <div class="tab-pane fade show active" id="aset" role="tabpanel">
                       <!-- Summary Boxes -->
-                            <div class="row mb-4">
+                            <div class="row mb-3 mt-2">
                               <div class="col-md-4">
-                                <div class="small-box" style="background: linear-gradient(135deg, #FFC107 0%, #FFB300 100%); color: white;">
+                                <div class="small-box" style="background: linear-gradient(135deg, #FFC107 0%, #FFB300 100%); color: white; margin-bottom: 0;">
                                   <div class="inner">
                                     <h3><?= $count_pending ?></h3>
                                     <p>Pending</p>
@@ -2229,7 +2214,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                 </div>
                               </div>
                               <div class="col-md-4">
-                                <div class="small-box" style="background: linear-gradient(135deg, #28A745 0%, #218838 100%); color: white;">
+                                <div class="small-box" style="background: linear-gradient(135deg, #28A745 0%, #218838 100%); color: white; margin-bottom: 0;">
                                   <div class="inner">
                                     <h3><?= $count_approved ?></h3>
                                     <p>Approved </p>
@@ -2238,7 +2223,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                 </div>
                               </div>
                               <div class="col-md-4">
-                                <div class="small-box" style="background: linear-gradient(135deg, #c83636 0%, #961313 100%); color: white;">
+                                <div class="small-box" style="background: linear-gradient(135deg, #c83636 0%, #961313 100%); color: white; margin-bottom: 0;">
                                   <div class="inner">
                                     <h3><?= $count_rejected ?></h3>
                                     <p>Rejected</p>
@@ -2250,7 +2235,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                             <!-- End Summary Boxes -->      
 
                             <?php if (false): // Always false since we use server-side processing ?>
-                              <div class="alert alert-warning">
+                              <div class="alert alert-warning mb-3 mt-2">
                                 <i class="bi bi-info-circle me-2"></i>
                                 Belum ada usulan yang telah <strong>approved SubReg</strong> dan menunggu approval Regional.
                               </div>
@@ -2321,7 +2306,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                           </tr>
                                         </thead>
                                         <tbody>
-                                          <?php foreach ($upload_data as $ua): ?>
+                                          <?php foreach ($upload_data_picker as $ua): ?>
                                           <tr>
                                             <td class="text-center">
                                               <input type="checkbox" 
@@ -2330,10 +2315,16 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                                     data-nomor="<?= htmlspecialchars($ua['nomor_asset_utama']) ?>"
                                                     data-nama="<?= htmlspecialchars(str_replace('AUC-', '', $ua['nama_aset'] ?? '-')) ?>">
                                             </td>
-                                            <td><?= htmlspecialchars($ua['nomor_asset_utama']) ?></td>
+                                            <td>
+                                              <?= htmlspecialchars($ua['nomor_asset_utama']) ?>
+                                              <?php if (!empty($ua['jumlah_dokumen']) && $ua['jumlah_dokumen'] > 0): ?>
+                                                <span class="badge bg-success ms-1" title="Sudah ada <?= $ua['jumlah_dokumen'] ?> dokumen">
+                                                  <i class="bi bi-file-check"></i> <?= $ua['jumlah_dokumen'] ?>
+                                                </span>
+                                              <?php endif; ?>
+                                            </td>
                                             <td>
                                               <?= !empty($ua['mekanisme_penghapusan']) ? htmlspecialchars($ua['mekanisme_penghapusan']) : '-' ?> 
-                                            </td>
                                             </td>
                                             <td><?= htmlspecialchars(str_replace('AUC-', '', $ua['nama_aset'] ?? '-')) ?></td>
                                             <td><?= htmlspecialchars($ua['kategori_aset'] ?? '-') ?></td>
@@ -2796,17 +2787,34 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                   let mekanismeBadge = '-';
                                   const mekanismeVal = r.mekanisme_penghapusan || r.mekanisme || r.mekanisme_penghapusan_text || '';
                                   if (mekanismeVal) {
-                                    const badgeClass = mekanismeVal === 'Jual Lelang' ? 'success' : 'warning';
-                                    mekanismeBadge = '<span class="badge bg-' + badgeClass + '">' + escHtml(mekanismeVal) + '</span>';
+                                    let mekanismeStyle = '';
+                                    if (mekanismeVal === 'Hapus Administrasi') {
+                                      mekanismeStyle = 'background:#6f42c1; color:#fff;';
+                                    } else if (mekanismeVal === 'Jual Lelang') {
+                                      mekanismeStyle = 'background:#0d6efd; color:#fff;';
+                                    } else {
+                                      mekanismeStyle = 'background:#6c757d; color:#fff;';
+                                    }
+                                    mekanismeBadge = '<span class="badge" style="' + mekanismeStyle + '">' + escHtml(mekanismeVal) + '</span>';
                                   }
 
                                   // Badge untuk status (dengan fallback property names)
                                   let statusBadge = '-';
                                   const statusVal = r.status_penghapusan || r.status_penghapusan_text || r.status || '';
                                   if (statusVal) {
-                                    const statusClass = statusVal === 'Siap Upload' ? 'info' :
-                                                       statusVal === 'Lengkapi Data' ? 'warning' : 'secondary';
-                                    statusBadge = '<span class="badge bg-' + statusClass + '">' + escHtml(statusVal) + '</span>';
+                                    let statusStyle = '';
+                                    if (statusVal === 'Approved' || statusVal === 'Approved SubReg' || statusVal === 'Approved Regional') {
+                                      statusStyle = 'background:#28a745; color:#fff;';
+                                    } else if (statusVal === 'Siap Upload' || statusVal === 'Data Lengkap') {
+                                      statusStyle = 'background:#17a2b8; color:#fff;';
+                                    } else if (statusVal === 'Lengkapi Data') {
+                                      statusStyle = 'background:#ffc107; color:#000;';
+                                    } else if (statusVal === 'Rejected') {
+                                      statusStyle = 'background:#dc3545; color:#fff;';
+                                    } else {
+                                      statusStyle = 'background:#6c757d; color:#fff;';
+                                    }
+                                    statusBadge = '<span class="badge" style="' + statusStyle + '">' + escHtml(statusVal) + '</span>';
                                   }
                                   
                                   tr.innerHTML =
@@ -2996,17 +3004,18 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                             </div>
                             <div class="card-body">
                               <?php
-                              // Query semua usulan user dengan status lengkap
-                              $q_all = $con->prepare("SELECT up.*, 
-                                                      id.keterangan_asset as nama_aset,
-                                                      (SELECT COUNT(*) FROM dokumen_penghapusan WHERE usulan_id = up.id) as jumlah_dokumen
-                                                      FROM usulan_penghapusan up 
-                                                      LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama 
-                                                      WHERE up.created_by = ? 
-                                                      ORDER BY up.created_at DESC");
-                              $q_all->bind_param("s", $_SESSION['nipp']);
-                              $q_all->execute();
-                              $res_all = $q_all->get_result();
+                              // Query semua usulan yang sudah approved SubReg untuk ditampilkan di regional
+                              $q_all_sql = "SELECT up.*, 
+                                            id.keterangan_asset as nama_aset,
+                                            (SELECT COUNT(*) FROM dokumen_penghapusan WHERE usulan_id = up.id) as jumlah_dokumen
+                                            FROM usulan_penghapusan up 
+                                            LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama 
+                                            WHERE COALESCE(up.status_approval_subreg, '') LIKE 'approved%'";
+                              if (!empty($tahunSelected)) {
+                                $q_all_sql .= " AND up.tahun_usulan = '" . mysqli_real_escape_string($con, $tahunSelected) . "'";
+                              }
+                              $q_all_sql .= " ORDER BY up.updated_at DESC";
+                              $q_all = mysqli_query($con, $q_all_sql);
                               ?>
 
                               <div class="table-responsive">
@@ -3025,7 +3034,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                   <tbody>
                                     <?php 
                                     $no = 1; 
-                                    while ($row = $res_all->fetch_assoc()): 
+                                    while ($row = mysqli_fetch_assoc($q_all)): 
                                       // Determine status badge
                                       $statusBadge = '';
                                       
@@ -3034,28 +3043,28 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                           $statusBadge = '<span class="badge" style="background: #6C757D; color: white;"><i class="bi bi-file-earmark"></i> Draft</span>';
                                           break;
                                         case 'lengkapi_dokumen':
-                                          $statusBadge = '<span class="badge" style="background: #FFC107; color: white;"><i class="bi bi-exclamation-triangle"></i> Lengkapi Data</span>';
+                                          $statusBadge = '<span class="badge" style="background: #FFC107; color: #000;"><i class="bi bi-exclamation-triangle"></i> Lengkapi Data</span>';
                                           break;
                                         case 'dokumen_lengkap':
                                           $statusBadge = '<span class="badge" style="background: #218838; color: white;"><i class="bi bi-check-circle-fill"></i> Data Lengkap</span>';
                                           break;
-                                        // case 'submitted':
-                                        // case 'pending_subreg':
-                                        //   $statusBadge = '<span class="badge" style="background: #0D6EFD; color: white;"><i class="bi bi-hourglass-split"></i> Pending SubReg</span>';
-                                        //   break;
-                                        // case 'approved_subreg':
-                                        //   $statusBadge = '<span class="badge" style="background: #17A2B8; color: white;"><i class="bi bi-check-circle-fill"></i> Approved SubReg</span>';
-                                        //   break;
-                                        // case 'pending_regional':
-                                        //   $statusBadge = '<span class="badge" style="background: #0D6EFD; color: white;"><i class="bi bi-hourglass"></i> Pending Regional</span>';
-                                        //   break;
-                                        // case 'approved_regional':
-                                        // case 'approved':
-                                        //   $statusBadge = '<span class="badge" style="background: #28A745; color: white;"><i class="bi bi-award-fill"></i> Approved Regional</span>';
-                                        //   break;
-                                        // case 'rejected':
-                                        //   $statusBadge = '<span class="badge bg-danger"><i class="bi bi-x-circle-fill"></i> Rejected</span>';
-                                        //   break;
+                                        case 'submitted':
+                                        case 'pending_subreg':
+                                          $statusBadge = '<span class="badge" style="background: #0D6EFD; color: white;"><i class="bi bi-hourglass-split"></i> Pending SubReg</span>';
+                                          break;
+                                        case 'approved_subreg':
+                                          $statusBadge = '<span class="badge" style="background: #17A2B8; color: white;"><i class="bi bi-check-circle-fill"></i> Approved SubReg</span>';
+                                          break;
+                                        case 'pending_regional':
+                                          $statusBadge = '<span class="badge" style="background: #0D6EFD; color: white;"><i class="bi bi-hourglass"></i> Pending Regional</span>';
+                                          break;
+                                        case 'approved_regional':
+                                        case 'approved':
+                                          $statusBadge = '<span class="badge" style="background: #28A745; color: white;"><i class="bi bi-award-fill"></i> Approved</span>';
+                                          break;
+                                        case 'rejected':
+                                          $statusBadge = '<span class="badge bg-danger"><i class="bi bi-x-circle-fill"></i> Rejected</span>';
+                                          break;
                                         default:
                                           $statusBadge = '<span class="badge bg-secondary">Unknown</span>';
                                       }
@@ -3073,7 +3082,18 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                           <?php endif; ?>
                                         </td>
                                         <td>
-                                          <?= !empty($row['mekanisme_penghapusan']) ? htmlspecialchars($row['mekanisme_penghapusan']) : '-' ?>
+                                          <?php 
+                                            $mek = !empty($row['mekanisme_penghapusan']) ? $row['mekanisme_penghapusan'] : '';
+                                            if ($mek === 'Hapus Administrasi') {
+                                              echo '<span class="badge" style="background:#6f42c1; color:#fff;">Hapus Administrasi</span>';
+                                            } elseif ($mek === 'Jual Lelang') {
+                                              echo '<span class="badge" style="background:#0d6efd; color:#fff;">Jual Lelang</span>';
+                                            } elseif ($mek !== '') {
+                                              echo '<span class="badge bg-secondary">' . htmlspecialchars($mek) . '</span>';
+                                            } else {
+                                              echo '-';
+                                            }
+                                          ?>
                                         </td>
                                         <td><?= date('d/m/Y H:i', strtotime($row['updated_at'])) ?></td>
                                       </tr>
@@ -3081,7 +3101,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                   </tbody>
                                 </table>
                               </div>
-                              <?php $q_all->close(); ?>
+                              <?php mysqli_free_result($q_all); ?>
                             </div>
                           </div>
 
