@@ -343,7 +343,6 @@ if (isset($_SESSION['Type_User']) && (stripos($_SESSION['Type_User'], 'Sub') !==
 // ========================================================
 $upload_data_picker = [];
 if (isset($_SESSION['Type_User']) && (stripos($_SESSION['Type_User'], 'Sub') !== false || stripos($_SESSION['Type_User'], 'Cabang') !== false || stripos($_SESSION['Type_User'], 'Regional') !== false)) {
-  // Lebih longgar: semua aset submitted dalam subreg, tanpa filter status_approval_subreg
   // Hanya aset yang sudah di-approve SubReg yang boleh diupload dokumen
   $pickerWhereClause = $filterCondition . " AND up.status_approval_subreg IN ('approved','approved_subreg','approved_regional','pending_regional')";
   if (!empty($tahunSelected)) {
