@@ -3591,11 +3591,14 @@ document.getElementById('formFilterTahun').addEventListener('submit', function(e
       }
 
       // Approve / Reject via confirm modal (Regional)
-      function approveUsulan(usulanId) {
+      function approveUsulan(usulanId, nomorAset, namaAset) {
         // Populate and show attractive approve confirm modal (matching SubReg style)
         try {
           const preview = document.getElementById('confirmApprovePreview');
-          if (preview) preview.textContent = usulanId || '(ID tidak tersedia)';
+          if (preview) {
+            const label = (nomorAset || usulanId || '(tidak tersedia)') + (namaAset ? ' — ' + namaAset : '');
+            preview.textContent = label;
+          }
           const hidId = document.getElementById('confirmApproveRejectUsulanId');
           const hidAction = document.getElementById('confirmApproveRejectAction');
           if (hidId) hidId.value = usulanId;
@@ -3608,17 +3611,30 @@ document.getElementById('formFilterTahun').addEventListener('submit', function(e
         }
       }
 
-      function rejectUsulan(usulanId) {
-        // Populate reject note preview (read from form textarea if present)
+      function rejectUsulan(usulanId, nomorAset, namaAset) {
+        // Populate reject confirm modal with aset info, reset textarea
         try {
-          const noteEl = document.getElementById('modalRejectNote');
-          const note = noteEl ? noteEl.value.trim() : '';
-          const preview = document.getElementById('confirmRejectNotePreviewRegional');
-          if (preview) preview.textContent = note || '(Tidak ada alasan)';
+          // Reset textarea dan error state
+          const noteInput = document.getElementById('confirmRejectNoteInput');
+          if (noteInput) { noteInput.value = ''; noteInput.classList.remove('is-invalid'); }
+          const errorEl = document.getElementById('confirmRejectNoteError');
+          if (errorEl) errorEl.style.display = 'none';
+
+          // Show nomor & nama aset
+          const rejectAsetPreview = document.getElementById('confirmRejectAsetPreview');
+          if (rejectAsetPreview) {
+            const label = (nomorAset || usulanId || '(tidak tersedia)') + (namaAset ? ' — ' + namaAset : '');
+            rejectAsetPreview.textContent = label;
+          }
           const hid = document.getElementById('confirmRejectUsulanId');
           if (hid) hid.value = usulanId;
           const modal = new bootstrap.Modal(document.getElementById('modalConfirmReject'));
           modal.show();
+          // Auto-focus textarea setelah modal muncul
+          document.getElementById('modalConfirmReject').addEventListener('shown.bs.modal', function onShown() {
+            if (noteInput) noteInput.focus();
+            this.removeEventListener('shown.bs.modal', onShown);
+          });
         } catch (e) {
           openConfirmRegional('reject', usulanId);
         }
@@ -4258,11 +4274,15 @@ document.getElementById('formFilterTahun').addEventListener('submit', function(e
             // Attach modal button handlers (use current usulan id)
             document.getElementById('btnModalApprove').onclick = function() {
                 const id = document.getElementById('usulan_id').value;
-                if (id) approveUsulan(id);
+                const nomorAset = (document.getElementById('display_nomor_aset') || {}).textContent || '';
+                const namaAset  = (document.getElementById('display_nama_aset')  || {}).textContent || '';
+                if (id) approveUsulan(id, nomorAset, namaAset);
             };
             document.getElementById('btnModalReject').onclick = function() {
                 const id = document.getElementById('usulan_id').value;
-                if (id) rejectUsulan(id);
+                const nomorAset = (document.getElementById('display_nomor_aset') || {}).textContent || '';
+                const namaAset  = (document.getElementById('display_nama_aset')  || {}).textContent || '';
+                if (id) rejectUsulan(id, nomorAset, namaAset);
             };
 
             // Load dokumen untuk usulan ini
@@ -4481,8 +4501,8 @@ document.getElementById('formFilterTahun').addEventListener('submit', function(e
                 <p id="confirmApproveRejectMessage" style="font-weight:600; margin-bottom:6px;">Anda akan menyetujui usulan ini. Lanjutkan?</p>
                 <p class="text-muted mb-2">Usulan akan dikirimkan ke Regional untuk persetujuan.</p>
                 <div>
-                  <small class="text-muted">Usulan:</small>
-                  <div id="confirmApprovePreview" class="p-2 mt-1" style="background:#f8f9fa;border-radius:6px;">(ID usulan akan ditampilkan di sini)</div>
+                  <small class="text-muted">Aset:</small>
+                  <div id="confirmApprovePreview" class="p-2 mt-1" style="background:#f8f9fa;border-radius:6px;">(Nomor & nama aset akan ditampilkan di sini)</div>
                 </div>
               </div>
             </div>
@@ -4508,12 +4528,22 @@ document.getElementById('formFilterTahun').addEventListener('submit', function(e
           <div class="modal-body">
             <div class="d-flex align-items-start gap-3">
               <div style="font-size: 2.4rem; color: #f8d7da;"><i class="bi bi-x-circle-fill"></i></div>
-              <div>
+              <div class="w-100">
                 <p class="mb-2" style="font-weight:600;">Anda akan menolak usulan ini.</p>
                 <p class="mb-2 text-muted">Tindakan ini akan dicatat di riwayat persetujuan dan tidak dapat dibatalkan.</p>
+                <div class="mt-2 mb-3">
+                  <small class="text-muted">Aset:</small>
+                  <div id="confirmRejectAsetPreview" class="p-2 mt-1" style="background:#f8f9fa;border-radius:6px;font-weight:500;">(Nomor &amp; nama aset akan ditampilkan di sini)</div>
+                </div>
                 <div class="mt-2">
-                  <small class="text-muted">Alasan yang akan disimpan:</small>
-                  <div id="confirmRejectNotePreviewRegional" class="p-2 mt-1" style="background:#f8f9fa;border-radius:6px;">(Tidak ada alasan)</div>
+                  <label for="confirmRejectNoteInput" class="form-label mb-1" style="font-size:.85rem;font-weight:600;">
+                    Alasan Reject <span class="text-danger">*</span> <small class="text-muted fw-normal">(wajib diisi)</small>
+                  </label>
+                  <textarea id="confirmRejectNoteInput" class="form-control" rows="3"
+                    placeholder="Tuliskan alasan penolakan usulan ini..."></textarea>
+                  <div id="confirmRejectNoteError" class="text-danger mt-1" style="font-size:.82rem;display:none;">
+                    <i class="bi bi-exclamation-circle me-1"></i>Alasan reject wajib diisi.
+                  </div>
                 </div>
               </div>
             </div>
@@ -4521,7 +4551,7 @@ document.getElementById('formFilterTahun').addEventListener('submit', function(e
           <div class="modal-footer">
             <input type="hidden" id="confirmRejectUsulanId" value="">
             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
-            <button type="button" id="btnConfirmReject" class="btn btn-danger">Ya, Tolak</button>
+            <button type="button" id="btnConfirmReject" class="btn btn-danger"><i class="bi bi-x-circle me-1"></i>Ya, Tolak</button>
           </div>
         </div>
       </div>
@@ -4560,7 +4590,21 @@ document.getElementById('formFilterTahun').addEventListener('submit', function(e
         if (btnReject) btnReject.addEventListener('click', function(){
           const usulanId = (document.getElementById('confirmRejectUsulanId') || {}).value || '';
           if (!usulanId) return alert('ID usulan tidak ditemukan');
-          const note = (document.getElementById('modalRejectNote') || {}).value || '';
+
+          // Read note from the textarea inside the confirm modal
+          const noteEl = document.getElementById('confirmRejectNoteInput');
+          const errorEl = document.getElementById('confirmRejectNoteError');
+          const note = noteEl ? noteEl.value.trim() : '';
+
+          // Validate: alasan wajib diisi
+          if (!note) {
+            if (noteEl) { noteEl.classList.add('is-invalid'); noteEl.focus(); }
+            if (errorEl) errorEl.style.display = 'block';
+            return;
+          }
+          if (noteEl) noteEl.classList.remove('is-invalid');
+          if (errorEl) errorEl.style.display = 'none';
+
           const body = new URLSearchParams();
           body.append('action', 'reject_usulan_regional');
           body.append('usulan_id', usulanId);
