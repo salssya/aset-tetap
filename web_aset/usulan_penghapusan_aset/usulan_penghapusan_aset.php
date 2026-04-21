@@ -564,8 +564,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             exit();
         }
         
-        if ($file['size'] > 50 * 1024 * 1024) {
-            $_SESSION['warning_message'] = "Ukuran file maksimal 50MB!";
+        if ($file['size'] > 5 * 1024 * 1024) {
+            $_SESSION['warning_message'] = "Ukuran file maksimal 5MB!";
             header("Location: " . $_SERVER['PHP_SELF'] . "?tahun=" . ($tahunSelected ?: date('Y')) . "#upload");
             exit();
         }
@@ -1585,73 +1585,38 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
             $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '" . mysqli_real_escape_string($con, $userNipp) . "' ORDER BY menus.urutan_menu ASC";
             $result_menu = mysqli_query($con, $query) or die(mysqli_error($con));
             $iconMap = [
-                'Dasboard'                  => 'bi bi-grid-fill',
-                'Usulan Penghapusan'        => 'bi bi-clipboard-plus',
-                'Daftar Usulan Penghapusan' => 'bi bi-clipboard-check-fill',
-                'Approval SubReg'           => 'bi bi-check-circle',
-                'Approval Regional'         => 'bi bi-check2-square',
-                'Persetujuan Penghapusan'   => 'bi bi-clipboard-check-fill',
-                'Pelaksanaan Penghapusan'   => 'bi bi-tools',
-                'Manajemen Menu'            => 'bi bi-list-ul',
-                'Import DAT'                => 'bi bi-file-earmark-arrow-up-fill',
-                'Daftar Aset Tetap'         => 'bi bi-card-list',
-                'Manajemen User'            => 'bi bi-people-fill'
+                'Dasboard'                        => 'bi bi-grid-fill',
+                'Usulan Penghapusan'              => 'bi bi-file-earmark-plus',
+                'Daftar Usulan Penghapusan'       => 'bi bi-collection',
+                'Approval SubReg'                 => 'bi bi-person-check',
+                'Approval Regional'               => 'bi bi-building-check',
+                'Persetujuan Penghapusan'         => 'bi bi-shield-check',
+                'Daftar Persetujuan Penghapusan'  => 'bi bi-journal-check',
+                'Pelaksanaan Penghapusan'         => 'bi bi-gear-wide-connected',
+                'Daftar Pelaksanaan Penghapusan'  => 'bi bi-archive-fill',
+                'Manajemen Menu'                  => 'bi bi-layout-text-sidebar',
+                'Import DAT'                      => 'bi bi-file-earmark-arrow-up',
+                'Daftar Aset Tetap'               => 'bi bi-card-list',
+                'Manajemen User'                  => 'bi bi-people',
             ];
-            
-            $menuRows = [];
-            while ($row = mysqli_fetch_assoc($result_menu)) {
-                $menuRows[] = $row;
-            }
-            
-            $hasDaftarUsulan = false;
-            $daftarRow = null;
-            foreach ($menuRows as $row) {
-                if (trim($row['nama_menu']) === 'Daftar Usulan Penghapusan') {
-                    $hasDaftarUsulan = true;
-                    $daftarRow = $row;
-                    break;
+                $allMenus = [];
+                while ($row = mysqli_fetch_assoc($result_menu)) {
+                    $allMenus[] = $row;
                 }
-            }
-            
-            $currentPage = basename($_SERVER['PHP_SELF']);
-            
-            foreach ($menuRows as $row) {
-                $namaMenu = trim($row['nama_menu']);
-                
-                if ($namaMenu === 'Daftar Usulan Penghapusan') {
-                    continue;
-                }
-                
-                $icon = $iconMap[$namaMenu] ?? 'bi bi-circle';
-                $menuFile = $row['menu'].'.php';
-                $isActive = ($currentPage === $menuFile) ? 'active' : '';
 
-                if ($namaMenu === 'Manajemen Menu') {
-                    echo '<li class="nav-header"></li>';
+                // Sort berdasarkan urutan_menu untuk memastikan urutan selalu konsisten
+                usort($allMenus, function($a, $b) {
+                    return $a['urutan_menu'] <=> $b['urutan_menu'];
+                });
+
+                $currentPage = basename($_SERVER['PHP_SELF']);
+                foreach ($allMenus as $row) {
+                    $namaMenu = trim($row['nama_menu']);
+                    $icon     = $iconMap[$namaMenu] ?? 'bi bi-circle';
+                    $isActive = ($currentPage === $row['menu'] . '.php') ? 'active' : '';
+                    if ($namaMenu === 'Manajemen Menu') echo '<li class="nav-header"></li>';
+                    echo '<li class="nav-item"><a href="../' . $row['menu'] . '/' . $row['menu'] . '.php" class="nav-link ' . $isActive . '"><i class="nav-icon ' . $icon . '"></i><p>' . htmlspecialchars($namaMenu) . '</p></a></li>';
                 }
-                
-                echo '
-                <li class="nav-item">
-                    <a href="../'.$row['menu'].'/'.$row['menu'].'.php" class="nav-link '.$isActive.'">
-                        <i class="nav-icon '.$icon.'"></i>
-                        <p>'.$row['nama_menu'].'</p>
-                    </a>
-                </li>';
-                
-                if ($namaMenu === 'Usulan Penghapusan' && $hasDaftarUsulan && $daftarRow) {
-                    $daftarIcon = $iconMap['Daftar Usulan Penghapusan'] ?? 'bi bi-circle';
-                    $daftarFile = $daftarRow['menu'].'.php';
-                    $isDaftarActive = ($currentPage === $daftarFile) ? 'active' : '';
-                    
-                    echo '
-                <li class="nav-item">
-                    <a href="../'.$daftarRow['menu'].'/'.$daftarRow['menu'].'.php" class="nav-link '.$isDaftarActive.'">
-                        <i class="nav-icon '.$daftarIcon.'"></i>
-                        <p>Daftar Usulan Penghapusan</p>
-                    </a>
-                </li>';
-                }
-            }
             ?>
             </ul>
             <!--end::Sidebar Menu-->
@@ -2506,6 +2471,16 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                 fileInput.classList.add('is-invalid');
                                 valid = false;
                               } else {
+                                const fileSizeMB = fileInput.files[0].size / (1024 * 1024);
+                                if (fileSizeMB > 5) {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  // Tampilkan modal warning ukuran file
+                                  const modalWarn = new bootstrap.Modal(document.getElementById('modalFileTooLarge'));
+                                  modalWarn.show();
+                                  fileInput.value = '';
+                                  return;
+                                }
                                 fileInput.classList.remove('is-invalid');
                               }
 
@@ -4022,6 +3997,26 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
     </div>
 
     <!--end::Script-->
+  <!-- Modal: File Terlalu Besar -->
+  <div class="modal fade" id="modalFileTooLarge" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" style="max-width:420px;">
+      <div class="modal-content border-0 shadow-lg overflow-hidden">
+        <div class="modal-header text-white" style="background:#dc3545;">
+          <h5 class="modal-title"><i class="bi bi-exclamation-triangle-fill me-2"></i>File Terlalu Besar</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body text-center py-4">
+          <div style="font-size:3rem;color:#dc3545;"><i class="bi bi-file-earmark-x-fill"></i></div>
+          <p class="mt-3 mb-1" style="font-weight:600;font-size:1.05rem;">Ukuran file melebihi batas!</p>
+          <p class="text-muted mb-0">Maksimal ukuran file yang diizinkan adalah <strong>5MB</strong>.<br>Silakan kompres file PDF terlebih dahulu lalu upload ulang.</p>
+        </div>
+        <div class="modal-footer justify-content-center">
+          <button type="button" class="btn btn-danger px-4" data-bs-dismiss="modal">Mengerti</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   </body>
   <!--end::Body-->
 </html>

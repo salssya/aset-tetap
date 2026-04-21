@@ -346,71 +346,44 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
     <div class="sidebar-wrapper">
       <nav class="mt-2">
         <ul class="nav sidebar-menu flex-column" data-lte-toggle="treeview" role="navigation" data-accordion="false">
-          <?php
-          $un2 = htmlspecialchars($userNipp);
-          $rm  = mysqli_query($con, "SELECT menus.menu, menus.nama_menu FROM user_access
-              INNER JOIN menus ON user_access.id_menu = menus.id_menu
-              WHERE user_access.NIPP = '" . mysqli_real_escape_string($con, $un2) . "'
-              ORDER BY menus.urutan_menu ASC");
-          $iconMap = [
-              'Dashboard'                       => 'bi bi-grid-fill',
-              'Usulan Penghapusan'              => 'bi bi-file-earmark-plus',
-              'Daftar Usulan Penghapusan'       => 'bi bi-collection',
-              'Approval SubReg'                 => 'bi bi-person-check',
-              'Approval Regional'               => 'bi bi-building-check',
-              'Persetujuan Penghapusan'         => 'bi bi-shield-check',
-              'Daftar Persetujuan Penghapusan'  => 'bi bi-journal-check',
-              'Pelaksanaan Penghapusan'         => 'bi bi-gear-wide-connected',
-              'Daftar Pelaksanaan Penghapusan'  => 'bi bi-archive-fill',
-              'Manajemen Menu'                  => 'bi bi-layout-text-sidebar',
-              'Import DAT'                      => 'bi bi-file-earmark-arrow-up',
-              'Daftar Aset Tetap'               => 'bi bi-card-list',
-              'Manajemen User'                  => 'bi bi-people',
-          ];
-          
-          $menuRows = [];
-          while ($row = mysqli_fetch_assoc($rm)) {
-              $menuRows[] = $row;
-          }
-          
-          $hasDaftarUsulan = false;
-          $daftarRow = null;
-          foreach ($menuRows as $row) {
-              if (trim($row['nama_menu']) === 'Daftar Usulan Penghapusan') {
-                  $hasDaftarUsulan = true;
-                  $daftarRow = $row;
-                  break;
-              }
-          }
-          
-          $currentPage = basename($_SERVER['PHP_SELF']);
-          
-          foreach ($menuRows as $row) {
-              $namaMenu = trim($row['nama_menu']);
-              
-              if ($namaMenu === 'Daftar Usulan Penghapusan') {
-                  continue;
-              }
-              
-              $icon = $iconMap[$namaMenu] ?? 'bi bi-circle';
-              $menuFile = $row['menu'].'.php';
-              $isActive = ($currentPage === $menuFile) ? 'active' : '';
+          <?php  
+            $userNipp = isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : '';
+            $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '" . mysqli_real_escape_string($con, $userNipp) . "' ORDER BY menus.urutan_menu ASC";
+            $result_menu = mysqli_query($con, $query) or die(mysqli_error($con));
+            $iconMap = [
+                'Dasboard'                       => 'bi bi-grid-fill',
+                'Usulan Penghapusan'              => 'bi bi-file-earmark-plus',
+                'Daftar Usulan Penghapusan'       => 'bi bi-collection',
+                'Approval SubReg'                 => 'bi bi-person-check',
+                'Approval Regional'               => 'bi bi-building-check',
+                'Persetujuan Penghapusan'         => 'bi bi-shield-check',
+                'Daftar Persetujuan Penghapusan'  => 'bi bi-journal-check',
+                'Pelaksanaan Penghapusan'         => 'bi bi-gear-wide-connected',
+                'Daftar Pelaksanaan Penghapusan'  => 'bi bi-archive-fill',
+                'Manajemen Menu'                  => 'bi bi-layout-text-sidebar',
+                'Import DAT'                      => 'bi bi-file-earmark-arrow-up',
+                'Daftar Aset Tetap'               => 'bi bi-card-list',
+                'Manajemen User'                  => 'bi bi-people',
+            ];
+            $allMenus = [];
+                while ($row = mysqli_fetch_assoc($result_menu)) {
+                    $allMenus[] = $row;
+                }
 
-              if ($namaMenu === 'Manajemen Menu') {
-                  echo '<li class="nav-header"></li>';
-              }
-              
-              echo '<li class="nav-item"><a href="../'.$row['menu'].'/'.$row['menu'].'.php" class="nav-link '.$isActive.'"><i class="nav-icon '.$icon.'"></i><p>'.htmlspecialchars($namaMenu).'</p></a></li>';
-              
-              if ($namaMenu === 'Usulan Penghapusan' && $hasDaftarUsulan && $daftarRow) {
-                  $daftarIcon = $iconMap['Daftar Usulan Penghapusan'] ?? 'bi bi-circle';
-                  $daftarFile = $daftarRow['menu'].'.php';
-                  $isDaftarActive = ($currentPage === $daftarFile) ? 'active' : '';
-                  
-                  echo '<li class="nav-item"><a href="../'.$daftarRow['menu'].'/'.$daftarRow['menu'].'.php" class="nav-link '.$isDaftarActive.'"><i class="nav-icon '.$daftarIcon.'"></i><p>Daftar Usulan Penghapusan</p></a></li>';
-              }
-          }
-          ?>
+                // Sort berdasarkan urutan_menu untuk memastikan urutan selalu konsisten
+                usort($allMenus, function($a, $b) {
+                    return $a['urutan_menu'] <=> $b['urutan_menu'];
+                });
+
+                $currentPage = basename($_SERVER['PHP_SELF']);
+                foreach ($allMenus as $row) {
+                    $namaMenu = trim($row['nama_menu']);
+                    $icon     = $iconMap[$namaMenu] ?? 'bi bi-circle';
+                    $isActive = ($currentPage === $row['menu'] . '.php') ? 'active' : '';
+                    if ($namaMenu === 'Manajemen Menu') echo '<li class="nav-header"></li>';
+                    echo '<li class="nav-item"><a href="../' . $row['menu'] . '/' . $row['menu'] . '.php" class="nav-link ' . $isActive . '"><i class="nav-icon ' . $icon . '"></i><p>' . htmlspecialchars($namaMenu) . '</p></a></li>';
+                }
+        ?>
         </ul>
       </nav>
     </div>

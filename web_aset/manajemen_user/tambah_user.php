@@ -298,73 +298,48 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '" . mysqli_real_escape_string($con, $userNipp) . "' ORDER BY menus.urutan_menu ASC";
             $result_menu = mysqli_query($con, $query) or die(mysqli_error($con));
             $iconMap = [
-                'Dasboard'                  => 'bi bi-grid-fill',
-                'Usulan Penghapusan'        => 'bi bi-clipboard-plus',
-                'Daftar Usulan Penghapusan' => 'bi bi-clipboard-check-fill',
-                'Approval SubReg'           => 'bi bi-check-circle',
-                'Approval Regional'         => 'bi bi-check2-square',
-                'Persetujuan Penghapusan'   => 'bi bi-clipboard-check-fill',
-                'Pelaksanaan Penghapusan'   => 'bi bi-tools',
-                'Manajemen Menu'            => 'bi bi-list-ul',
-                'Import DAT'                => 'bi bi-file-earmark-arrow-up-fill',
-                'Daftar Aset Tetap'         => 'bi bi-card-list',
-                'Manajemen User'            => 'bi bi-people-fill'
+                'Dasboard'                       => 'bi bi-grid-fill',
+                'Usulan Penghapusan'              => 'bi bi-file-earmark-plus',
+                'Daftar Usulan Penghapusan'       => 'bi bi-collection',
+                'Approval SubReg'                 => 'bi bi-person-check',
+                'Approval Regional'               => 'bi bi-building-check',
+                'Persetujuan Penghapusan'         => 'bi bi-shield-check',
+                'Daftar Persetujuan Penghapusan'  => 'bi bi-journal-check',
+                'Pelaksanaan Penghapusan'         => 'bi bi-gear-wide-connected',
+                'Daftar Pelaksanaan Penghapusan'  => 'bi bi-archive-fill',
+                'Manajemen Menu'                  => 'bi bi-layout-text-sidebar',
+                'Import DAT'                      => 'bi bi-file-earmark-arrow-up',
+                'Daftar Aset Tetap'               => 'bi bi-card-list',
+                'Manajemen User'                  => 'bi bi-people',
             ];
-            
-            $menuRows = [];
-            while ($row = mysqli_fetch_assoc($result_menu)) {
-                $menuRows[] = $row;
-            }
-            
-            $hasDaftarUsulan = false;
-            $daftarRow = null;
-            foreach ($menuRows as $row) {
-                if (trim($row['nama_menu']) === 'Daftar Usulan Penghapusan') {
-                    $hasDaftarUsulan = true;
-                    $daftarRow = $row;
-                    break;
+                $menuRows = [];
+                $daftarRow = null;
+                while ($row = mysqli_fetch_assoc($result_menu)) {
+                    if (trim($row['nama_menu']) === 'Daftar Usulan Penghapusan') {
+                        $daftarRow = $row;
+                    } else {
+                        $menuRows[] = $row;
+                    }
                 }
-            }
-            
-            $currentPage = basename($_SERVER['PHP_SELF']);
-            
-            foreach ($menuRows as $row) {
-                $namaMenu = trim($row['nama_menu']);
-                
-                if ($namaMenu === 'Daftar Usulan Penghapusan') {
-                    continue;
-                }
-                
-                $icon = $iconMap[$namaMenu] ?? 'bi bi-circle';
-                $menuFile = $row['menu'].'.php';
-                $isActive = ($currentPage === $menuFile) ? 'active' : '';
 
-                if ($namaMenu === 'Manajemen Menu') {
-                    echo '<li class="nav-header"></li>';
+                $currentPage = basename($_SERVER['PHP_SELF']);
+                foreach ($menuRows as $row) {
+                    $namaMenu = trim($row['nama_menu']);
+                    $icon     = $iconMap[$namaMenu] ?? 'bi bi-circle';
+                    $isActive = ($currentPage === $row['menu'] . '.php') ? 'active' : '';
+                    if ($namaMenu === 'Manajemen Menu') echo '<li class="nav-header"></li>';
+                    echo '<li class="nav-item"><a href="../' . $row['menu'] . '/' . $row['menu'] . '.php" class="nav-link ' . $isActive . '"><i class="nav-icon ' . $icon . '"></i><p>' . htmlspecialchars($namaMenu) . '</p></a></li>';
+                    if ($namaMenu === 'Usulan Penghapusan' && $daftarRow) {
+                        $isDaftarActive = ($currentPage === $daftarRow['menu'] . '.php') ? 'active' : '';
+                        echo '<li class="nav-item"><a href="../' . $daftarRow['menu'] . '/' . $daftarRow['menu'] . '.php" class="nav-link ' . $isDaftarActive . '"><i class="nav-icon bi bi-collection"></i><p>Daftar Usulan Penghapusan</p></a></li>';
+                    }
                 }
-                
-                echo '
-                <li class="nav-item">
-                    <a href="../'.$row['menu'].'/'.$row['menu'].'.php" class="nav-link '.$isActive.'">
-                        <i class="nav-icon '.$icon.'"></i>
-                        <p>'.$row['nama_menu'].'</p>
-                    </a>
-                </li>';
-                
-                if ($namaMenu === 'Usulan Penghapusan' && $hasDaftarUsulan && $daftarRow) {
-                    $daftarIcon = $iconMap['Daftar Usulan Penghapusan'] ?? 'bi bi-circle';
-                    $daftarFile = $daftarRow['menu'].'.php';
-                    $isDaftarActive = ($currentPage === $daftarFile) ? 'active' : '';
-                    
-                    echo '
-                <li class="nav-item">
-                    <a href="../'.$daftarRow['menu'].'/'.$daftarRow['menu'].'.php" class="nav-link '.$isDaftarActive.'">
-                        <i class="nav-icon '.$daftarIcon.'"></i>
-                        <p>Daftar Usulan Penghapusan</p>
-                    </a>
-                </li>';
+
+                // Jika user tidak punya akses Usulan Penghapusan tapi punya Daftar Usulan
+                if ($daftarRow && !in_array('Usulan Penghapusan', array_column($menuRows, 'nama_menu'))) {
+                    $isDaftarActive = ($currentPage === $daftarRow['menu'] . '.php') ? 'active' : '';
+                    echo '<li class="nav-item"><a href="../' . $daftarRow['menu'] . '/' . $daftarRow['menu'] . '.php" class="nav-link ' . $isDaftarActive . '"><i class="nav-icon bi bi-collection"></i><p>Daftar Usulan Penghapusan</p></a></li>';
                 }
-            }
             ?>
             </ul>
             <!--end::Sidebar Menu-->

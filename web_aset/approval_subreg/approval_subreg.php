@@ -284,6 +284,7 @@ if (isset($_SESSION['Type_User']) && (stripos($_SESSION['Type_User'], 'Sub') !==
            FROM usulan_penghapusan up 
            LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama 
            " . $uploadWhereClause . "
+           HAVING jumlah_dokumen > 0
            ORDER BY up.updated_at DESC";
 
   $result_upload = mysqli_query($con, $query_upload);
@@ -352,12 +353,14 @@ if (isset($_SESSION['Type_User']) && (stripos($_SESSION['Type_User'], 'Sub') !==
                    up.status, up.status_approval_subreg,
                    id.keterangan_asset as nama_aset,
                    id.asset_class_name as kategori_aset,
+                   id.profit_center,
                    id.profit_center_text,
                    id.subreg,
                    (SELECT COUNT(*) FROM dokumen_penghapusan WHERE usulan_id = up.id) as jumlah_dokumen
                    FROM usulan_penghapusan up
                    LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama
                    " . $pickerWhereClause . "
+                   HAVING jumlah_dokumen > 0
                    ORDER BY up.updated_at DESC";
   $result_picker = mysqli_query($con, $query_picker);
   if ($result_picker) {
@@ -953,7 +956,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'view_dokumen' && isset($_GET[
 
     // Check permissions
     $isOwner = (trim((string)$dok['nipp']) === $nipp_sess);
-    $isApprover = stripos($typeUser, 'Sub Regional') !== false || stripos($typeUser, 'Cabang') !== false;
+    $isApprover = stripos($typeUser, 'Sub Regional') !== false || stripos($typeUser, 'Cabang') !== false || stripos($typeUser, 'Regional') !== false;
 
     $canView = false;
     if ($isOwner || $isApprover) {
@@ -1835,65 +1838,57 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
             >
             <?php  
             $userNipp = isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : '';
-            $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '" . mysqli_real_escape_string($con, $userNipp) . "' ORDER BY menus.urutan_menu ASC";
+            $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu 
+                      FROM user_access 
+                      INNER JOIN menus ON user_access.id_menu = menus.id_menu 
+                      WHERE user_access.NIPP = '" . mysqli_real_escape_string($con, $userNipp) . "' 
+                      ORDER BY menus.urutan_menu ASC";
             $result_menu = mysqli_query($con, $query) or die(mysqli_error($con));
+
             $iconMap = [
-                'Dasboard'                  => 'bi bi-grid-fill',
-                'Usulan Penghapusan'        => 'bi bi-clipboard-plus',
-                'Daftar Usulan Penghapusan' => 'bi bi-clipboard-check-fill',
-                'Approval SubReg'           => 'bi bi-check-circle',
-                'Approval Regional'         => 'bi bi-check2-square',
-                'Persetujuan Penghapusan'   => 'bi bi-clipboard-check-fill',
-                'Pelaksanaan Penghapusan'   => 'bi bi-tools',
-                'Manajemen Menu'            => 'bi bi-list-ul',
-                'Import DAT'                => 'bi bi-file-earmark-arrow-down',
-                'Export DAT'                => 'bi bi-file-earmark-arrow-up-fill',
-                'Daftar Aset Tetap'         => 'bi bi-card-list',
-                'Manajemen User'            => 'bi bi-people-fill'
+                'Dasboard'                      => 'bi bi-grid-fill',
+                'Usulan Penghapusan'             => 'bi bi-file-earmark-plus',
+                'Daftar Usulan Penghapusan'      => 'bi bi-collection',
+                'Approval SubReg'                => 'bi bi-person-check',
+                'Approval Regional'              => 'bi bi-building-check',
+                'Persetujuan Penghapusan'        => 'bi bi-shield-check',
+                'Daftar Persetujuan Penghapusan' => 'bi bi-journal-check',
+                'Pelaksanaan Penghapusan'        => 'bi bi-gear-wide-connected',
+                'Daftar Pelaksanaan Penghapusan' => 'bi bi-archive-fill',
+                'Manajemen Menu'                 => 'bi bi-layout-text-sidebar',
+                'Import DAT'                     => 'bi bi-file-earmark-arrow-up',
+                'Daftar Aset Tetap'              => 'bi bi-card-list',
+                'Manajemen User'                 => 'bi bi-people',
             ];
-            $menuRows = [];
-          while ($row = mysqli_fetch_assoc($result_menu)) {
-              $menuRows[] = $row;
-          }
 
-          $hasDaftarUsulan = false;
-          $daftarRow       = null;
-          $hasUsulanMenu   = false;
+            // Kumpulkan semua menu ke satu array
+            $allMenus = [];
+            while ($row = mysqli_fetch_assoc($result_menu)) {
+                $allMenus[] = $row;
+            }
 
-          foreach ($menuRows as $row) {
-              $nm = trim($row['nama_menu']);
-              if ($nm === 'Daftar Usulan Penghapusan') { $hasDaftarUsulan = true; $daftarRow = $row; }
-              if ($nm === 'Usulan Penghapusan')         { $hasUsulanMenu = true; }
-          }
+            // Sort berdasarkan urutan_menu untuk memastikan urutan selalu konsisten
+            usort($allMenus, function($a, $b) {
+                return $a['urutan_menu'] <=> $b['urutan_menu'];
+            });
 
-          $currentPage = basename($_SERVER['PHP_SELF']);
+            // Loop melalui menu yang sudah terurut
+            $currentPage = basename($_SERVER['PHP_SELF']);
+            foreach ($allMenus as $row) {
+                $namaMenu = trim($row['nama_menu']);
+                $icon     = $iconMap[$namaMenu] ?? 'bi bi-circle';
+                $isActive = ($currentPage === $row['menu'] . '.php') ? 'active' : '';
 
-          foreach ($menuRows as $row) {
-              $namaMenu = trim($row['nama_menu']);
-              if ($namaMenu === 'Daftar Usulan Penghapusan') continue;
+                if ($namaMenu === 'Manajemen Menu') echo '<li class="nav-header"></li>';
 
-              $icon     = $iconMap[$namaMenu] ?? 'bi bi-circle';
-              $menuFile = $row['menu'] . '.php';
-              $isActive = ($currentPage === $menuFile) ? 'active' : '';
-
-              if ($namaMenu === 'Manajemen Menu') echo '<li class="nav-header"></li>';
-              echo '<li class="nav-item"><a href="../' . $row['menu'] . '/' . $row['menu'] . '.php" class="nav-link ' . $isActive . '"><i class="nav-icon ' . $icon . '"></i><p>' . $row['nama_menu'] . '</p></a></li>';
-
-              if ($namaMenu === 'Usulan Penghapusan' && $hasDaftarUsulan && $daftarRow) {
-                  $daftarIcon     = $iconMap['Daftar Usulan Penghapusan'] ?? 'bi bi-circle';
-                  $daftarFile     = $daftarRow['menu'] . '.php';
-                  $isDaftarActive = ($currentPage === $daftarFile) ? 'active' : '';
-                  echo '<li class="nav-item"><a href="../' . $daftarRow['menu'] . '/' . $daftarRow['menu'] . '.php" class="nav-link ' . $isDaftarActive . '"><i class="nav-icon ' . $daftarIcon . '"></i><p>Daftar Usulan Penghapusan</p></a></li>';
-              }
-          }
-
-          if ($hasDaftarUsulan && $daftarRow && !$hasUsulanMenu) {
-              $daftarIcon     = $iconMap['Daftar Usulan Penghapusan'] ?? 'bi bi-circle';
-              $daftarFile     = $daftarRow['menu'] . '.php';
-              $isDaftarActive = ($currentPage === $daftarFile) ? 'active' : '';
-              echo '<li class="nav-item"><a href="../' . $daftarRow['menu'] . '/' . $daftarRow['menu'] . '.php" class="nav-link ' . $isDaftarActive . '"><i class="nav-icon ' . $daftarIcon . '"></i><p>Daftar Usulan Penghapusan</p></a></li>';
-          }
-          ?>
+                echo '<li class="nav-item">
+                        <a href="../' . $row['menu'] . '/' . $row['menu'] . '.php" class="nav-link ' . $isActive . '">
+                          <i class="nav-icon ' . $icon . '"></i>
+                          <p>' . htmlspecialchars($namaMenu) . '</p>
+                        </a>
+                      </li>';
+            }
+        ?>
         </ul>
       </nav>
     </div>
@@ -2281,8 +2276,8 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                             </td>
                                             <td><?= htmlspecialchars(str_replace('AUC-', '', $ua['nama_aset'] ?? '-')) ?></td>
                                             <td><?= htmlspecialchars($ua['kategori_aset'] ?? '-') ?></td>
-                                             <td><?= htmlspecialchars($ua['profit_center'] ?? '') . (!empty($ua['profit_center_text']) ? ' - ' . htmlspecialchars($ua['profit_center_text']) : '') ?></td>
-                                            <td><?= htmlspecialchars($ua['fisik_aset'] ?? '-') ?></td>
+                                            <td><?= htmlspecialchars($ua['profit_center'] ?? '') . (!empty($ua['profit_center_text']) ? ' - ' . htmlspecialchars($ua['profit_center_text']) : '') ?></td>
+                                            <td><?= !empty($ua['fisik_aset']) ? htmlspecialchars($ua['fisik_aset']) : '-' ?></td>
                                           </tr>                                       
                                           <?php endforeach; ?>
                                         </tbody>
@@ -2441,20 +2436,37 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                   tr.style.background = (i % 2 === 0) ? '#f8f9fa' : '#fff';
                                   
                                   // Badge untuk mekanisme (dengan fallback property names)
-                                  let mekanismeBadge = '-';
+                                   let mekanismeBadge = '-';
                                   const mekanismeVal = r.mekanisme_penghapusan || r.mekanisme || r.mekanisme_penghapusan_text || '';
                                   if (mekanismeVal) {
-                                    const badgeClass = mekanismeVal === 'Jual Lelang' ? 'success' : 'warning';
-                                    mekanismeBadge = '<span class="badge bg-' + badgeClass + '">' + escHtml(mekanismeVal) + '</span>';
+                                    let mekanismeStyle = '';
+                                    if (mekanismeVal === 'Hapus Administrasi') {
+                                      mekanismeStyle = 'background:#6f42c1; color:#fff;';
+                                    } else if (mekanismeVal === 'Jual Lelang') {
+                                      mekanismeStyle = 'background:#0d6efd; color:#fff;';
+                                    } else {
+                                      mekanismeStyle = 'background:#6c757d; color:#fff;';
+                                    }
+                                    mekanismeBadge = '<span class="badge" style="' + mekanismeStyle + '">' + escHtml(mekanismeVal) + '</span>';
                                   }
 
                                   // Badge untuk status (dengan fallback property names)
                                   let statusBadge = '-';
                                   const statusVal = r.status_penghapusan || r.status_penghapusan_text || r.status || '';
                                   if (statusVal) {
-                                    const statusClass = statusVal === 'Siap Upload' ? 'info' :
-                                                       statusVal === 'Lengkapi Data' ? 'warning' : 'secondary';
-                                    statusBadge = '<span class="badge bg-' + statusClass + '">' + escHtml(statusVal) + '</span>';
+                                    let statusStyle = '';
+                                    if (statusVal === 'Approved' || statusVal === 'Approved SubReg' || statusVal === 'Approved Regional') {
+                                      statusStyle = 'background:#28a745; color:#fff;';
+                                    } else if (statusVal === 'Siap Upload' || statusVal === 'Data Lengkap') {
+                                      statusStyle = 'background:#17a2b8; color:#fff;';
+                                    } else if (statusVal === 'Lengkapi Data') {
+                                      statusStyle = 'background:#ffc107; color:#000;';
+                                    } else if (statusVal === 'Rejected') {
+                                      statusStyle = 'background:#dc3545; color:#fff;';
+                                    } else {
+                                      statusStyle = 'background:#6c757d; color:#fff;';
+                                    }
+                                    statusBadge = '<span class="badge" style="' + statusStyle + '">' + escHtml(statusVal) + '</span>';
                                   }
                                   
                                   tr.innerHTML =
