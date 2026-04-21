@@ -284,7 +284,6 @@ if (isset($_SESSION['Type_User']) && (stripos($_SESSION['Type_User'], 'Sub') !==
            FROM usulan_penghapusan up 
            LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama 
            " . $uploadWhereClause . "
-           HAVING jumlah_dokumen > 0
            ORDER BY up.updated_at DESC";
 
   $result_upload = mysqli_query($con, $query_upload);
@@ -345,7 +344,8 @@ if (isset($_SESSION['Type_User']) && (stripos($_SESSION['Type_User'], 'Sub') !==
 $upload_data_picker = [];
 if (isset($_SESSION['Type_User']) && (stripos($_SESSION['Type_User'], 'Sub') !== false || stripos($_SESSION['Type_User'], 'Cabang') !== false || stripos($_SESSION['Type_User'], 'Regional') !== false)) {
   // Lebih longgar: semua aset submitted dalam subreg, tanpa filter status_approval_subreg
-  $pickerWhereClause = $filterCondition . " AND up.status IN ('submitted','dokumen_lengkap','approved','approved_subreg','pending_regional','approved_regional','pending_subreg')";
+  // Hanya aset yang sudah di-approve SubReg yang boleh diupload dokumen
+  $pickerWhereClause = $filterCondition . " AND up.status_approval_subreg IN ('approved','approved_subreg','approved_regional','pending_regional')";
   if (!empty($tahunSelected)) {
     $pickerWhereClause .= " AND up.tahun_usulan = '" . mysqli_real_escape_string($con, $tahunSelected) . "'";
   }
@@ -360,7 +360,6 @@ if (isset($_SESSION['Type_User']) && (stripos($_SESSION['Type_User'], 'Sub') !==
                    FROM usulan_penghapusan up
                    LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama
                    " . $pickerWhereClause . "
-                   HAVING jumlah_dokumen > 0
                    ORDER BY up.updated_at DESC";
   $result_picker = mysqli_query($con, $query_picker);
   if ($result_picker) {
@@ -956,7 +955,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'view_dokumen' && isset($_GET[
 
     // Check permissions
     $isOwner = (trim((string)$dok['nipp']) === $nipp_sess);
-    $isApprover = stripos($typeUser, 'Sub Regional') !== false || stripos($typeUser, 'Cabang') !== false || stripos($typeUser, 'Regional') !== false;
+     $isApprover = stripos($typeUser, 'Sub Regional') !== false || stripos($typeUser, 'Cabang') !== false || stripos($typeUser, 'Regional') !== false;
 
     $canView = false;
     if ($isOwner || $isApprover) {
@@ -1838,57 +1837,65 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
             >
             <?php  
             $userNipp = isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : '';
-            $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu 
-                      FROM user_access 
-                      INNER JOIN menus ON user_access.id_menu = menus.id_menu 
-                      WHERE user_access.NIPP = '" . mysqli_real_escape_string($con, $userNipp) . "' 
-                      ORDER BY menus.urutan_menu ASC";
+            $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '" . mysqli_real_escape_string($con, $userNipp) . "' ORDER BY menus.urutan_menu ASC";
             $result_menu = mysqli_query($con, $query) or die(mysqli_error($con));
-
             $iconMap = [
-                'Dasboard'                      => 'bi bi-grid-fill',
-                'Usulan Penghapusan'             => 'bi bi-file-earmark-plus',
-                'Daftar Usulan Penghapusan'      => 'bi bi-collection',
-                'Approval SubReg'                => 'bi bi-person-check',
-                'Approval Regional'              => 'bi bi-building-check',
-                'Persetujuan Penghapusan'        => 'bi bi-shield-check',
-                'Daftar Persetujuan Penghapusan' => 'bi bi-journal-check',
-                'Pelaksanaan Penghapusan'        => 'bi bi-gear-wide-connected',
-                'Daftar Pelaksanaan Penghapusan' => 'bi bi-archive-fill',
-                'Manajemen Menu'                 => 'bi bi-layout-text-sidebar',
-                'Import DAT'                     => 'bi bi-file-earmark-arrow-up',
-                'Daftar Aset Tetap'              => 'bi bi-card-list',
-                'Manajemen User'                 => 'bi bi-people',
+                'Dasboard'                  => 'bi bi-grid-fill',
+                'Usulan Penghapusan'        => 'bi bi-clipboard-plus',
+                'Daftar Usulan Penghapusan' => 'bi bi-clipboard-check-fill',
+                'Approval SubReg'           => 'bi bi-check-circle',
+                'Approval Regional'         => 'bi bi-check2-square',
+                'Persetujuan Penghapusan'   => 'bi bi-clipboard-check-fill',
+                'Pelaksanaan Penghapusan'   => 'bi bi-tools',
+                'Manajemen Menu'            => 'bi bi-list-ul',
+                'Import DAT'                => 'bi bi-file-earmark-arrow-down',
+                'Export DAT'                => 'bi bi-file-earmark-arrow-up-fill',
+                'Daftar Aset Tetap'         => 'bi bi-card-list',
+                'Manajemen User'            => 'bi bi-people-fill'
             ];
+            $menuRows = [];
+          while ($row = mysqli_fetch_assoc($result_menu)) {
+              $menuRows[] = $row;
+          }
 
-            // Kumpulkan semua menu ke satu array
-            $allMenus = [];
-            while ($row = mysqli_fetch_assoc($result_menu)) {
-                $allMenus[] = $row;
-            }
+          $hasDaftarUsulan = false;
+          $daftarRow       = null;
+          $hasUsulanMenu   = false;
 
-            // Sort berdasarkan urutan_menu untuk memastikan urutan selalu konsisten
-            usort($allMenus, function($a, $b) {
-                return $a['urutan_menu'] <=> $b['urutan_menu'];
-            });
+          foreach ($menuRows as $row) {
+              $nm = trim($row['nama_menu']);
+              if ($nm === 'Daftar Usulan Penghapusan') { $hasDaftarUsulan = true; $daftarRow = $row; }
+              if ($nm === 'Usulan Penghapusan')         { $hasUsulanMenu = true; }
+          }
 
-            // Loop melalui menu yang sudah terurut
-            $currentPage = basename($_SERVER['PHP_SELF']);
-            foreach ($allMenus as $row) {
-                $namaMenu = trim($row['nama_menu']);
-                $icon     = $iconMap[$namaMenu] ?? 'bi bi-circle';
-                $isActive = ($currentPage === $row['menu'] . '.php') ? 'active' : '';
+          $currentPage = basename($_SERVER['PHP_SELF']);
 
-                if ($namaMenu === 'Manajemen Menu') echo '<li class="nav-header"></li>';
+          foreach ($menuRows as $row) {
+              $namaMenu = trim($row['nama_menu']);
+              if ($namaMenu === 'Daftar Usulan Penghapusan') continue;
 
-                echo '<li class="nav-item">
-                        <a href="../' . $row['menu'] . '/' . $row['menu'] . '.php" class="nav-link ' . $isActive . '">
-                          <i class="nav-icon ' . $icon . '"></i>
-                          <p>' . htmlspecialchars($namaMenu) . '</p>
-                        </a>
-                      </li>';
-            }
-        ?>
+              $icon     = $iconMap[$namaMenu] ?? 'bi bi-circle';
+              $menuFile = $row['menu'] . '.php';
+              $isActive = ($currentPage === $menuFile) ? 'active' : '';
+
+              if ($namaMenu === 'Manajemen Menu') echo '<li class="nav-header"></li>';
+              echo '<li class="nav-item"><a href="../' . $row['menu'] . '/' . $row['menu'] . '.php" class="nav-link ' . $isActive . '"><i class="nav-icon ' . $icon . '"></i><p>' . $row['nama_menu'] . '</p></a></li>';
+
+              if ($namaMenu === 'Usulan Penghapusan' && $hasDaftarUsulan && $daftarRow) {
+                  $daftarIcon     = $iconMap['Daftar Usulan Penghapusan'] ?? 'bi bi-circle';
+                  $daftarFile     = $daftarRow['menu'] . '.php';
+                  $isDaftarActive = ($currentPage === $daftarFile) ? 'active' : '';
+                  echo '<li class="nav-item"><a href="../' . $daftarRow['menu'] . '/' . $daftarRow['menu'] . '.php" class="nav-link ' . $isDaftarActive . '"><i class="nav-icon ' . $daftarIcon . '"></i><p>Daftar Usulan Penghapusan</p></a></li>';
+              }
+          }
+
+          if ($hasDaftarUsulan && $daftarRow && !$hasUsulanMenu) {
+              $daftarIcon     = $iconMap['Daftar Usulan Penghapusan'] ?? 'bi bi-circle';
+              $daftarFile     = $daftarRow['menu'] . '.php';
+              $isDaftarActive = ($currentPage === $daftarFile) ? 'active' : '';
+              echo '<li class="nav-item"><a href="../' . $daftarRow['menu'] . '/' . $daftarRow['menu'] . '.php" class="nav-link ' . $isDaftarActive . '"><i class="nav-icon ' . $daftarIcon . '"></i><p>Daftar Usulan Penghapusan</p></a></li>';
+          }
+          ?>
         </ul>
       </nav>
     </div>
@@ -2272,12 +2279,12 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                               <?php endif; ?>
                                             </td>
                                             <td>
-                                              <?= !empty($ua['mekanisme_penghapusan']) ? htmlspecialchars($ua['mekanisme_penghapusan']) : '-' ?> 
+                                              <?= htmlspecialchars($ua['mekanisme_penghapusan'] ?? '-') ?>
                                             </td>
                                             <td><?= htmlspecialchars(str_replace('AUC-', '', $ua['nama_aset'] ?? '-')) ?></td>
                                             <td><?= htmlspecialchars($ua['kategori_aset'] ?? '-') ?></td>
                                             <td><?= htmlspecialchars($ua['profit_center'] ?? '') . (!empty($ua['profit_center_text']) ? ' - ' . htmlspecialchars($ua['profit_center_text']) : '') ?></td>
-                                            <td><?= !empty($ua['fisik_aset']) ? htmlspecialchars($ua['fisik_aset']) : '-' ?></td>
+                                            <td><?= htmlspecialchars($ua['fisik_aset'] ?? '-') ?></td>
                                           </tr>                                       
                                           <?php endforeach; ?>
                                         </tbody>
@@ -2427,7 +2434,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                             .then(function(json) {
                               if (json.status === 'success' && json.data && json.data.length > 0) {
                                 const row = json.data[0];
-                                pcEl.textContent  = row.profit_center || '-';
+                                pcEl.textContent  = (row.profit_center ? row.profit_center + ' | ' : '') + (row.profit_center_text || '-');
                                 subEl.textContent = row.subreg || '-';
                                 totalEl.textContent = 'Total: ' + json.data.length + ' aset dimuat';
                                 tbody.innerHTML = '';
@@ -2435,38 +2442,28 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                   const tr = document.createElement('tr');
                                   tr.style.background = (i % 2 === 0) ? '#f8f9fa' : '#fff';
                                   
-                                  // Badge untuk mekanisme (dengan fallback property names)
-                                   let mekanismeBadge = '-';
+                                  // Badge untuk mekanisme
+                                  let mekanismeBadge = '-';
                                   const mekanismeVal = r.mekanisme_penghapusan || r.mekanisme || r.mekanisme_penghapusan_text || '';
-                                  if (mekanismeVal) {
-                                    let mekanismeStyle = '';
-                                    if (mekanismeVal === 'Hapus Administrasi') {
-                                      mekanismeStyle = 'background:#6f42c1; color:#fff;';
-                                    } else if (mekanismeVal === 'Jual Lelang') {
-                                      mekanismeStyle = 'background:#0d6efd; color:#fff;';
-                                    } else {
-                                      mekanismeStyle = 'background:#6c757d; color:#fff;';
-                                    }
-                                    mekanismeBadge = '<span class="badge" style="' + mekanismeStyle + '">' + escHtml(mekanismeVal) + '</span>';
+                                  if (mekanismeVal === 'Hapus Administrasi') {
+                                    mekanismeBadge = '<span class="badge" style="background:#6f42c1;">Hapus Administrasi</span>';
+                                  } else if (mekanismeVal === 'Jual Lelang') {
+                                    mekanismeBadge = '<span class="badge bg-primary">Jual Lelang</span>';
+                                  } else if (mekanismeVal) {
+                                    mekanismeBadge = '<span class="badge bg-secondary">' + escHtml(mekanismeVal) + '</span>';
                                   }
 
-                                  // Badge untuk status (dengan fallback property names)
+                                  // Badge untuk status
                                   let statusBadge = '-';
                                   const statusVal = r.status_penghapusan || r.status_penghapusan_text || r.status || '';
                                   if (statusVal) {
-                                    let statusStyle = '';
-                                    if (statusVal === 'Approved' || statusVal === 'Approved SubReg' || statusVal === 'Approved Regional') {
-                                      statusStyle = 'background:#28a745; color:#fff;';
-                                    } else if (statusVal === 'Siap Upload' || statusVal === 'Data Lengkap') {
-                                      statusStyle = 'background:#17a2b8; color:#fff;';
-                                    } else if (statusVal === 'Lengkapi Data') {
-                                      statusStyle = 'background:#ffc107; color:#000;';
-                                    } else if (statusVal === 'Rejected') {
-                                      statusStyle = 'background:#dc3545; color:#fff;';
-                                    } else {
-                                      statusStyle = 'background:#6c757d; color:#fff;';
-                                    }
-                                    statusBadge = '<span class="badge" style="' + statusStyle + '">' + escHtml(statusVal) + '</span>';
+                                    let statusClass = 'secondary';
+                                    const sv = statusVal.toLowerCase();
+                                    if (sv.includes('approved') || sv === 'approved') statusClass = 'success';
+                                    else if (sv.includes('submit')) statusClass = 'warning text-dark';
+                                    else if (sv.includes('reject')) statusClass = 'danger';
+                                    else if (sv.includes('pending')) statusClass = 'info text-dark';
+                                    statusBadge = '<span class="badge bg-' + statusClass + '">' + escHtml(statusVal) + '</span>';
                                   }
                                   
                                   tr.innerHTML =
@@ -3860,14 +3857,32 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
         document.getElementById('btnModalReject').onclick = function() {
           const id = document.getElementById('usulan_id').value;
           if (!id) return;
-          const note = (document.getElementById('modalRejectNote') || {}).value || '';
+          const nomorAset = (document.getElementById('display_nomor_aset') || {}).textContent || '';
+          const namaAset  = (document.getElementById('display_nama_aset')  || {}).textContent || '';
 
-          // Tampilkan modal konfirmasi kustom (lebih atraktif)
+          // Reset textarea dan error state
+          const noteInput = document.getElementById('confirmRejectNoteInput');
+          if (noteInput) { noteInput.value = ''; noteInput.classList.remove('is-invalid'); }
+          const errorEl = document.getElementById('confirmRejectNoteError');
+          if (errorEl) errorEl.style.display = 'none';
+
+          // Isi info aset
+          const asetPreview = document.getElementById('confirmRejectAsetPreview');
+          if (asetPreview) {
+            const label = (nomorAset || id) + (namaAset ? ' — ' + namaAset : '');
+            asetPreview.textContent = label;
+          }
+
           document.getElementById('confirmRejectUsulanId').value = id;
-          document.getElementById('confirmRejectNotePreview').textContent = note.trim() || '(Tidak ada alasan)';
 
           const confirmModal = new bootstrap.Modal(document.getElementById('modalConfirmReject'));
           confirmModal.show();
+
+          // Auto-focus textarea setelah modal muncul
+          document.getElementById('modalConfirmReject').addEventListener('shown.bs.modal', function onShown() {
+            if (noteInput) noteInput.focus();
+            this.removeEventListener('shown.bs.modal', onShown);
+          });
         };
         // Save (submit the lengkapi form) — kept separate from approve/reject
         document.getElementById('btnSaveLengkapi').onclick = function() {
@@ -3881,13 +3896,27 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
       if (!btnConfirmReject) return;
       btnConfirmReject.addEventListener('click', function() {
         const id = document.getElementById('confirmRejectUsulanId').value;
-        const note = (document.getElementById('modalRejectNote') || {}).value || '';
+
+        // Baca dari textarea di dalam modal konfirmasi
+        const noteEl = document.getElementById('confirmRejectNoteInput');
+        const errorEl = document.getElementById('confirmRejectNoteError');
+        const note = noteEl ? noteEl.value.trim() : '';
+
+        // Validasi: alasan wajib diisi
+        if (!note) {
+          if (noteEl) { noteEl.classList.add('is-invalid'); noteEl.focus(); }
+          if (errorEl) errorEl.style.display = 'block';
+          return;
+        }
+        if (noteEl) noteEl.classList.remove('is-invalid');
+        if (errorEl) errorEl.style.display = 'none';
+
         // Hide confirm modal
         try { bootstrap.Modal.getInstance(document.getElementById('modalConfirmReject')).hide(); } catch(e){}
         // Hide detail modal if open
         try { bootstrap.Modal.getInstance(document.getElementById('modalFormLengkapiDokumen')).hide(); } catch(e){}
         // Call reject
-        if (id) performRejectUsulan(id, note.trim());
+        if (id) performRejectUsulan(id, note);
       });
     });
 
@@ -4128,12 +4157,22 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
           <div class="modal-body">
             <div class="d-flex align-items-start gap-3">
               <div style="font-size: 2.4rem; color: #f8d7da;"><i class="bi bi-x-circle-fill"></i></div>
-              <div>
+              <div class="w-100">
                 <p class="mb-2" style="font-weight:600;">Anda akan menolak usulan ini.</p>
                 <p class="mb-2 text-muted">Tindakan ini akan dicatat di riwayat persetujuan dan tidak dapat dibatalkan.</p>
+                <div class="mt-2 mb-3">
+                  <small class="text-muted">Aset:</small>
+                  <div id="confirmRejectAsetPreview" class="p-2 mt-1" style="background:#f8f9fa;border-radius:6px;font-weight:500;">(Nomor &amp; nama aset akan ditampilkan di sini)</div>
+                </div>
                 <div class="mt-2">
-                  <small class="text-muted">Alasan yang akan disimpan:</small>
-                  <div id="confirmRejectNotePreview" class="p-2 mt-1" style="background:#f8f9fa;border-radius:6px;">(Tidak ada alasan)</div>
+                  <label for="confirmRejectNoteInput" class="form-label mb-1" style="font-size:.85rem;font-weight:600;">
+                    Alasan Reject <span class="text-danger">*</span> <small class="text-muted fw-normal">(wajib diisi)</small>
+                  </label>
+                  <textarea id="confirmRejectNoteInput" class="form-control" rows="3"
+                    placeholder="Tuliskan alasan penolakan usulan ini..."></textarea>
+                  <div id="confirmRejectNoteError" class="text-danger mt-1" style="font-size:.82rem;display:none;">
+                    <i class="bi bi-exclamation-circle me-1"></i>Alasan reject wajib diisi.
+                  </div>
                 </div>
               </div>
             </div>
@@ -4141,7 +4180,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
           <div class="modal-footer">
             <input type="hidden" id="confirmRejectUsulanId" value="">
             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
-            <button type="button" id="btnConfirmReject" class="btn btn-danger">Ya, Tolak</button>
+            <button type="button" id="btnConfirmReject" class="btn btn-danger"><i class="bi bi-x-circle me-1"></i>Ya, Tolak</button>
           </div>
         </div>
       </div>
