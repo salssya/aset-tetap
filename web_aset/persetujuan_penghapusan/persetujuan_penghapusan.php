@@ -36,20 +36,47 @@ function serveFileFromDb($filePathDb, $fileName, $forceDownload = false) {
         echo $fileData; exit();
     }
 
-    $resolvedPath = $filePathDb;
-    if (!file_exists($resolvedPath)) {
-        $resolvedPath = __DIR__ . '/' . ltrim($filePathDb, '/\\');
+    // Raw binary BLOB — PDF dimulai dengan %PDF atau ada null byte (binary)
+    if (!empty($filePathDb) && (
+        substr($filePathDb, 0, 4) === '%PDF' ||
+        substr($filePathDb, 0, 4) === "\x25\x50\x44\x46" ||
+        (is_string($filePathDb) && strlen($filePathDb) > 4 && strpos($filePathDb, "\x00") !== false)
+    )) {
+        header('Content-Type: application/pdf');
+        header('Content-Disposition: ' . ($forceDownload ? 'attachment' : 'inline') . '; filename="' . $fileName . '"');
+        header('Content-Length: ' . strlen($filePathDb));
+        header('Cache-Control: no-cache');
+        echo $filePathDb; exit();
     }
 
-    if (!file_exists($resolvedPath) || !is_file($resolvedPath)) {
-        http_response_code(404); echo 'File tidak ditemukan.'; exit();
+    // Path file di filesystem (Windows/Unix)
+    $normalized = str_replace('\\', '/', trim($filePathDb));
+    $docRoot    = str_replace('\\', '/', rtrim($_SERVER['DOCUMENT_ROOT'] ?? '', '/\\'));
+    $candidates = [];
+    if (preg_match('#^[A-Za-z]:/#', $normalized))
+        $candidates[] = str_replace('/', DIRECTORY_SEPARATOR, $normalized);
+    if (preg_match('#/htdocs/(.+)$#i', $normalized, $m))
+        $candidates[] = str_replace('/', DIRECTORY_SEPARATOR, $docRoot . '/' . $m[1]);
+    if (strpos($normalized, '/') === 0)
+        $candidates[] = $normalized;
+    if (!empty($docRoot)) {
+        $stripped = ltrim(preg_replace('#^' . preg_quote($docRoot, '#') . '#', '', $normalized), '/');
+        $candidates[] = str_replace('/', DIRECTORY_SEPARATOR, $docRoot . '/' . $stripped);
+    }
+    $candidates[] = __DIR__ . DIRECTORY_SEPARATOR . ltrim(str_replace('/', DIRECTORY_SEPARATOR, $normalized), DIRECTORY_SEPARATOR);
+    $candidates[] = $filePathDb;
+
+    foreach ($candidates as $path) {
+        if (!empty($path) && @file_exists($path) && @is_file($path)) {
+            header('Content-Type: application/pdf');
+            header('Content-Disposition: ' . ($forceDownload ? 'attachment' : 'inline') . '; filename="' . $fileName . '"');
+            header('Content-Length: ' . filesize($path));
+            header('Cache-Control: no-cache');
+            readfile($path); exit();
+        }
     }
 
-    header('Content-Type: application/pdf');
-    header('Content-Disposition: ' . ($forceDownload ? 'attachment' : 'inline') . '; filename="' . $fileName . '"');
-    header('Content-Length: ' . filesize($resolvedPath));
-    header('Cache-Control: no-cache');
-    readfile($resolvedPath); exit();
+    http_response_code(404); echo 'File tidak ditemukan.'; exit();
 }
 
 // ── Helper: normalize path foto ──────────────────────────────────────────────
@@ -195,24 +222,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
         $file_name   = basename($file['name']);
         $file_size   = $file['size'];
 
-        $uploadBaseDir = realpath(__DIR__ . '/../../uploads/dokumen_penghapusan') ?: (__DIR__ . '/../../uploads/dokumen_penghapusan');
-        if (!is_dir($uploadBaseDir) && !mkdir($uploadBaseDir, 0777, true) && !is_dir($uploadBaseDir)) {
-            $_SESSION['warning_message'] = 'Gagal membuat direktori upload.';
+        // Baca file sebagai binary BLOB — tidak simpan ke filesystem
+        $fileData = file_get_contents($file['tmp_name']);
+        if ($fileData === false || strlen($fileData) === 0) {
+            $_SESSION['warning_message'] = 'Gagal membaca file upload.';
             header("Location: " . $_SERVER['PHP_SELF'] . "?tab=upload&tahun=" . $tahun_dok);
             exit();
         }
 
-        $safeName = preg_replace('/[^A-Za-z0-9._-]/', '_', $file_name);
-        $targetFile = $uploadBaseDir . '/ho_' . uniqid('', true) . '_' . $safeName;
-        if (!move_uploaded_file($file['tmp_name'], $targetFile)) {
-            $_SESSION['warning_message'] = 'Gagal menyimpan file upload.';
-            header("Location: " . $_SERVER['PHP_SELF'] . "?tab=upload&tahun=" . $tahun_dok);
-            exit();
-        }
-
-        $lokasi_file = $targetFile;
         $no_aset_list = [];
-
         foreach ($ids as $uid) {
             $q_no = $con->prepare("SELECT nomor_asset_utama FROM usulan_penghapusan WHERE id = ? LIMIT 1");
             $q_no->bind_param("i", $uid); $q_no->execute();
@@ -237,7 +255,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
                     $tgl_now = date('Y-m-d');
                     $ins2->bind_param("issss", $uid, $r_up['subreg'], $r_up['profit_center'], $tgl_now, $userNipp);
                     $ins2->execute(); $ins2->close();
-                    // Fetch ID baru
                     $q_pel2 = $con->prepare("SELECT id FROM pelaksanaan_penghapusan WHERE usulan_id = ? LIMIT 1");
                     $q_pel2->bind_param("i", $uid); $q_pel2->execute();
                     $r_pel = $q_pel2->get_result()->fetch_assoc(); $q_pel2->close();
@@ -245,9 +262,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
             }
 
             if ($r_pel) {
-                $id_pel = $r_pel['id'];
-                $ins = $con->prepare("INSERT INTO dokumen_pelaksanaan (id_pelaksanaan, tahun_dokumen, deskripsi_dokumen, nomor_aset, lokasi_file, file_name, file_size, nipp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-                $ins->bind_param("iissssss", $id_pel, $tahun_dok, $deskripsi, $no_aset_str, $lokasi_file, $file_name, $file_size, $userNipp);
+                $id_pel  = $r_pel['id'];
+                $null    = null;
+                // Simpan sebagai BLOB — bind_param 'b' untuk binary stream
+                $ins = $con->prepare("INSERT INTO dokumen_pelaksanaan
+                    (id_pelaksanaan, tahun_dokumen, deskripsi_dokumen, nomor_aset, lokasi_file, file_name, file_size, nipp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+                $ins->bind_param("iissbsss", $id_pel, $tahun_dok, $deskripsi, $no_aset_str, $null, $file_name, $file_size, $userNipp);
+                $ins->send_long_data(4, $fileData);
                 if ($ins->execute()) $ok++;
                 $ins->close();
             }
@@ -260,46 +282,68 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
 }
 
 // ── QUERY DATA ───────────────────────────────────────────────────────────────
-$filterTahun = isset($_GET['tahun']) && !empty($_GET['tahun']) ? (int)$_GET['tahun'] : date('Y');
+// filterTahun: dari GET jika ada, default-nya nanti ditentukan setelah query list_tahun
+$filterTahun = isset($_GET['tahun']) && !empty($_GET['tahun']) ? (int)$_GET['tahun'] : 0;
 $activeTab   = isset($_GET['tab']) ? $_GET['tab'] : 'daftar';
+
+// Tahun dropdown - ambil dari tahun_usulan yang valid di DB, selalu tambahkan tahun sekarang
+$list_tahun = [];
+$res_thn = mysqli_query($con, "SELECT DISTINCT tahun_usulan as t FROM usulan_penghapusan WHERE status_approval_regional='approved' AND tahun_usulan IS NOT NULL AND tahun_usulan > 0 ORDER BY t DESC");
+while ($r = mysqli_fetch_assoc($res_thn)) if (!empty($r['t'])) $list_tahun[] = (int)$r['t'];
+// Selalu masukkan tahun sekarang di dropdown meski belum ada data
+if (!in_array((int)date('Y'), $list_tahun)) $list_tahun[] = (int)date('Y');
+$list_tahun = array_unique($list_tahun);
+rsort($list_tahun); // pastikan urut DESC
+// Default: selalu tahun sekarang (2026) saat buka menu tanpa parameter
+if ($filterTahun === 0) {
+    $filterTahun = (int)date('Y');
+}
 
 // Tab Daftar: semua usulan yang sudah approved regional, belum/pending HO
 // Tidak filter per user — semua bisa lihat & approve
-$res_p = mysqli_query($con, "SELECT up.*, id.keterangan_asset as nama_aset, id.asset_class_name as kategori_aset,
-    id.profit_center_text, id.subreg, id.nilai_perolehan_sd, id.nilai_buku_sd as nilai_buku,
-    id.tgl_perolehan, id.masa_manfaat as umur_ekonomis, id.sisa_manfaat as sisa_umur_ekonomis,
+$res_p = mysqli_query($con, "SELECT up.*,
+    up.nama_aset, up.kategori_aset, up.profit_center_text, up.subreg,
+    up.nilai_perolehan as nilai_perolehan_sd, up.nilai_buku,
+    up.tgl_perolehan, up.umur_ekonomis, up.sisa_umur_ekonomis,
     up.justifikasi_alasan, up.kajian_hukum, up.kajian_ekonomis, up.kajian_risiko,
-    YEAR(up.created_at) as tahun_usulan,
-    (SELECT COUNT(*) FROM dokumen_penghapusan dp WHERE dp.usulan_id = up.id) as jml_dok_usulan
+    up.tahun_usulan,
+    (SELECT COUNT(*) FROM dokumen_penghapusan dp
+     WHERE dp.usulan_id = up.id
+        OR dp.no_aset LIKE CONCAT('%', up.nomor_asset_utama, '%')
+    ) as jml_dok_usulan
     FROM usulan_penghapusan up
-    LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama
     WHERE up.status_approval_regional = 'approved'
       AND (up.status_approval_ho IS NULL OR up.status_approval_ho = 'pending')
-      AND YEAR(up.created_at) = $filterTahun
+      AND up.tahun_usulan = $filterTahun
+      AND up.tahun_usulan IS NOT NULL AND up.tahun_usulan > 0
     ORDER BY up.created_at DESC");
 $data_pending = [];
 while ($r = mysqli_fetch_assoc($res_p)) {
     $r['nama_aset'] = str_replace('AUC-', '', $r['nama_aset']??'');
     $r['foto_path'] = normalize_foto_path($r['foto_path'] ?? '');
+    // fallback: pastikan subreg dan profit_center_text tidak kosong
+    if (empty($r['subreg']))           $r['subreg']           = $r['profit_center'] ?? '-';
+    if (empty($r['profit_center_text'])) $r['profit_center_text'] = $r['profit_center'] ?? '-';
     $data_pending[] = $r;
 }
 
 // Tab Upload: yang sudah approved HO
-$res_a = mysqli_query($con, "SELECT up.*, id.keterangan_asset as nama_aset, id.asset_class_name as kategori_aset,
-    id.profit_center_text, id.subreg, id.nilai_buku_sd as nilai_buku,
+$res_a = mysqli_query($con, "SELECT up.*,
+    up.nama_aset, up.profit_center_text, up.subreg, up.nilai_buku,
     pel.id as id_pelaksanaan,
     (SELECT COUNT(*) FROM dokumen_pelaksanaan dp WHERE dp.id_pelaksanaan = pel.id) as jml_dok_ho
     FROM usulan_penghapusan up
-    LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama
     LEFT JOIN pelaksanaan_penghapusan pel ON pel.usulan_id = up.id
-    WHERE up.status_approval_ho = 'approved' AND YEAR(up.created_at) = $filterTahun
+    WHERE up.status_approval_ho = 'approved' AND up.tahun_usulan = $filterTahun
+      AND up.tahun_usulan IS NOT NULL AND up.tahun_usulan > 0
     ORDER BY up.tanggal_approval_ho DESC");
 $data_approved = [];
 while ($r = mysqli_fetch_assoc($res_a)) { $r['nama_aset'] = str_replace('AUC-', '', $r['nama_aset']??''); $data_approved[] = $r; }
 
 // Dokumen usulan untuk preview di modal detail
-$res_du = mysqli_query($con, "SELECT dp.id_dokumen, dp.usulan_id, dp.tipe_dokumen, dp.file_name,
-    YEAR(up.created_at) as tahun_usulan
+$res_du = mysqli_query($con, "SELECT dp.id_dokumen, dp.usulan_id, dp.tipe_dokumen, dp.file_name, dp.no_aset,
+    up.nomor_asset_utama,
+    up.tahun_usulan
     FROM dokumen_penghapusan dp
     JOIN usulan_penghapusan up ON dp.usulan_id = up.id
     WHERE up.status_approval_regional = 'approved' ORDER BY dp.id_dokumen DESC");
@@ -308,12 +352,10 @@ while ($r = mysqli_fetch_assoc($res_du)) $daftar_dok_usulan[] = $r;
 
 // Dokumen HO (untuk tabel preview upload)
 $res_dh = mysqli_query($con, "SELECT dp.*, pp.usulan_id,
-    up.profit_center, up.subreg,
-    id.profit_center_text
+    up.profit_center, up.subreg, up.profit_center_text
     FROM dokumen_pelaksanaan dp
     JOIN pelaksanaan_penghapusan pp ON dp.id_pelaksanaan = pp.id
     JOIN usulan_penghapusan up ON pp.usulan_id = up.id
-    LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama
     ORDER BY dp.id_dokumen DESC");
 $daftar_dok_ho = [];
 while ($r = mysqli_fetch_assoc($res_dh)) $daftar_dok_ho[] = $r;
@@ -321,14 +363,17 @@ while ($r = mysqli_fetch_assoc($res_dh)) $daftar_dok_ho[] = $r;
 // Counter summary boxes
 $cnt_pending  = count($data_pending);
 $cnt_approved = count($data_approved);
-$res_rej = mysqli_query($con, "SELECT COUNT(*) as c FROM usulan_penghapusan WHERE status_approval_ho='rejected' AND YEAR(created_at)=$filterTahun");
+$res_rej = mysqli_query($con, "SELECT COUNT(*) as c FROM usulan_penghapusan WHERE status_approval_ho='rejected' AND tahun_usulan=$filterTahun AND tahun_usulan IS NOT NULL AND tahun_usulan > 0");
 $cnt_rejected = mysqli_fetch_assoc($res_rej)['c'] ?? 0;
 
-// Tahun dropdown
+// Dropdown tahun — query ulang untuk render HTML (sama logika seperti di atas)
 $list_tahun = [];
-$res_thn = mysqli_query($con, "SELECT DISTINCT YEAR(created_at) as t FROM usulan_penghapusan WHERE status_approval_regional='approved' ORDER BY t DESC");
-while ($r = mysqli_fetch_assoc($res_thn)) $list_tahun[] = $r['t'];
-if (!in_array(date('Y'), $list_tahun)) array_unshift($list_tahun, (int)date('Y'));
+$res_thn = mysqli_query($con, "SELECT DISTINCT tahun_usulan as t FROM usulan_penghapusan WHERE status_approval_regional='approved' AND tahun_usulan IS NOT NULL AND tahun_usulan > 0 ORDER BY t DESC");
+while ($r = mysqli_fetch_assoc($res_thn)) if (!empty($r['t'])) $list_tahun[] = (int)$r['t'];
+if (!in_array((int)date('Y'), $list_tahun)) $list_tahun[] = (int)date('Y');
+$list_tahun = array_unique($list_tahun);
+rsort($list_tahun);
+// filterTahun sudah di-set di atas, tidak perlu override lagi
 
 $success_msg = $_SESSION['success_message'] ?? '';
 $warning_msg = $_SESSION['warning_message'] ?? '';
@@ -793,19 +838,13 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                             <td style="white-space:nowrap;">
                               <?php $vu = "?action=view_dok_ho&id_dok={$d['id_dokumen']}"; ?>
                               <button type="button" class="btn btn-sm btn-outline-secondary" style="margin-right:4px;"
-                                      onclick="togglePrev('dph-<?= $d['id_dokumen'] ?>','<?= $vu ?>')">
+                                      onclick="togglePrevExternal('dph-<?= $d['id_dokumen'] ?>','<?= $vu ?>')">
                                 Lihat Dokumen
                               </button>
-                              
                               <button type="button" class="btn btn-sm btn-outline-danger"
                                       onclick="confirmDeleteDokumen(<?= $d['id_dokumen'] ?>, '<?= htmlspecialchars(addslashes($d['deskripsi_dokumen']??'Dokumen')) ?>', <?= $filterTahun ?>)">
                                 Hapus
                               </button>
-                            </td>
-                          </tr>
-                          <tr id="dph-<?= $d['id_dokumen'] ?>" class="dt-preview-row" style="display:none;">
-                            <td colspan="8" style="padding:0;">
-                              <iframe id="dph-<?= $d['id_dokumen'] ?>-frame" src="" style="width:100%;height:460px;border:none;display:block;"></iframe>
                             </td>
                           </tr>
                           <?php endforeach; ?>
@@ -813,6 +852,26 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                       </tbody>
                     </table>
                   </div>
+
+                  <!-- Preview panel full-width di luar tabel -->
+                  <div id="previewPanelUpload" style="display:none;border-top:2px solid #28a745;">
+                    <div style="background:#f1f5f9;padding:8px 16px;display:flex;align-items:center;justify-content:space-between;">
+                      <span style="font-size:.82rem;color:#374151;font-weight:600;">
+                        <i class="bi bi-file-earmark-pdf text-danger me-1"></i>
+                        Preview: <span id="previewPanelLabel">-</span>
+                      </span>
+                      <div style="display:flex;gap:6px;">
+                        <a id="previewPanelBuka" href="#" target="_blank" class="btn btn-sm btn-outline-primary" style="font-size:.76rem;">
+                          <i class="bi bi-box-arrow-up-right me-1"></i>Buka
+                        </a>
+                        <button onclick="tutupPreviewUpload()" class="btn btn-sm btn-outline-secondary" style="font-size:.76rem;">
+                          <i class="bi bi-x-lg me-1"></i>Tutup
+                        </button>
+                      </div>
+                    </div>
+                    <iframe id="previewPanelFrame" src="" style="width:100%;height:600px;border:none;display:block;"></iframe>
+                  </div>
+
                 </div>
               </div>
             </div>
@@ -1009,13 +1068,13 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
 </div>
 
 <!-- Scripts -->
-<script src="../../dist/js/overlayscrollbars.browser.es6.min.js"></script>
+<script src="../../dist/js/jquery-3.6.0.min.js"></script>
 <script src="../../dist/js/popper.min.js"></script>
 <script src="../../dist/js/bootstrap.min.js"></script>
 <script src="../../dist/js/adminlte.js"></script>
-<script src="../../dist/js/jquery-3.6.0.min.js"></script>
 <script src="../../dist/js/dataTables.js"></script>
 <script src="../../dist/js/dataTables.bootstrap5.min.js"></script>
+<script src="../../dist/js/overlayscrollbars.browser.es6.min.js"></script>
 
 <script>
 const dataPending   = <?= json_encode($data_pending) ?>;
@@ -1068,7 +1127,9 @@ $(document).ready(function() {
   let pickerDT = null;
 
   function syncPickerCheckboxes() {
-    const savedIds = new Set((document.getElementById('upload_ids_input').value || '')
+    const el = document.getElementById('upload_ids_input');
+    if (!el) return; // ← tambahkan ini
+    const savedIds = new Set((el.value || '')
       .split(',').map(id => id.trim()).filter(Boolean));
     $('#asetPickerTable .picker-check').each(function() {
       const checkId = $(this).val();
@@ -1113,6 +1174,7 @@ $(document).ready(function() {
   });
 
   function restoreUploadSelection() {
+    if (!document.getElementById('upload_ids_input')) return; // ← tambahkan ini
     syncPickerCheckboxes();
 
     const allNomor = [];
@@ -1135,7 +1197,7 @@ $(document).ready(function() {
   }
 
   $('#modalAsetPicker').on('shown.bs.modal', restoreUploadSelection);
-  restoreUploadSelection();
+  restoreUploadSelection(); 
 
   // Picker: confirm
   $('#btnConfirmPicker').on('click', function() {
@@ -1243,6 +1305,33 @@ function togglePrev(pid, url) {
   }
 }
 
+// Preview full-width di bawah tabel upload
+let _prevUploadActive = null;
+function togglePrevExternal(pid, url) {
+  const panel = document.getElementById('previewPanelUpload');
+  const frame = document.getElementById('previewPanelFrame');
+  const label = document.getElementById('previewPanelLabel');
+  const buka  = document.getElementById('previewPanelBuka');
+  if (!panel) return;
+  // Kalau klik dokumen yang sama → tutup
+  if (_prevUploadActive === pid && panel.style.display !== 'none') {
+    tutupPreviewUpload(); return;
+  }
+  _prevUploadActive = pid;
+  if (frame) frame.src = url;
+  if (label) label.textContent = pid.replace('dph-', 'Dokumen #');
+  if (buka)  buka.href = url;
+  panel.style.display = 'block';
+  setTimeout(function() { panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, 150);
+}
+function tutupPreviewUpload() {
+  const panel = document.getElementById('previewPanelUpload');
+  const frame = document.getElementById('previewPanelFrame');
+  if (panel) panel.style.display = 'none';
+  if (frame) frame.src = '';
+  _prevUploadActive = null;
+}
+
 function confirmDeleteDokumen(id, nama, tahun) {
   document.getElementById('deleteDokumenId').value  = id;
   document.getElementById('deleteDokumenName').textContent = nama;
@@ -1272,8 +1361,13 @@ function openDetail(uid) {
          <div class="mt-1" style="font-size:0.72rem;color:#9ca3af;">Klik foto untuk memperbesar</div>
        </div>`
     : '';
-  const dok = dataDokUsulan.filter(d => String(d.usulan_id) === String(u.id));
-  const dokHtml = dok.length === 0
+  const noAsetUsulan = String(u.nomor_asset_utama || '');
+  const dok = dataDokUsulan.filter(d => {
+    if (String(d.usulan_id) === String(u.id)) return true;
+    // dokumen yang no_aset-nya mengandung nomor aset ini (1 dokumen multi-aset)
+    if (d.no_aset && noAsetUsulan && d.no_aset.split(';').map(s => s.trim()).includes(noAsetUsulan)) return true;
+    return false;
+  });  const dokHtml = dok.length === 0
     ? '<p class="text-muted small mb-0">Belum ada dokumen pendukung.</p>'
     : dok.map((d,i) => {
         const url = `?action=view_dok_usulan&id_dok=${d.id_dokumen}`;

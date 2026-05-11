@@ -15,13 +15,8 @@ if (!isset($_SESSION["nipp"]) || !isset($_SESSION["name"])) {
 $userType = isset($_SESSION['Type_User']) ? $_SESSION['Type_User'] : '';
 $userNipp = $_SESSION['nipp'];
 
-// Semua role bisa akses, tapi hanya HO/Regional/Admin yang bisa edit
-$canEdit = (
-    stripos($userType, 'Regional') !== false ||
-    stripos($userType, 'HO')       !== false ||
-    stripos($userType, 'admin')    !== false
-) && stripos($userType, 'Sub Regional') === false
-  && stripos($userType, 'Cabang')       === false;
+// Semua role bisa edit
+$canEdit = true;
 
 function serveFileFromDb($filePathDb, $fileName, $forceDownload = false) {
     $fileName = !empty($fileName) ? basename($fileName) : 'dokumen.pdf';
@@ -59,20 +54,51 @@ function serveFileFromDb($filePathDb, $fileName, $forceDownload = false) {
         echo $filePathDb; exit();
     }
 
-    // Format: path file di filesystem
-    $resolvedPath = $filePathDb;
-    if (!file_exists($resolvedPath)) {
-        $resolvedPath = __DIR__ . '/' . ltrim($filePathDb, '/\\');
-    }
-    if (file_exists($resolvedPath) && is_file($resolvedPath)) {
-        header('Content-Type: application/pdf');
-        header('Content-Disposition: ' . ($forceDownload ? 'attachment' : 'inline') . '; filename="' . $fileName . '"');
-        header('Content-Length: ' . filesize($resolvedPath));
-        header('Cache-Control: no-cache');
-        readfile($resolvedPath); exit();
+    // Format: path file (Windows absolute, Unix absolute, atau relative)
+    $normalized = str_replace('\\', '/', trim($filePathDb));
+    $docRoot    = str_replace('\\', '/', rtrim($_SERVER['DOCUMENT_ROOT'] ?? '', '/\\'));
+
+    $candidates = [];
+
+    // 1. Path Windows absolut langsung (C:/xampp/...)
+    if (preg_match('#^[A-Za-z]:/#', $normalized)) {
+        $candidates[] = str_replace('/', DIRECTORY_SEPARATOR, $normalized);
     }
 
-    http_response_code(404); echo 'File tidak ditemukan.'; exit();
+    // 2. Ekstrak bagian setelah htdocs, gabung dengan DOCUMENT_ROOT sekarang
+    // Contoh: C:/xampp/htdocs/dashboard/... → {DOCUMENT_ROOT}/dashboard/...
+    if (preg_match('#/htdocs/(.+)$#i', $normalized, $m)) {
+        $candidates[] = str_replace('/', DIRECTORY_SEPARATOR, $docRoot . '/' . $m[1]);
+    }
+
+    // 3. Path Unix absolut
+    if (strpos($normalized, '/') === 0) {
+        $candidates[] = $normalized;
+    }
+
+    // 4. Path relative ke DOCUMENT_ROOT
+    if (!empty($docRoot)) {
+        $stripped = ltrim(preg_replace('#^' . preg_quote($docRoot, '#') . '#', '', $normalized), '/');
+        $candidates[] = str_replace('/', DIRECTORY_SEPARATOR, $docRoot . '/' . $stripped);
+    }
+
+    // 5. Path relative ke __DIR__
+    $candidates[] = __DIR__ . DIRECTORY_SEPARATOR . ltrim(str_replace('/', DIRECTORY_SEPARATOR, $normalized), DIRECTORY_SEPARATOR);
+
+    // 6. Path apa adanya
+    $candidates[] = $filePathDb;
+
+    foreach ($candidates as $path) {
+        if (!empty($path) && @file_exists($path) && @is_file($path)) {
+            header('Content-Type: application/pdf');
+            header('Content-Disposition: ' . ($forceDownload ? 'attachment' : 'inline') . '; filename="' . $fileName . '"');
+            header('Content-Length: ' . filesize($path));
+            header('Cache-Control: no-cache');
+            readfile($path); exit();
+        }
+    }
+
+    http_response_code(404); echo 'File tidak ditemukan di: ' . htmlspecialchars($filePathDb); exit();
 }
 
 // ── Helper: normalize path foto ──────────────────────────────────────────────
@@ -117,6 +143,75 @@ if (isset($_GET['action']) && $_GET['action'] === 'view_dok_ho' && isset($_GET['
     if (!$res || mysqli_num_rows($res) === 0) { http_response_code(404); echo 'Dokumen tidak ditemukan.'; exit(); }
     $row = mysqli_fetch_assoc($res);
     serveFileFromDb($row['lokasi_file'], $row['file_name'], isset($_GET['download']));
+}
+
+// ── Upload dokumen HO → simpan sebagai BLOB ke DB ──────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'upload_dok_ho' && $canEdit) {
+    $id_pel       = (int)($_POST['id_pelaksanaan'] ?? 0);
+    $deskripsi    = trim($_POST['deskripsi_dokumen'] ?? 'Dokumen HO');
+    $tahun_dok    = (int)($_POST['tahun_dokumen'] ?? date('Y'));
+    $nomor_aset   = trim($_POST['nomor_aset'] ?? '');
+
+    if ($id_pel > 0 && isset($_FILES['file_dokumen']) && $_FILES['file_dokumen']['error'] === UPLOAD_ERR_OK) {
+        $fileData = file_get_contents($_FILES['file_dokumen']['tmp_name']);
+        $fileName = basename($_FILES['file_dokumen']['name']);
+        $fileSize = strlen($fileData);
+
+        $stmt = $con->prepare("INSERT INTO dokumen_pelaksanaan
+            (id_pelaksanaan, deskripsi_dokumen, file_name, lokasi_file, file_size, nomor_aset, tahun_dokumen, nipp, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())");
+        $null = null;
+        $stmt->bind_param("issbiisi", $id_pel, $deskripsi, $fileName, $null, $fileSize, $nomor_aset, $tahun_dok, $userNipp);
+        $stmt->send_long_data(3, $fileData);
+        if ($stmt->execute()) {
+            $_SESSION['success_message'] = "Dokumen berhasil diupload.";
+        } else {
+            $_SESSION['warning_message'] = "Gagal upload: " . $stmt->error;
+        }
+        $stmt->close();
+    } else {
+        $_SESSION['warning_message'] = "File tidak valid atau tidak ada.";
+    }
+    $tahunRedirect = isset($_POST['tahun_filter']) ? (int)$_POST['tahun_filter'] : date('Y');
+    header("Location: " . $_SERVER['PHP_SELF'] . "?tahun=$tahunRedirect"); exit();
+}
+
+// ── Migrate dokumen HO lama (path lokal → BLOB) dipanggil sekali via ?action=migrate_dok ──
+if (isset($_GET['action']) && $_GET['action'] === 'migrate_dok_ho' && $canEdit) {
+    $res_m = mysqli_query($con, "SELECT id_dokumen, lokasi_file, file_name FROM dokumen_pelaksanaan WHERE lokasi_file NOT LIKE 'data:%' AND lokasi_file != '' AND lokasi_file IS NOT NULL");
+    $berhasil = 0; $gagal = 0;
+    while ($row_m = mysqli_fetch_assoc($res_m)) {
+        $path = str_replace('\\', '/', $row_m['lokasi_file']);
+        // Coba Windows path langsung
+        $candidates = [
+            str_replace('/', DIRECTORY_SEPARATOR, $path),
+        ];
+        // Ekstrak setelah htdocs
+        if (preg_match('#/htdocs/(.+)$#i', $path, $m)) {
+            $docRoot = str_replace('\\', '/', rtrim($_SERVER['DOCUMENT_ROOT'] ?? '', '/\\'));
+            $candidates[] = str_replace('/', DIRECTORY_SEPARATOR, $docRoot . '/' . $m[1]);
+        }
+        $fileData = null;
+        foreach ($candidates as $c) {
+            if (!empty($c) && @file_exists($c) && @is_file($c)) {
+                $fileData = file_get_contents($c);
+                break;
+            }
+        }
+        if ($fileData !== null && strlen($fileData) > 0) {
+            $id_dok_m = (int)$row_m['id_dokumen'];
+            $stmt_m = $con->prepare("UPDATE dokumen_pelaksanaan SET lokasi_file = ? WHERE id_dokumen = ?");
+            $null_m = null;
+            $stmt_m->bind_param("bi", $null_m, $id_dok_m);
+            $stmt_m->send_long_data(0, $fileData);
+            $stmt_m->execute() ? $berhasil++ : $gagal++;
+            $stmt_m->close();
+        } else {
+            $gagal++;
+        }
+    }
+    $_SESSION['success_message'] = "Migrasi selesai: $berhasil berhasil, $gagal gagal.";
+    header("Location: " . $_SERVER['PHP_SELF']); exit();
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'update_pelaksanaan' && $canEdit) {
@@ -173,8 +268,8 @@ if ($filterStatus !== 'all') {
 $res_main = mysqli_query($con, "SELECT pp.*,
     up.nomor_asset_utama, up.mekanisme_penghapusan, up.fisik_aset, up.foto_path,
     up.justifikasi_alasan, up.kajian_hukum, up.kajian_ekonomis, up.kajian_risiko,
-    up.status_approval_ho, up.catatan_ho,
-    up.tanggal_approval_ho, up.tahun_usulan, up.nilai_buku,
+    up.status_approval_ho, up.catatan_ho, up.tanggal_approval_ho,
+    up.tahun_usulan, up.nilai_buku, up.jumlah_aset,
     id.keterangan_asset as nama_aset, id.asset_class_name as kategori_aset,
     id.profit_center_text, id.subreg, id.nilai_perolehan_sd,
     id.nilai_buku_sd as nilai_buku_awal, id.tgl_perolehan,
@@ -184,7 +279,7 @@ $res_main = mysqli_query($con, "SELECT pp.*,
     FROM pelaksanaan_penghapusan pp
     JOIN usulan_penghapusan up ON pp.usulan_id = up.id
     LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama
-    WHERE YEAR(pp.tanggal_persetujuan) = $filterTahun $whereStatus
+    WHERE up.tahun_usulan = $filterTahun $whereStatus
     ORDER BY pp.created_at DESC");
 
 $data_pelaksanaan = [];
@@ -195,7 +290,7 @@ while ($r = mysqli_fetch_assoc($res_main)) {
 }
 
 $daftar_dok_ho = [];
-$res_dho = mysqli_query($con, "SELECT dp.*, pp.usulan_id FROM dokumen_pelaksanaan dp JOIN pelaksanaan_penghapusan pp ON dp.id_pelaksanaan = pp.id ORDER BY dp.id_dokumen DESC");
+$res_dho = mysqli_query($con, "SELECT dp.id_dokumen, dp.id_pelaksanaan, dp.deskripsi_dokumen, dp.file_name, dp.tahun_dokumen, pp.usulan_id FROM dokumen_pelaksanaan dp JOIN pelaksanaan_penghapusan pp ON dp.id_pelaksanaan = pp.id ORDER BY dp.id_dokumen DESC");
 while ($r = mysqli_fetch_assoc($res_dho)) $daftar_dok_ho[] = $r;
 
 $daftar_dok_usulan = [];
@@ -216,9 +311,9 @@ foreach ($data_pelaksanaan as $d) {
 }
 
 $list_tahun = [];
-$res_thn = mysqli_query($con, "SELECT DISTINCT YEAR(tanggal_persetujuan) as t FROM pelaksanaan_penghapusan WHERE tanggal_persetujuan IS NOT NULL ORDER BY t DESC");
-while ($r = mysqli_fetch_assoc($res_thn)) if ($r['t']) $list_tahun[] = $r['t'];
-if (!in_array(date('Y'), $list_tahun)) array_unshift($list_tahun, (int)date('Y'));
+$res_thn = mysqli_query($con, "SELECT DISTINCT up.tahun_usulan as t FROM pelaksanaan_penghapusan pp JOIN usulan_penghapusan up ON pp.usulan_id = up.id WHERE up.tahun_usulan IS NOT NULL ORDER BY t DESC");
+while ($r = mysqli_fetch_assoc($res_thn)) if ($r['t']) $list_tahun[] = (int)$r['t'];
+if (!in_array((int)date('Y'), $list_tahun)) array_unshift($list_tahun, (int)date('Y'));
 
 $success_msg = $_SESSION['success_message'] ?? '';
 $warning_msg = $_SESSION['warning_message'] ?? '';
@@ -294,6 +389,42 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
     .kajian-label{font-size:.72rem;font-weight:600;color:#6b7280;margin-bottom:5px;}
     .kajian-box{background:#f8f9fa;border-left:3px solid #0d6efd;border-radius:0 6px 6px 0;padding:9px 13px;font-size:.875rem;color:#374151;white-space:pre-wrap;word-break:break-word;line-height:1.6;}
     .kajian-box.empty{border-left-color:#e5e7eb;color:#9ca3af;font-style:italic;}
+    .app-footer{padding:0.8rem 0;}
+    .app-footer .footer-inner{display:flex;align-items:center;justify-content:space-between;gap:0.75rem;padding:0 1.5rem;max-width:100%;flex-wrap:wrap;}
+    .app-footer .footer-inner .footer-text{font-size:.95rem;color:#374151;}
+    .app-footer .footer-inner .footer-right{margin-left:auto;}
+    /* Fix DataTables sort icons - prevent numeric/broken chars */
+    table.dataTable thead th.sorting,
+    table.dataTable thead th.sorting_asc,
+    table.dataTable thead th.sorting_desc,
+    table.dataTable thead th.sorting_asc_disabled,
+    table.dataTable thead th.sorting_desc_disabled {
+      background-image: none !important;
+      padding-right: 30px !important;
+      position: relative;
+    }
+    /* Hide span/button injected by DataTables v2 with broken chars */
+    table.dataTable thead th .dt-column-order,
+    table.dataTable thead th span.dt-column-order,
+    table.dataTable thead th button.dt-column-order { display: none !important; }
+    /* Hide ::before and ::after from DataTables */
+    table.dataTable thead th.sorting::before,
+    table.dataTable thead th.sorting_asc::before,
+    table.dataTable thead th.sorting_desc::before,
+    table.dataTable thead th.sorting::after,
+    table.dataTable thead th.sorting_asc::after,
+    table.dataTable thead th.sorting_desc::after { display: none !important; content: none !important; }
+    /* Custom sort icon via our own span injected via JS */
+    table.dataTable thead th .sort-icon {
+      display: inline-block;
+      margin-left: 5px;
+      font-family: "bootstrap-icons" !important;
+      font-size: .72rem;
+      opacity: .45;
+      color: inherit;
+    }
+    table.dataTable thead th.sorting_asc .sort-icon  { opacity:1; color:#0b3a8c; }
+    table.dataTable thead th.sorting_desc .sort-icon { opacity:1; color:#0b3a8c; }
   </style>
 </head>
 <body class="layout-fixed sidebar-expand-lg sidebar-open bg-body-tertiary">
@@ -523,6 +654,12 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
       </div>
     </div>
   </main>
+  <footer class="app-footer">
+    <div class="footer-inner">
+      <strong class="footer-text">Copyright &copy; Proyek Aset Tetap Regional 3&nbsp;</strong>
+      <div class="footer-right d-none d-sm-inline">PT Pelabuhan Indonesia (Persero)</div>
+    </div>
+  </footer>
 </div>
 
 <!-- MODAL DETAIL -->
@@ -717,11 +854,32 @@ const dataDokUsulan   = <?= json_encode($daftar_dok_usulan) ?>;
 
 $(document).ready(function() {
   if ($('#pelaksanaanTable tbody tr').length) {
-    $('#pelaksanaanTable').DataTable({
+  if ($('#pelaksanaanTable tbody tr').length) {
+    const dt = $('#pelaksanaanTable').DataTable({
       language:{search:"Cari:",lengthMenu:"Tampilkan _MENU_ data",info:"_START_-_END_ dari _TOTAL_ data",
         paginate:{first:"&laquo;",previous:"&lsaquo;",next:"&rsaquo;",last:"&raquo;"},zeroRecords:"Tidak ada data"},
-      pageLength:25, columnDefs:[{orderable:false,targets:[9]}]
+      pageLength:25,
+      columnDefs:[
+        {orderable:false, targets:[0, 8, 9]},  // No, Dokumen Aset, Aksi
+      ],
+      order: [[1, 'asc']]
     });
+
+    // Inject custom sort icons (Bootstrap Icons) — avoid broken DataTables font chars
+    function refreshSortIcons() {
+      $('#pelaksanaanTable thead th').each(function() {
+        $(this).find('.sort-icon').remove();
+        if ($(this).hasClass('sorting') || $(this).hasClass('sorting_asc') || $(this).hasClass('sorting_desc')) {
+          let icon = '\uF127'; // bi-arrow-down-up (neutral)
+          if ($(this).hasClass('sorting_asc'))  icon = '\uF148'; // bi-sort-up
+          if ($(this).hasClass('sorting_desc')) icon = '\uF146'; // bi-sort-down
+          $(this).append('<span class="sort-icon">' + icon + '</span>');
+        }
+      });
+    }
+    refreshSortIcons();
+    $('#pelaksanaanTable').on('order.dt', refreshSortIcons);
+  }
   }
 });
 

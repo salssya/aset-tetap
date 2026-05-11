@@ -1,4 +1,5 @@
 <?php
+ini_set('memory_limit', '1024M');
 $servername = "localhost";
 $username   = "root";
 $password   = "";
@@ -97,10 +98,9 @@ if (empty($_SESSION['profit_center_text']) && !empty($_SESSION['Cabang'])) {
 if (isset($_GET['tahun']) && $_GET['tahun'] !== '') {
     $tahunSelected = $_GET['tahun'];
     $_SESSION['last_tahun_subreg'] = $tahunSelected;
-} elseif (isset($_SESSION['last_tahun_subreg']) && $_SESSION['last_tahun_subreg'] !== '') {
-    $tahunSelected = $_SESSION['last_tahun_subreg'];
 } else {
-    $tahunSelected = '2026';
+    // Selalu default ke tahun sekarang, hapus session lama
+    $tahunSelected = date('Y');
     $_SESSION['last_tahun_subreg'] = $tahunSelected;
 }
 
@@ -231,6 +231,8 @@ if (isset($_SESSION['Type_User']) && stripos($_SESSION['Type_User'], 'Sub') !== 
 }
 
 // Query khusus: tampilkan usulan yang sudah 'dokumen_lengkap' atau sudah 'submitted' dan menunggu approval SubReg
+// NOTE: Data ini sekarang dimuat via AJAX server-side processing untuk performa yang lebih baik
+/*
 $query_subreg_pending = "SELECT up.*, 
        id.keterangan_asset as nama_aset, 
        id.asset_class_name as kategori_aset,
@@ -257,6 +259,8 @@ if ($result_subreg) {
     $subreg_pending_data[] = $row;
   }
 }
+*/
+$subreg_pending_data = []; // Akan dimuat via AJAX
 
 // ========================================================
 // Query untuk data Upload Dokumen
@@ -375,50 +379,36 @@ if (isset($_SESSION['Type_User']) && (stripos($_SESSION['Type_User'], 'Sub') !==
 
 // ========================================================
 // Hitung jumlah untuk summary boxes
-// - Pending: hanya yang berstatus 'submitted' dan menunggu approval SubReg
-// - Approved: hitung semua usulan dengan kolom status_approval_subreg = 'approved'
-// - Rejected: hitung semua usulan dengan kolom status_approval_subreg yang menunjukkan rejected
+// NOTE: Counts dimuat via AJAX (api_get_counts.php) untuk performa lebih baik
+// Jalankan 1 optimized query daripada 3 query terpisah
 // ========================================================
+// Hitung langsung di PHP berdasarkan filter subreg yang sudah ditentukan
 $count_pending = 0;
 $count_approved = 0;
 $count_rejected = 0;
 
-// Pending (dokumen_lengkap & awaiting SubReg)
-$count_pending = 0;
-$query_pending_count = "SELECT COUNT(*) AS cnt 
-   FROM usulan_penghapusan up 
-   LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama 
-   " . $filterCondition . " AND up.status IN ('submitted') AND COALESCE(up.status_approval_subreg, 'pending') IN ('pending','submitted')"
-   . (!empty($tahunSelected) ? " AND up.tahun_usulan = '" . mysqli_real_escape_string($con, $tahunSelected) . "'" : "");
-$res_p = mysqli_query($con, $query_pending_count);
-if ($res_p) {
-  $count_pending = intval((mysqli_fetch_assoc($res_p)['cnt']) ?? 0);
+$countFilterCondition = "WHERE id.nilai_perolehan_sd <> 0 AND id.asset_class_name NOT LIKE '%AUC%'";
+if (!empty($determinedSubreg)) {
+    $countFilterCondition .= " AND id.subreg = '" . mysqli_real_escape_string($con, $determinedSubreg) . "'";
 }
+$tahunFilterCount = !empty($tahunSelected) ? " AND up.tahun_usulan = '" . mysqli_real_escape_string($con, $tahunSelected) . "'" : '';
 
-// Approved (semua baris yang status_approval_subreg = 'approved')
-$count_approved = 0;
-$query_approved_count = "SELECT COUNT(*) AS cnt 
-   FROM usulan_penghapusan up 
-   LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama 
-   " . $filterCondition . " AND up.status_approval_subreg = 'approved'"
-   . (!empty($tahunSelected) ? " AND up.tahun_usulan = '" . mysqli_real_escape_string($con, $tahunSelected) . "'" : "");
-$res_a = mysqli_query($con, $query_approved_count);
-if ($res_a) {
-  $count_approved = intval((mysqli_fetch_assoc($res_a)['cnt']) ?? 0);
+$q_count = mysqli_query($con, "
+    SELECT 
+        SUM(CASE WHEN COALESCE(up.status_approval_subreg,'pending') = 'pending' THEN 1 ELSE 0 END) as cnt_pending,
+        SUM(CASE WHEN up.status_approval_subreg = 'approved' THEN 1 ELSE 0 END) as cnt_approved,
+        SUM(CASE WHEN up.status_approval_subreg = 'rejected' THEN 1 ELSE 0 END) as cnt_rejected
+    FROM usulan_penghapusan up
+    LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama
+    " . $countFilterCondition . "
+    AND up.status IN ('submitted','approved','rejected')
+    " . $tahunFilterCount
+);
+if ($q_count && $row_count = mysqli_fetch_assoc($q_count)) {
+    $count_pending  = intval($row_count['cnt_pending']);
+    $count_approved = intval($row_count['cnt_approved']);
+    $count_rejected = intval($row_count['cnt_rejected']);
 }
-
-// Rejected (include possible variants)
-$count_rejected = 0;
-$query_rejected_count = "SELECT COUNT(*) AS cnt 
-   FROM usulan_penghapusan up 
-   LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama 
-   " . $filterCondition . " AND COALESCE(up.status_approval_subreg, '') IN ('rejected','rejected_subreg')"
-   . (!empty($tahunSelected) ? " AND up.tahun_usulan = '" . mysqli_real_escape_string($con, $tahunSelected) . "'" : "");
-$res_r = mysqli_query($con, $query_rejected_count);
-if ($res_r) {
-  $count_rejected = intval((mysqli_fetch_assoc($res_r)['cnt']) ?? 0);
-}
-
 // Handle save to database dengan status draft/submit
 $pesan = "";
 $tipe_pesan = "";
@@ -1388,6 +1378,179 @@ if (isset($_GET['action']) && $_GET['action'] === 'get_foto' && isset($_GET['usu
   exit();
 }
 
+// ========================================================
+// AJAX HANDLER: Server-side processing untuk DataTables "Daftar Usulan"
+// ========================================================
+if (isset($_GET['action']) && $_GET['action'] === 'get_daftar_usulan_data') {
+    header('Content-Type: application/json');
+
+    // Parameter DataTables
+    $draw = intval($_GET['draw'] ?? 1);
+    $start = intval($_GET['start'] ?? 0);
+    $length = intval($_GET['length'] ?? 10);
+    $search = $_GET['search']['value'] ?? '';
+    $orderColumn = intval($_GET['order'][0]['column'] ?? 0);
+    $orderDir = $_GET['order'][0]['dir'] ?? 'desc';
+
+    // Map kolom untuk ordering
+    $columns = ['up.created_at', 'up.profit_center', 'up.nomor_asset_utama', 'id.keterangan_asset', 'up.mekanisme_penghapusan', 'up.status_approval_subreg'];
+    $orderBy = $columns[$orderColumn] ?? 'up.created_at';
+
+    // Filter tahun
+    $tahunSelected = isset($_GET['tahun']) && $_GET['tahun'] !== '' ? $_GET['tahun'] : '';
+
+    // Build filter condition for import_dat similar to dasbor.php logic
+    $filterConditionBase = "WHERE id.nilai_perolehan_sd <> 0 AND id.asset_class_name NOT LIKE '%AUC%'";
+    $filterCondition = $filterConditionBase;
+
+    if (isset($_SESSION['Type_User']) && stripos($_SESSION['Type_User'], 'Sub') !== false) {
+      // Untuk Sub Regional: filter berdasarkan subreg dari profit_center user
+      $userCabang = mysqli_real_escape_string($con, $_SESSION['Cabang'] ?? '');
+      $determinedSubreg = '';
+
+      if ($userCabang !== '') {
+        $stmt_subreg = mysqli_prepare($con, "SELECT subreg FROM import_dat WHERE profit_center = ? LIMIT 1");
+        if ($stmt_subreg) {
+          mysqli_stmt_bind_param($stmt_subreg, 's', $userCabang);
+          mysqli_stmt_execute($stmt_subreg);
+          $res_subreg = mysqli_stmt_get_result($stmt_subreg);
+          if ($r = mysqli_fetch_assoc($res_subreg)) {
+            $determinedSubreg = $r['subreg'];
+          }
+          mysqli_stmt_close($stmt_subreg);
+        }
+      }
+
+      // Jika tidak ketemu subreg dari profit_center, coba dari session
+      if (empty($determinedSubreg) && !empty($_SESSION['subreg'])) {
+        $determinedSubreg = $_SESSION['subreg'];
+      }
+
+      // Filter berdasarkan subreg - ini akan menangkap semua dokumen dari cabang dalam subreg yang sama
+      if (!empty($determinedSubreg)) {
+        $filterCondition .= " AND id.subreg = '" . mysqli_real_escape_string($con, $determinedSubreg) . "'";
+      }
+    } elseif (isset($_SESSION['Type_User']) && stripos($_SESSION['Type_User'], 'Cabang') !== false) {
+      $userCabang = mysqli_real_escape_string($con, $_SESSION['Cabang'] ?? '');
+      if ($userCabang !== '') {
+        $filterCondition .= " AND id.profit_center = '" . mysqli_real_escape_string($con, $userCabang) . "'";
+      }
+    }
+
+    // Base query
+    $baseQuery = "FROM usulan_penghapusan up
+                  LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama
+                  " . $filterCondition . " AND up.status IN ('submitted')
+                  AND COALESCE(up.status_approval_subreg, 'pending') IN ('pending','submitted')";
+
+    // Tambahkan filter tahun jika ada
+    if (!empty($tahunSelected)) {
+        $baseQuery .= " AND up.tahun_usulan = '" . mysqli_real_escape_string($con, $tahunSelected) . "'";
+    }
+
+    // Tambahkan search filter
+    if (!empty($search)) {
+        $search = mysqli_real_escape_string($con, $search);
+        $baseQuery .= " AND (up.nomor_asset_utama LIKE '%$search%' OR
+                            id.keterangan_asset LIKE '%$search%' OR
+                            up.profit_center LIKE '%$search%' OR
+                            id.profit_center_text LIKE '%$search%' OR
+                            up.mekanisme_penghapusan LIKE '%$search%')";
+    }
+
+    // Hitung total records
+    $totalQuery = "SELECT COUNT(*) as total " . $baseQuery;
+    $totalResult = mysqli_query($con, $totalQuery);
+    $totalRecords = mysqli_fetch_assoc($totalResult)['total'];
+
+    // Query dengan pagination dan ordering
+    $dataQuery = "SELECT up.*, id.keterangan_asset as nama_aset, id.asset_class_name as kategori_aset,
+                         id.subreg, id.profit_center_text " . $baseQuery . "
+                  ORDER BY $orderBy $orderDir
+                  LIMIT $start, $length";
+
+    $result = mysqli_query($con, $dataQuery);
+    $data = [];
+
+    while ($row = mysqli_fetch_assoc($result)) {
+        // Hilangkan kode "AUC-" dari nama_aset dan kategori_aset
+        $row['nama_aset'] = str_replace('AUC-', '', $row['nama_aset']);
+        $row['kategori_aset'] = str_replace('AUC-', '', $row['kategori_aset']);
+
+        // Format data untuk DataTables
+        $data[] = [
+            $row['created_at'], // Index 0 - untuk ordering
+            htmlspecialchars($row['profit_center']) . (!empty($row['profit_center_text']) ? ' - ' . htmlspecialchars($row['profit_center_text']) : ''), // Profit Center
+            htmlspecialchars($row['nomor_asset_utama']), // Nomor Aset
+            htmlspecialchars($row['nama_aset']), // Nama Aset
+            // Mekanisme badge
+            (function() use ($row) {
+                $mek = $row['mekanisme_penghapusan'] ?? '';
+                if ($mek === 'Hapus Administrasi') return '<span class="badge" style="background:#6f42c1; color:#fff;">Hapus Administrasi</span>';
+                if ($mek === 'Jual Lelang') return '<span class="badge" style="background:#0d6efd; color:#fff;">Jual Lelang</span>';
+                return $mek !== '' ? '<span class="badge bg-secondary">' . htmlspecialchars($mek) . '</span>' : '-';
+            })(),
+            // Status SubReg
+            ($row['status_approval_subreg'] === 'pending' ? '<span class="badge" style="background: #FFC107; color: #000;"><i class="bi bi-hourglass-split me-1"></i>Pending</span>' :
+             ($row['status_approval_subreg'] === 'approved' ? '<span class="badge" style="background: #28A745; color: #fff;"><i class="bi bi-check-circle me-1"></i>Approved</span>' :
+             ($row['status_approval_subreg'] === 'rejected' ? '<span class="badge" style="background: #dc3545; color: #fff;"><i class="bi bi-x-circle me-1"></i>Rejected</span>' :
+             '<span class="badge bg-secondary">-</span>'))),
+            // Action button
+            '<button class="btn btn-sm btn-outline-primary" onclick="openFormLengkapiDokumen(' . $row['id'] . ')" title="Review dokumen untuk SubReg Approval"><i class="bi bi-eye"></i> Review</button>'
+        ];
+    }
+
+    // Response untuk DataTables
+    $response = [
+        'draw' => $draw,
+        'recordsTotal' => $totalRecords,
+        'recordsFiltered' => $totalRecords, // Dalam kasus ini sama karena tidak ada filter server-side tambahan
+        'data' => $data
+    ];
+
+    echo json_encode($response);
+    exit();
+}
+
+// ========================================================
+// AJAX HANDLER: Get detail usulan by usulan_id
+// ========================================================
+if (isset($_GET['action']) && $_GET['action'] === 'get_usulan_detail' && isset($_GET['usulan_id'])) {
+    header('Content-Type: application/json');
+    $usulan_id = intval($_GET['usulan_id']);
+
+    $query = "SELECT up.*, 
+                     id.keterangan_asset as nama_aset, 
+                     id.asset_class_name as kategori_aset,
+                     id.subreg,
+                     id.profit_center_text,
+                     id.masa_manfaat as umur_ekonomis,
+                     id.sisa_manfaat as sisa_umur_ekonomis,
+                     id.tgl_perolehan,
+                     id.nilai_buku_sd as nilai_buku,
+                     id.nilai_perolehan_sd as nilai_perolehan
+              FROM usulan_penghapusan up 
+              LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama 
+              WHERE up.id = ? LIMIT 1";
+
+    $stmt = $con->prepare($query);
+    $stmt->bind_param("i", $usulan_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+
+    if ($result->num_rows > 0) {
+        $usulan = $result->fetch_assoc();
+        // Hilangkan kode "AUC-" dari nama_aset dan kategori_aset
+        $usulan['nama_aset'] = str_replace('AUC-', '', $usulan['nama_aset']);
+        $usulan['kategori_aset'] = str_replace('AUC-', '', $usulan['kategori_aset']);
+        
+        echo json_encode(['success' => true, 'usulan' => $usulan]);
+    } else {
+        echo json_encode(['success' => false, 'message' => 'Usulan tidak ditemukan']);
+    }
+    $stmt->close();
+    exit();
+}
 
 // Handle update dropdown field (mekanisme penghapusan / fisik aset)
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] === 'update_dropdown_field') {
@@ -1835,66 +1998,43 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
               id="navigation"
             >
             <?php  
-            $userNipp = isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : '';
-            $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '" . mysqli_real_escape_string($con, $userNipp) . "' ORDER BY menus.urutan_menu ASC";
-            $result_menu = mysqli_query($con, $query) or die(mysqli_error($con));
-            $iconMap = [
-                'Dasboard'                  => 'bi bi-grid-fill',
-                'Usulan Penghapusan'        => 'bi bi-clipboard-plus',
-                'Daftar Usulan Penghapusan' => 'bi bi-clipboard-check-fill',
-                'Approval SubReg'           => 'bi bi-check-circle',
-                'Approval Regional'         => 'bi bi-check2-square',
-                'Persetujuan Penghapusan'   => 'bi bi-clipboard-check-fill',
-                'Pelaksanaan Penghapusan'   => 'bi bi-tools',
-                'Manajemen Menu'            => 'bi bi-list-ul',
-                'Import DAT'                => 'bi bi-file-earmark-arrow-down',
-                'Export DAT'                => 'bi bi-file-earmark-arrow-up-fill',
-                'Daftar Aset Tetap'         => 'bi bi-card-list',
-                'Manajemen User'            => 'bi bi-people-fill'
-            ];
-            $menuRows = [];
-          while ($row = mysqli_fetch_assoc($result_menu)) {
-              $menuRows[] = $row;
-          }
+            $ $userNipp = isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : '';
+              $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '" . mysqli_real_escape_string($con, $userNipp) . "' ORDER BY menus.urutan_menu ASC";
+              $result_menu = mysqli_query($con, $query) or die(mysqli_error($con));
+              $iconMap = [
+                  'Dasboard'                       => 'bi bi-grid-fill',
+                  'Usulan Penghapusan'              => 'bi bi-file-earmark-plus',
+                  'Daftar Usulan Penghapusan'       => 'bi bi-collection',
+                  'Approval SubReg'                 => 'bi bi-person-check',
+                  'Approval Regional'               => 'bi bi-building-check',
+                  'Persetujuan Penghapusan'         => 'bi bi-shield-check',
+                  'Daftar Persetujuan Penghapusan'  => 'bi bi-journal-check',
+                  'Pelaksanaan Penghapusan'         => 'bi bi-gear-wide-connected',
+                  'Daftar Pelaksanaan Penghapusan'  => 'bi bi-archive-fill',
+                  'Manajemen Menu'                  => 'bi bi-layout-text-sidebar',
+                  'Import DAT'                      => 'bi bi-file-earmark-arrow-up',
+                  'Daftar Aset Tetap'               => 'bi bi-card-list',
+                  'Manajemen User'                  => 'bi bi-people',
+              ];
+                $allMenus = [];
+                while ($row = mysqli_fetch_assoc($result_menu)) {
+                    $allMenus[] = $row;
+                }
 
-          $hasDaftarUsulan = false;
-          $daftarRow       = null;
-          $hasUsulanMenu   = false;
+                // Sort berdasarkan urutan_menu untuk memastikan urutan selalu konsisten
+                usort($allMenus, function($a, $b) {
+                    return $a['urutan_menu'] <=> $b['urutan_menu'];
+                });
 
-          foreach ($menuRows as $row) {
-              $nm = trim($row['nama_menu']);
-              if ($nm === 'Daftar Usulan Penghapusan') { $hasDaftarUsulan = true; $daftarRow = $row; }
-              if ($nm === 'Usulan Penghapusan')         { $hasUsulanMenu = true; }
-          }
-
-          $currentPage = basename($_SERVER['PHP_SELF']);
-
-          foreach ($menuRows as $row) {
-              $namaMenu = trim($row['nama_menu']);
-              if ($namaMenu === 'Daftar Usulan Penghapusan') continue;
-
-              $icon     = $iconMap[$namaMenu] ?? 'bi bi-circle';
-              $menuFile = $row['menu'] . '.php';
-              $isActive = ($currentPage === $menuFile) ? 'active' : '';
-
-              if ($namaMenu === 'Manajemen Menu') echo '<li class="nav-header"></li>';
-              echo '<li class="nav-item"><a href="../' . $row['menu'] . '/' . $row['menu'] . '.php" class="nav-link ' . $isActive . '"><i class="nav-icon ' . $icon . '"></i><p>' . $row['nama_menu'] . '</p></a></li>';
-
-              if ($namaMenu === 'Usulan Penghapusan' && $hasDaftarUsulan && $daftarRow) {
-                  $daftarIcon     = $iconMap['Daftar Usulan Penghapusan'] ?? 'bi bi-circle';
-                  $daftarFile     = $daftarRow['menu'] . '.php';
-                  $isDaftarActive = ($currentPage === $daftarFile) ? 'active' : '';
-                  echo '<li class="nav-item"><a href="../' . $daftarRow['menu'] . '/' . $daftarRow['menu'] . '.php" class="nav-link ' . $isDaftarActive . '"><i class="nav-icon ' . $daftarIcon . '"></i><p>Daftar Usulan Penghapusan</p></a></li>';
-              }
-          }
-
-          if ($hasDaftarUsulan && $daftarRow && !$hasUsulanMenu) {
-              $daftarIcon     = $iconMap['Daftar Usulan Penghapusan'] ?? 'bi bi-circle';
-              $daftarFile     = $daftarRow['menu'] . '.php';
-              $isDaftarActive = ($currentPage === $daftarFile) ? 'active' : '';
-              echo '<li class="nav-item"><a href="../' . $daftarRow['menu'] . '/' . $daftarRow['menu'] . '.php" class="nav-link ' . $isDaftarActive . '"><i class="nav-icon ' . $daftarIcon . '"></i><p>Daftar Usulan Penghapusan</p></a></li>';
-          }
-          ?>
+                $currentPage = basename($_SERVER['PHP_SELF']);
+                foreach ($allMenus as $row) {
+                    $namaMenu = trim($row['nama_menu']);
+                    $icon     = $iconMap[$namaMenu] ?? 'bi bi-circle';
+                    $isActive = ($currentPage === $row['menu'] . '.php') ? 'active' : '';
+                    if ($namaMenu === 'Manajemen Menu') echo '<li class="nav-header"></li>';
+                    echo '<li class="nav-item"><a href="../' . $row['menu'] . '/' . $row['menu'] . '.php" class="nav-link ' . $isActive . '"><i class="nav-icon ' . $icon . '"></i><p>' . htmlspecialchars($namaMenu) . '</p></a></li>';
+                }
+        ?>
         </ul>
       </nav>
     </div>
@@ -2564,7 +2704,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                               <div class="col-md-4">
                                 <div class="small-box" style="background: linear-gradient(135deg, #FFC107 0%, #FFB300 100%); color: white; margin-bottom: 0;">
                                   <div class="inner">
-                                    <h3><?= $count_pending ?></h3>
+                                    <h3 id="pending-count"><?= $count_pending ?></h3>
                                     <p>Pending</p>
                                   </div>
                                   <i class="bi bi-clock small-box-icon"></i>
@@ -2573,7 +2713,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                               <div class="col-md-4">
                                 <div class="small-box" style="background: linear-gradient(135deg, #28A745 0%, #218838 100%); color: white; margin-bottom: 0;">
                                   <div class="inner">
-                                    <h3><?= $count_approved ?></h3>
+                                    <h3 id="approved-count"><?= $count_approved ?></h3>
                                     <p>Approved</p>
                                   </div>
                                     <i class="bi bi-check-circle small-box-icon"></i>
@@ -2582,26 +2722,26 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                               <div class="col-md-4">
                                 <div class="small-box" style="background: linear-gradient(135deg, #c83636 0%, #961313 100%); color: white; margin-bottom: 0;">
                                   <div class="inner">
-                                    <h3><?= $count_rejected ?></h3>
+                                    <h3 id="rejected-count"><?= $count_rejected ?></h3>
                                     <p>Rejected</p>
                                   </div>
                                   <i class="bi bi-x-circle small-box-icon"></i>
                                 </div>
                               </div>
                             </div>
-                            <!-- End Summary Boxes -->      
+                            <!-- End Summary Boxes -->
 
-                            <?php if (empty($subreg_pending_data)): ?>
+                            <?php if (false): // Always false since we use server-side processing ?>
                             <div class="alert alert-warning mb-3 mt-2">
                               <i class="bi bi-info-circle me-2"></i>
                               <strong>Belum ada usulan</strong>
                             </div>
                             <?php else: ?>
                             <div class="table-responsive">
-                              <table id="lengkapiTable" class="display nowrap table table-striped table-sm w-100">
+                              <table id="daftarUsulanTable" class="display nowrap table table-striped table-sm w-100">
                                 <thead>
                                   <tr>
-                                    <th>No</th>
+                                    <th>Tanggal Dibuat</th>
                                     <th>Profit Center</th>
                                     <th>Nomor Aset</th>
                                     <th>Nama Aset</th>
@@ -2611,36 +2751,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  <?php foreach ($subreg_pending_data as $index => $row): ?>
-                                  <tr>
-                                    <td class="text-center"><?= $index + 1 ?></td>
-                                    <td><?= htmlspecialchars($row['profit_center']) . (!empty($row['profit_center_text']) ? ' - ' . htmlspecialchars($row['profit_center_text']) : '') ?></td>
-                                    <td><?= htmlspecialchars($row['nomor_asset_utama']) ?></td>
-                                    <td><?= htmlspecialchars($row['nama_aset']) ?></td>
-                                    <td><?= htmlspecialchars($row['mekanisme_penghapusan']) ?></td>
-                                    <td>
-                                      <?php
-                                        $sub_status = isset($row['status_approval_subreg']) ? $row['status_approval_subreg'] : '';
-                                        if ($sub_status === 'pending') {
-                                          echo '<span class="badge" style="background: #FFC107; color: #000;"><i class="bi bi-hourglass-split me-1"></i>Pending</span>';
-                                        } else if ($sub_status === 'approved') {
-                                          echo '<span class="badge" style="background: #28A745; color: #fff;"><i class="bi bi-check-circle me-1"></i>Approved</span>';
-                                        } else if ($sub_status === 'rejected') {
-                                          echo '<span class="badge" style="background: #dc3545; color: #fff;"><i class="bi bi-x-circle me-1"></i>Rejected</span>';
-                                        } else {
-                                          echo '<span class="badge bg-secondary">-</span>';
-                                        }
-                                      ?>
-                                    </td>
-                                    <td>
-                                            <button class="btn btn-sm btn-outline-primary" 
-                                              onclick="openFormLengkapiDokumen(<?= $row['id'] ?>)" 
-                                              title="Lengkapi dokumen">
-                                        <i class="bi bi-eye"></i> Review
-                                      </button>
-                                    </td>
-                                  </tr>
-                                  <?php endforeach; ?>
+                                  <!-- Data akan dimuat via AJAX server-side processing -->
                                 </tbody>
                               </table>
                             </div>
@@ -2936,8 +3047,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
       });
     </script>
     <!--end::OverlayScrollbars Configure-->
-    <!-- OPTIONAL SCRIPTS -->
-    <!-- apexcharts -->
+     <!-- apexcharts -->
     <script src="../../dist/js/jquery-3.6.0.min.js"></script>
     <script src="../../dist/js/dataTables.js"></script>
     <script src="../../dist/js/dataTables.responsive.js"></script>
@@ -2951,6 +3061,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
       src="../../dist/js/apexcharts.min.js"
     ></script>
     <script>
+   
    
       // Optimized document ready function
       $(document).ready(function() {
@@ -2972,8 +3083,16 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
             responsive: false,
             autoWidth: false,
             scrollX: true,
-            scrollCollapse: true,
-            fixedHeader: true,
+            serverSide: true,
+            ajax: {
+                url: window.location.pathname + '?action=get_daftar_usulan_data',
+                type: 'GET',
+                data: function(d) {
+                    // Tambahkan parameter tahun ke request
+                    const urlParams = new URLSearchParams(window.location.search);
+                    d.tahun = urlParams.get('tahun') || '';
+                }
+            },
             paging: true,
             pageLength: 10,
             searching: true,
@@ -3012,6 +3131,54 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
             language: {
                 url: '../../dist/js/i18n/id.json'
             }
+        });
+
+// Initialize DataTable untuk tab Daftar Usulan dengan server-side processing
+        $('#daftarUsulanTable').DataTable({
+            responsive: false,
+            autoWidth: false,
+            scrollX: true,
+            serverSide: true,
+            ajax: {
+                url: window.location.href,
+                type: 'GET',
+                data: function(d) {
+                    d.action = 'get_daftar_usulan_data';
+                    // Tambahkan filter tahun dari dropdown
+                    const tahunSelect = document.getElementById('tahunSelect');
+                    if (tahunSelect) {
+                        d.tahun = tahunSelect.value;
+                    }
+                }
+            },
+            columns: [
+                { data: 0, orderable: true, searchable: false }, // Tanggal Dibuat
+                { data: 1, orderable: false, searchable: true },  // Profit Center
+                { data: 2, orderable: false, searchable: true },  // Nomor Aset
+                { data: 3, orderable: false, searchable: true },  // Nama Aset
+                { data: 4, orderable: false, searchable: true },  // Mekanisme
+                { data: 5, orderable: false, searchable: false }, // Status
+                { data: 6, orderable: false, searchable: false }  // Action
+            ],
+            paging: true,
+            pageLength: 10,
+            searching: true,
+            ordering: true,
+            info: true,
+            processing: true,
+            deferRender: true,
+            language: {
+                url: '../../dist/js/i18n/id.json',
+                processing: '<i class="fa fa-spinner fa-spin"></i> Memuat...'
+            },
+            initComplete: function() {
+                console.log('DataTable server-side initialized successfully');
+            }
+        });
+
+// Event listener untuk refresh tabel ketika filter tahun berubah
+        document.getElementById('tahunSelect').addEventListener('change', function() {
+            $('#daftarUsulanTable').DataTable().ajax.reload();
         });
 
 // Auto-switch ke tab Upload Dokumen bila URL mengandung #upload (dipakai oleh redirect PHP)
@@ -3453,7 +3620,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
             $(this).prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1"></span> Memproses...');
             document.getElementById('saveForm').submit();
         });
-            document.getElementById('draftActionForm').submit();
+            // document.getElementById('draftActionForm').submit();
         
         // =========================================================
         // Handler untuk dropdown Mekanisme Penghapusan dan Fisik Aset
@@ -3652,46 +3819,162 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
     <script>
     // Data usulan dalam format JSON untuk akses cepat
     const usulanLengkapiData = <?= json_encode($lengkapi_data) ?>;
-    // Juga sediakan data pending SubReg (dipakai oleh reviewer ketika menekan Review)
-    const subregPendingData = <?= json_encode($subreg_pending_data) ?>;
+    // Data pending SubReg sekarang dimuat via AJAX saat diperlukan
 
     function openFormLengkapiDokumen(usulanId) {
-        console.log("Klik Lengkapi dengan ID:", usulanId); 
-        console.log("Data JSON:", usulanLengkapiData);
+        console.log("Klik Review dengan ID:", usulanId);
 
-        // Cari di data milik creator (lengkapi) dulu, jika tidak ada cari di data pending SubReg
         let usulan = usulanLengkapiData.find(u => u.id == usulanId);
-        if (!usulan) {
-          usulan = subregPendingData.find(u => u.id == usulanId);
+
+        if (usulan) {
+            populateReviewModal(usulan);
+            return;
         }
 
-        if (!usulan) {
-          alert('Data tidak ditemukan');
-          return;
-        }
-        
+        // Tampilkan modal dulu dengan data minimal agar tidak terasa lambat
         document.getElementById('usulan_id').value = usulanId;
-        
-        // Populate READ-ONLY fields (info aset)
-        document.getElementById('display_nomor_aset').textContent = usulan.nomor_asset_utama || '-';
-        document.getElementById('display_nama_aset').textContent = usulan.nama_aset || '-';
-        document.getElementById('display_subreg').textContent = usulan.subreg || '-';
-        document.getElementById('display_profit_center').textContent = usulan.profit_center + ' - ' + (usulan.profit_center_text || '');
-        document.getElementById('display_kategori_aset').textContent = usulan.kategori_aset || '-';
-        document.getElementById('display_umur_ekonomis').textContent = usulan.umur_ekonomis || '-';
-        document.getElementById('display_sisa_umur').textContent = usulan.sisa_umur_ekonomis || '-';
-        document.getElementById('display_tgl_perolehan').textContent = usulan.tgl_perolehan || '-';
-        
-        // Format currency untuk Nilai Buku dan Nilai Perolehan
-        const nilaiBuku = usulan.nilai_buku ? 'Rp ' + parseInt(usulan.nilai_buku).toLocaleString('id-ID') : '-';
-        const nilaiPerolehan = usulan.nilai_perolehan ? 'Rp ' + parseInt(usulan.nilai_perolehan).toLocaleString('id-ID') : '-';
-        
-        document.getElementById('display_nilai_buku').textContent = nilaiBuku;
-        document.getElementById('display_nilai_perolehan').textContent = nilaiPerolehan;
-        
-        // Reset form terlebih dahulu
-        document.getElementById('formLengkapiDokumen').reset();
-        document.getElementById('usulan_id').value = usulanId; // Set lagi setelah reset
+        document.getElementById('display_nomor_aset').textContent = 'Memuat...';
+        document.getElementById('display_nama_aset').textContent = 'Memuat...';
+        document.getElementById('display_subreg').textContent = '-';
+        document.getElementById('display_profit_center').textContent = '-';
+        document.getElementById('display_kategori_aset').textContent = '-';
+        document.getElementById('display_umur_ekonomis').textContent = '-';
+        document.getElementById('display_sisa_umur').textContent = '-';
+        document.getElementById('display_tgl_perolehan').textContent = '-';
+        document.getElementById('display_nilai_buku').textContent = '-';
+        document.getElementById('display_nilai_perolehan').textContent = '-';
+        document.getElementById('dokumentContainer').innerHTML = '<p class="text-muted"><i class="bi bi-hourglass-split me-2"></i>Memuat dokumen...</p>';
+
+        // Buka modal langsung tanpa tunggu AJAX
+        const modalEl = document.getElementById('modalFormLengkapiDokumen');
+        const modalRejectEl = document.getElementById('modalRejectNote');
+        if (modalRejectEl) modalRejectEl.value = '';
+        new bootstrap.Modal(modalEl).show();
+
+        // Set button handlers
+        document.getElementById('btnModalApprove').onclick = function() {
+            const id = document.getElementById('usulan_id').value;
+            const namaAset = document.getElementById('display_nama_aset').textContent || '';
+            const nomorAset = document.getElementById('display_nomor_aset').textContent || '';
+            if (id) showApproveRejectConfirm('approve', id, namaAset, nomorAset);
+        };
+        document.getElementById('btnModalReject').onclick = function() {
+            const id = document.getElementById('usulan_id').value;
+            if (!id) return;
+            const nomorAset = document.getElementById('display_nomor_aset').textContent || '';
+            const namaAset  = document.getElementById('display_nama_aset').textContent || '';
+            const noteInput = document.getElementById('confirmRejectNoteInput');
+            if (noteInput) { noteInput.value = ''; noteInput.classList.remove('is-invalid'); }
+            const errorEl = document.getElementById('confirmRejectNoteError');
+            if (errorEl) errorEl.style.display = 'none';
+            const asetPreview = document.getElementById('confirmRejectAsetPreview');
+            if (asetPreview) asetPreview.textContent = (nomorAset || id) + (namaAset ? ' — ' + namaAset : '');
+            document.getElementById('confirmRejectUsulanId').value = id;
+            new bootstrap.Modal(document.getElementById('modalConfirmReject')).show();
+        };
+
+        // Fetch data di background setelah modal terbuka
+        const url = window.location.pathname + '?action=get_usulan_detail&usulan_id=' + encodeURIComponent(usulanId);
+        fetch(url, { credentials: 'same-origin' })
+            .then(r => r.text())
+            .then(text => {
+                // Cari JSON di dalam response (antisipasi ada output HTML sebelum JSON)
+                const jsonMatch = text.match(/\{[\s\S]*\}/);
+                if (!jsonMatch) { console.warn('Tidak ada JSON dalam response'); return; }
+                const data = JSON.parse(jsonMatch[0]);
+                if (data && data.success && data.usulan) {
+                    const u = data.usulan;
+                    document.getElementById('display_nomor_aset').textContent = u.nomor_asset_utama || '-';
+                    document.getElementById('display_nama_aset').textContent = u.nama_aset || '-';
+                    document.getElementById('display_subreg').textContent = u.subreg || '-';
+                    document.getElementById('display_profit_center').textContent = (u.profit_center || '') + ' - ' + (u.profit_center_text || '');
+                    document.getElementById('display_kategori_aset').textContent = u.kategori_aset || '-';
+                    document.getElementById('display_umur_ekonomis').textContent = u.umur_ekonomis || '-';
+                    document.getElementById('display_sisa_umur').textContent = u.sisa_umur_ekonomis || '-';
+                    document.getElementById('display_tgl_perolehan').textContent = u.tgl_perolehan || '-';
+                    document.getElementById('display_nilai_buku').textContent = u.nilai_buku ? 'Rp ' + parseInt(u.nilai_buku).toLocaleString('id-ID') : '-';
+                    document.getElementById('display_nilai_perolehan').textContent = u.nilai_perolehan ? 'Rp ' + parseInt(u.nilai_perolehan).toLocaleString('id-ID') : '-';
+                    if (u.mekanisme_penghapusan) document.querySelector('select[name="mekanisme_penghapusan"]').value = u.mekanisme_penghapusan;
+                    if (u.fisik_aset) { document.querySelector('select[name="fisik_aset"]').value = u.fisik_aset; toggleFotoUpload(); }
+                    if (u.justifikasi_alasan) document.getElementById('justifikasi_alasan').value = u.justifikasi_alasan;
+                    if (u.kajian_hukum) document.getElementById('kajian_hukum').value = u.kajian_hukum;
+                    if (u.kajian_ekonomis) document.getElementById('kajian_ekonomis').value = u.kajian_ekonomis;
+                    if (u.kajian_risiko) document.getElementById('kajian_risiko').value = u.kajian_risiko;
+                }
+            })
+            .catch(err => console.warn('Background fetch error:', err));
+
+        // Load dokumen di background
+        fetch(window.location.pathname + '?action=get_dokumen_by_usulan&usulan_id=' + usulanId, { credentials: 'same-origin' })
+            .then(r => r.text())
+            .then(text => {
+                const jsonMatch = text.match(/\{[\s\S]*\}/);
+                if (!jsonMatch) return;
+                const payload = JSON.parse(jsonMatch[0]);
+                const container = document.getElementById('dokumentContainer');
+                if (!payload.success || !Array.isArray(payload.data) || payload.data.length === 0) {
+                    container.innerHTML = '<p class="text-muted"><i class="bi bi-info-circle"></i> Tidak ada dokumen.</p>';
+                    return;
+                }
+                const table = document.createElement('table');
+                table.className = 'table table-sm table-hover mb-0';
+                table.innerHTML = `<thead style="background:#f8f9fa;"><tr><th>ID</th><th>Nama File</th><th>Tahun</th><th>Nomor Aset</th><th>Aksi</th></tr></thead>`;
+                const tbody = document.createElement('tbody');
+                payload.data.forEach((dok, idx) => {
+                    const tr = document.createElement('tr');
+                    tr.style.background = idx % 2 === 0 ? '#fff' : '#f8f9fa';
+                    const safeFileName = encodeURIComponent(dok.file_name || '');
+                    const no_list = (dok.no_aset || '').split(';').filter(n => n.trim());
+                    const asetDisplay = no_list.length > 1
+                        ? `<span class="badge bg-info text-dark">${no_list.length} aset</span> <small>${no_list.join(' | ')}</small>`
+                        : (dok.no_aset || '-');
+                    tr.innerHTML = `
+                        <td><strong>${dok.id_dokumen}</strong></td>
+                        <td>${dok.file_name || '-'}</td>
+                        <td>${dok.tahun_dokumen || '-'}</td>
+                        <td>${asetDisplay}</td>
+                        <td style="white-space:nowrap;">
+                            <button type="button" class="btn btn-sm btn-outline-secondary" style="font-size:0.75rem;padding:2px 6px;"
+                                onclick="openDokumen(${dok.id_dokumen}, window.location.pathname + '?action=view_dokumen&id_dok=${dok.id_dokumen}')">
+                                <i class="bi bi-eye"></i> Lihat
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-danger" style="font-size:0.75rem;padding:2px 6px;"
+                                onclick="confirmDeleteDokumen(${dok.id_dokumen}, decodeURIComponent('${safeFileName}'))">
+                                <i class="bi bi-trash"></i> Hapus
+                            </button>
+                        </td>`;
+                    tbody.appendChild(tr);
+                });
+                table.appendChild(tbody);
+                container.innerHTML = '';
+                container.appendChild(table);
+            })
+            .catch(err => console.warn('Dokumen fetch error:', err));
+    }
+    function populateReviewModal(usulan) {
+    const usulanId = usulan.id; // ← FIX: definisikan usulanId dari parameter
+
+    document.getElementById('usulan_id').value = usulanId;
+    
+    // Populate READ-ONLY fields (info aset)
+    document.getElementById('display_nomor_aset').textContent = usulan.nomor_asset_utama || '-';
+    document.getElementById('display_nama_aset').textContent = usulan.nama_aset || '-';
+    document.getElementById('display_subreg').textContent = usulan.subreg || '-';
+    document.getElementById('display_profit_center').textContent = usulan.profit_center + ' - ' + (usulan.profit_center_text || '');
+    document.getElementById('display_kategori_aset').textContent = usulan.kategori_aset || '-';
+    document.getElementById('display_umur_ekonomis').textContent = usulan.umur_ekonomis || '-';
+    document.getElementById('display_sisa_umur').textContent = usulan.sisa_umur_ekonomis || '-';
+    document.getElementById('display_tgl_perolehan').textContent = usulan.tgl_perolehan || '-';
+    
+    // Format currency untuk Nilai Buku dan Nilai Perolehan
+    const nilaiBuku = usulan.nilai_buku ? 'Rp ' + parseInt(usulan.nilai_buku).toLocaleString('id-ID') : '-';
+    const nilaiPerolehan = usulan.nilai_perolehan ? 'Rp ' + parseInt(usulan.nilai_perolehan).toLocaleString('id-ID') : '-';
+    
+    document.getElementById('display_nilai_buku').textContent = nilaiBuku;
+    document.getElementById('display_nilai_perolehan').textContent = nilaiPerolehan;
+    
+    // Jangan reset form, langsung set value saja
+    document.getElementById('usulan_id').value = usulanId;
         
         // PRE-FILL FORM dengan data yang sudah ada (jika ada)
         if (usulan.jumlah_aset) {
@@ -4259,6 +4542,9 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
         form.submit();
       }
     </script>
+    
+    <!-- Optimization Script: Load counts async untuk better performance -->
+    <script src="optimize.js"></script>
 
   </body>
   <!--end::Body-->

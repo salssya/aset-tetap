@@ -36,6 +36,56 @@ if ($result && mysqli_num_rows($result) > 0) {
 
 $avatarPath = '../../dist/assets/img/profile.png';
 
+// Handle update email & password
+$updateSuccess = '';
+$updateError   = '';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'update_profile') {
+    $newEmail       = trim(mysqli_real_escape_string($con, $_POST['new_email'] ?? ''));
+    $currentPass    = $_POST['current_password'] ?? '';
+    $newPass        = $_POST['new_password'] ?? '';
+    $confirmPass    = $_POST['confirm_password'] ?? '';
+
+    // Ambil password lama dari DB
+    $nippEsc = mysqli_real_escape_string($con, $userNipp);
+    $qPass   = mysqli_query($con, "SELECT Password FROM users WHERE NIPP = '$nippEsc'");
+    $rowPass = mysqli_fetch_assoc($qPass);
+    $storedPass = $rowPass['Password'] ?? '';
+
+    $changeEmail = !empty($newEmail) && $newEmail !== $userEmail;
+    $changePass  = !empty($newPass);
+
+    if (!$changeEmail && !$changePass) {
+        $updateError = 'Tidak ada perubahan yang dilakukan.';
+    } else {
+        // Verifikasi password lama (mendukung MD5 atau plain jika perlu)
+        $passValid = (md5($currentPass) === $storedPass) || ($currentPass === $storedPass);
+        if (!$passValid) {
+            $updateError = 'Password saat ini tidak sesuai.';
+        } elseif ($changePass && $newPass !== $confirmPass) {
+            $updateError = 'Konfirmasi password baru tidak cocok.';
+        } elseif ($changePass && strlen($newPass) < 6) {
+            $updateError = 'Password baru minimal 6 karakter.';
+        } else {
+            // Build query dinamis
+            $setParts = [];
+            if ($changeEmail)  $setParts[] = "Email = '$newEmail'";
+            if ($changePass)   $setParts[] = "Password = '" . md5($newPass) . "'";
+            $setClause = implode(', ', $setParts);
+
+            if (mysqli_query($con, "UPDATE users SET $setClause WHERE NIPP = '$nippEsc'")) {
+                if ($changeEmail) {
+                    $_SESSION['email'] = $newEmail;
+                    $userEmail = $newEmail;
+                }
+                $updateSuccess = 'Profil berhasil diperbarui.';
+            } else {
+                $updateError = 'Gagal memperbarui profil: ' . mysqli_error($con);
+            }
+        }
+    }
+}
+
 ?>
 <!doctype html>
 <html lang="en">
@@ -371,8 +421,107 @@ $avatarPath = '../../dist/assets/img/profile.png';
                 </div>
               </div>
             </div>
+
+            <?php if ($updateSuccess): ?>
+            <div class="alert alert-success alert-dismissible fade show mt-3" role="alert">
+              <i class="bi bi-check-circle-fill me-2"></i><?php echo htmlspecialchars($updateSuccess); ?>
+              <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+            <?php endif; ?>
+            <?php if ($updateError): ?>
+            <div class="alert alert-danger alert-dismissible fade show mt-3" role="alert">
+              <i class="bi bi-exclamation-triangle-fill me-2"></i><?php echo htmlspecialchars($updateError); ?>
+              <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+            <?php endif; ?>
+
+          </div>
+          <div class="card-footer text-end" style="padding-top: 1rem; padding-bottom: 1rem;">
+            <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#editProfileModal">
+              <i class="bi bi-pencil-square me-1"></i> Edit Profil
+            </button>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Edit Profil -->
+  <div class="modal fade" id="editProfileModal" tabindex="-1" aria-labelledby="editProfileModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <form method="POST" action="">
+          <input type="hidden" name="action" value="update_profile">
+          <div class="modal-header bg-primary text-white">
+            <h5 class="modal-title" id="editProfileModalLabel">
+              <i class="bi bi-pencil-square me-2"></i>Edit Email &amp; Password
+            </h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <div class="mb-3">
+              <label class="form-label fw-semibold">Email Baru</label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-envelope"></i></span>
+                <input type="email" name="new_email" class="form-control"
+                  placeholder="Kosongkan jika tidak ingin mengubah"
+                  value="<?php echo htmlspecialchars($userEmail); ?>">
+              </div>
+              <div class="form-text">Email saat ini: <strong><?php echo htmlspecialchars($userEmail); ?></strong></div>
+            </div>
+            <hr>
+            <div class="mb-3">
+              <label class="form-label fw-semibold">Password Baru</label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-lock"></i></span>
+                <input type="password" name="new_password" id="newPassword" class="form-control"
+                  placeholder="Kosongkan jika tidak ingin mengubah">
+                <button class="btn btn-outline-secondary" type="button" onclick="togglePassword('newPassword', this)">
+                  <i class="bi bi-eye"></i>
+                </button>
+              </div>
+              <div class="form-text">Minimal 6 karakter.</div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-semibold">Konfirmasi Password Baru</label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-lock-fill"></i></span>
+                <input type="password" name="confirm_password" id="confirmPassword" class="form-control"
+                  placeholder="Ulangi password baru">
+                <button class="btn btn-outline-secondary" type="button" onclick="togglePassword('confirmPassword', this)">
+                  <i class="bi bi-eye"></i>
+                </button>
+              </div>
+            </div>
+            <hr>
+            <div class="mb-1">
+              <label class="form-label fw-semibold">
+                <i class="bi bi-shield-lock me-1"></i>Password Saat Ini <span class="text-danger">*</span>
+              </label>
+              <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-key"></i></span>
+                <input type="password" name="current_password" id="currentPassword" class="form-control"
+                  placeholder="Wajib diisi untuk konfirmasi" required>
+                <button class="btn btn-outline-secondary" type="button" onclick="togglePassword('currentPassword', this)">
+                  <i class="bi bi-eye"></i>
+                </button>
+              </div>
+              <div class="form-text text-danger">Masukkan password Anda saat ini untuk menyimpan perubahan.</div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+              <i class="bi bi-x-circle me-1"></i> Batal
+            </button>
+            <button type="submit" class="btn btn-primary">
+              <i class="bi bi-save me-1"></i> Simpan Perubahan
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
         <!--end::App Content-->
       </main>
       <!--end::App Main-->
@@ -431,26 +580,23 @@ $avatarPath = '../../dist/assets/img/profile.png';
     </script>
     <!--end::OverlayScrollbars Configure-->
     <script>
-      document.addEventListener('DOMContentLoaded', function () {
-        const editBtn = document.getElementById('editBtn');
-        const editProfileBtn = document.getElementById('editProfileBtn');
-        const editForm = document.getElementById('editForm');
-        const cancelBtn = document.getElementById('cancelBtn');
-
-        function toggleEditForm() {
-          if (editForm.style.display === 'none' || editForm.style.display === '') {
-            editForm.style.display = 'block';
-          } else {
-            editForm.style.display = 'none';
-          }
+      function togglePassword(fieldId, btn) {
+        const input = document.getElementById(fieldId);
+        const icon  = btn.querySelector('i');
+        if (input.type === 'password') {
+          input.type = 'text';
+          icon.classList.replace('bi-eye', 'bi-eye-slash');
+        } else {
+          input.type = 'password';
+          icon.classList.replace('bi-eye-slash', 'bi-eye');
         }
-
-        editBtn.addEventListener('click', toggleEditForm);
-        editProfileBtn.addEventListener('click', toggleEditForm);
-        cancelBtn.addEventListener('click', function() {
-          editForm.style.display = 'none';
-        });
+      }
+      <?php if ($updateError): ?>
+      document.addEventListener('DOMContentLoaded', function() {
+        var modal = new bootstrap.Modal(document.getElementById('editProfileModal'));
+        modal.show();
       });
+      <?php endif; ?>
     </script>
     <script>
       sessionStorage.setItem("nipp", "<?php echo $_SESSION['nipp']; ?>");

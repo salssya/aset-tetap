@@ -189,6 +189,20 @@ if (isset($_GET['action']) && $_GET['action'] === 'view_doc' && (isset($_GET['id
     exit();
   }
 
+  // Handle raw binary blob stored directly in database (longblob)
+  if (!empty($filePathDb) && (
+    substr($filePathDb, 0, 4) === '%PDF' ||
+    substr($filePathDb, 0, 4) === "\x25\x50\x44\x46" ||
+    (is_string($filePathDb) && strlen($filePathDb) > 4 && strpos($filePathDb, "\x00") !== false)
+  )) {
+    header('Content-Type: application/pdf');
+    header('Content-Disposition: ' . ($forceDownload ? 'attachment' : 'inline') . '; filename="' . $fileName . '"');
+    header('Content-Length: ' . strlen($filePathDb));
+    header('Cache-Control: no-cache, must-revalidate');
+    echo $filePathDb;
+    exit();
+  }
+
   $uploadBaseDir = realpath(__DIR__ . '/../../uploads/dokumen_penghapusan') ?: (__DIR__ . '/../../uploads/dokumen_penghapusan');
   $absPath = null;
 
