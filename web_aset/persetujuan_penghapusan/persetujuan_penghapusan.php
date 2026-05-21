@@ -132,6 +132,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'appro
     $catatan = trim($_POST['catatan_ho'] ?? '');
     $tgl     = date('Y-m-d');
     $ok      = 0;
+    $tahun_redirect = 0; // akan diisi dari tahun_usulan
 
     foreach ($ids as $uid) {
         // Hapus syarat status_approval_regional karena HO approve berdasarkan surat fisik
@@ -146,19 +147,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'appro
             $chk = $con->prepare("SELECT id FROM pelaksanaan_penghapusan WHERE usulan_id = ? LIMIT 1");
             $chk->bind_param("i", $uid); $chk->execute();
             if ($chk->get_result()->num_rows === 0) {
-                $q_up = $con->prepare("SELECT nomor_asset_utama, profit_center, subreg FROM usulan_penghapusan WHERE id = ?");
+                $q_up = $con->prepare("SELECT nomor_asset_utama, profit_center, subreg, tahun_usulan FROM usulan_penghapusan WHERE id = ?");
                 $q_up->bind_param("i", $uid); $q_up->execute();
                 $r_up = $q_up->get_result()->fetch_assoc(); $q_up->close();
+                // tanggal_persetujuan tetap hari ini (tanggal HO approve),
+                // tapi tahun_usulan diambil dari data usulan untuk keperluan filter
                 $ins = $con->prepare("INSERT INTO pelaksanaan_penghapusan (usulan_id, status_pelaksanaan, subreg, profit_center, tanggal_persetujuan, nipp) VALUES (?, 'Disetujui', ?, ?, ?, ?)");
                 $ins->bind_param("issss", $uid, $r_up['subreg'], $r_up['profit_center'], $tgl, $userNipp);
                 $ins->execute(); $ins->close();
+                // ambil tahun_usulan untuk redirect
+                if (!empty($r_up['tahun_usulan'])) {
+                    $tahun_redirect = (int)$r_up['tahun_usulan'];
+                }
             }
             $chk->close();
         }
         $stmt->close();
     }
+    // Redirect ke tahun_usulan dari usulan yang baru saja disetujui,
+    // bukan tahun sekarang — agar data langsung terlihat di filter yang benar
+    if ($tahun_redirect === 0) {
+        // fallback: ambil tahun_usulan dari id pertama
+        $first_id = reset($ids);
+        $q_thn = $con->prepare("SELECT tahun_usulan FROM usulan_penghapusan WHERE id = ? LIMIT 1");
+        $q_thn->bind_param("i", $first_id); $q_thn->execute();
+        $r_thn = $q_thn->get_result()->fetch_assoc(); $q_thn->close();
+        $tahun_redirect = !empty($r_thn['tahun_usulan']) ? (int)$r_thn['tahun_usulan'] : (int)date('Y');
+    }
     $_SESSION['success_message'] = "✅ $ok usulan berhasil disetujui HO.";
-    header("Location: " . $_SERVER['PHP_SELF'] . "?tab=upload&tahun=" . date('Y')); exit();
+    header("Location: " . $_SERVER['PHP_SELF'] . "?tab=upload&tahun=" . $tahun_redirect); exit();
 }
 
 // ── ACTION: Reject HO ────────────────────────────────────────────────────────
@@ -168,8 +185,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'rejec
     $tgl     = date('Y-m-d');
     $stmt = $con->prepare("UPDATE usulan_penghapusan SET status_approval_ho='rejected', tanggal_approval_ho=?, catatan_ho=?, status='rejected' WHERE id=?");
     $stmt->bind_param("ssi", $tgl, $catatan, $uid); $stmt->execute(); $stmt->close();
+    // Ambil tahun_usulan untuk redirect yang benar
+    $q_thn_r = $con->prepare("SELECT tahun_usulan FROM usulan_penghapusan WHERE id = ? LIMIT 1");
+    $q_thn_r->bind_param("i", $uid); $q_thn_r->execute();
+    $r_thn_r = $q_thn_r->get_result()->fetch_assoc(); $q_thn_r->close();
+    $tahun_reject = !empty($r_thn_r['tahun_usulan']) ? (int)$r_thn_r['tahun_usulan'] : (int)date('Y');
     $_SESSION['success_message'] = "❌ Usulan berhasil ditolak.";
-    header("Location: " . $_SERVER['PHP_SELF'] . "?tab=daftar&tahun=" . date('Y')); exit();
+    header("Location: " . $_SERVER['PHP_SELF'] . "?tab=daftar&tahun=" . $tahun_reject); exit();
 }
 
 // ── ACTION: Delete Dokumen HO ─────────────────────────────────────────────────
@@ -350,12 +372,13 @@ $res_du = mysqli_query($con, "SELECT dp.id_dokumen, dp.usulan_id, dp.tipe_dokume
 $daftar_dok_usulan = [];
 while ($r = mysqli_fetch_assoc($res_du)) $daftar_dok_usulan[] = $r;
 
-// Dokumen HO (untuk tabel preview upload)
+// Dokumen HO (untuk tabel preview upload) — hanya kategori='ho'
 $res_dh = mysqli_query($con, "SELECT dp.*, pp.usulan_id,
     up.profit_center, up.subreg, up.profit_center_text
     FROM dokumen_pelaksanaan dp
     JOIN pelaksanaan_penghapusan pp ON dp.id_pelaksanaan = pp.id
     JOIN usulan_penghapusan up ON pp.usulan_id = up.id
+    WHERE COALESCE(dp.kategori, 'ho') = 'ho'
     ORDER BY dp.id_dokumen DESC");
 $daftar_dok_ho = [];
 while ($r = mysqli_fetch_assoc($res_dh)) $daftar_dok_ho[] = $r;
@@ -644,7 +667,7 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
               <button class="nav-link <?= $activeTab==='upload'?'active':'' ?>"
                       data-bs-toggle="tab" data-bs-target="#tab-upload" type="button"
                       onclick="updateTabUrl('upload')">
-                <i class="bi bi-upload me-2"></i>Upload Dokumen HO
+                <i class="bi bi-upload me-2"></i>Upload Dokumen Persetujuan HO
                
               </button>
             </li>
@@ -708,9 +731,9 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                           <td><?= htmlspecialchars($u['profit_center_text']??$u['profit_center']??'-') ?></td>
                           <td>
                             <?php if ($u['mekanisme_penghapusan']==='Jual Lelang'): ?>
-                              <span class="badge-pill" style="background:#dbeafe;color:#1d4ed8;">Jual Lelang</span>
+                              <span class="badge-pill" style="background:#e0f2fe;color:#0369a1;">Jual Lelang</span>
                             <?php elseif ($u['mekanisme_penghapusan']==='Hapus Administrasi'): ?>
-                              <span class="badge-pill" style="background:#f3e8ff;color:#7c3aed;">Hapus Administrasi</span>
+                              <span class="badge-pill" style="background:#ffedd5;color:#c2410c;">Hapus Administrasi</span>
                             <?php else: ?>—<?php endif; ?>
                           </td>
                           <td style="font-family:monospace;font-size:.82rem;">
@@ -891,7 +914,7 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
 </div>
 
 <!-- ══ MODAL: PILIH ASET ══ -->
-<div class="modal fade" id="modalAsetPicker" tabindex="-1" aria-hidden="true">
+<div class="modal fade" id="modalAsetPicker" tabindex="-1" aria-modal="true">
   <div class="modal-dialog modal-xl modal-dialog-centered">
     <div class="modal-content">
       <div class="modal-header bg-primary text-white">
@@ -928,6 +951,12 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                          value="<?= $u['id'] ?>"
                          data-nomor="<?= htmlspecialchars($u['nomor_asset_utama']) ?>"
                          data-nama="<?= htmlspecialchars($u['nama_aset']??'-') ?>">
+                  <?php
+                    $sdh_ho = array_filter($daftar_dok_ho, fn($d) => (int)($d['usulan_id'] ?? 0) === (int)$u['id']);
+                    if (!empty($sdh_ho)):
+                  ?>
+                  <!-- <br><small class="text-success" style="font-size:.68rem;white-space:nowrap;">✓ Sudah upload</small> -->
+                  <?php endif; ?>
                 </td>
                 <td><code style="color:#2563eb;font-size:.82rem;"><?= htmlspecialchars($u['nomor_asset_utama']) ?></code></td>
                 <td><?= htmlspecialchars($u['nama_aset']??'-') ?></td>
@@ -951,7 +980,7 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
 </div>
 
 <!-- ══ MODAL: DETAIL USULAN ══ -->
-<div class="modal fade" id="modalDetail" tabindex="-1" aria-hidden="true">
+<div class="modal fade" id="modalDetail" tabindex="-1" aria-modal="true">
   <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
     <div class="modal-content">
       <div class="modal-header" style="background:linear-gradient(135deg,#0b3a8c,#1d6ed8);color:#fff;">
@@ -976,7 +1005,7 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
 </div>
 
 <!-- ══ MODAL: APPROVE ══ -->
-<div class="modal fade" id="modalApprove" tabindex="-1" aria-hidden="true">
+<div class="modal fade" id="modalApprove" tabindex="-1" aria-modal="true">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
       <div class="modal-header bg-success text-white">
@@ -1012,7 +1041,7 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
 </div>
 
 <!-- ══ MODAL: REJECT ══ -->
-<div class="modal fade" id="modalReject" tabindex="-1" aria-hidden="true">
+<div class="modal fade" id="modalReject" tabindex="-1" aria-modal="true">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
       <div class="modal-header bg-danger text-white">
@@ -1042,7 +1071,7 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
 </div>
 
 <!-- ══ MODAL: KONFIRMASI HAPUS DOKUMEN ══ -->
-<div class="modal fade" id="modalConfirmDelete" tabindex="-1" aria-hidden="true">
+<div class="modal fade" id="modalConfirmDelete" tabindex="-1" aria-modal="true">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
       <div class="modal-header bg-danger text-white">
@@ -1351,7 +1380,7 @@ function openDetail(uid) {
       <div class="kajian-box${isEmpty?' empty':''}">${isEmpty?'Tidak diisi':value}</div>
     </div>`;
   };
-  const mekanismeBadge = u.mekanisme_penghapusan === 'Hapus Administrasi' ? '<span class="badge" style="background:#8b5cf6;color:#fff;">Hapus Administrasi</span>' : u.mekanisme_penghapusan === 'Jual Lelang' ? '<span class="badge bg-primary">Jual Lelang</span>' : (u.mekanisme_penghapusan || '—');
+  const mekanismeBadge = u.mekanisme_penghapusan === 'Hapus Administrasi' ? '<span class="badge-pill" style="background:#ffedd5;color:#c2410c;">Hapus Administrasi</span>' : u.mekanisme_penghapusan === 'Jual Lelang' ? '<span class="badge-pill" style="background:#e0f2fe;color:#0369a1;">Jual Lelang</span>' : (u.mekanisme_penghapusan || '—');
   const fotoPath = u.foto_path || u.foto_aset || '';
   const fotoHtml = fotoPath
     ? `<div class="text-center py-3" style="background:#f8f9fa;border-bottom:1px solid #f0f0f0;">
@@ -1451,7 +1480,7 @@ function openDetail(uid) {
       </div>
     </div>
     <div class="detail-section">
-      <div class="detail-section-title"><i class="bi bi-file-earmark-pdf"></i> Dokumen Pendukung Usulan</div>
+      <div class="detail-section-title"><i class="bi bi-file-earmark-pdf"></i> Dokumen Usulan</div>
       <div style="padding:0 16px;">${dokHtml}</div>
     </div>`;
   new bootstrap.Modal(document.getElementById('modalDetail')).show();
