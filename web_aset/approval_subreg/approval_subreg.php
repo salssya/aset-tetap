@@ -123,73 +123,13 @@ if (!in_array('2026', array_map('strval', $listTahun))) {
     array_unshift($listTahun, '2026');
 }
 
-// Query hanya untuk profit center user dan nilai_perolehan_sd ≠ 0
-$query = "SELECT * FROM import_dat 
-          WHERE profit_center = ? 
-          AND nilai_perolehan_sd != 0
-          ORDER BY nomor_asset_utama ASC";
-
-$stmt = $con->prepare($query);
-$stmt->bind_param("s", $userProfitCenter);
-$stmt->execute();
-$result = $stmt->get_result();
-
+// Variabel ini tidak dipakai di halaman approval_subreg, hanya placeholder agar tidak error referensi
 $asset_data = [];
-while ($row = $result->fetch_assoc()) {
-    $asset_data[] = $row;
-}
-$stmt->close();
-
-// Query untuk mendapatkan data draft
-$query_draft = "SELECT * FROM usulan_penghapusan 
-                WHERE profit_center = ? AND status = 'draft' 
-                ORDER BY created_at DESC";
-$stmt_draft = $con->prepare($query_draft);
-$stmt_draft->bind_param("s", $userProfitCenter);
-$stmt_draft->execute();
-$result_draft = $stmt_draft->get_result();
-
 $draft_data = [];
-$draft_asset_numbers = []; 
-while ($row = $result_draft->fetch_assoc()) {
-    $draft_data[] = $row;
-    $draft_asset_numbers[] = $row['nomor_asset_utama']; 
-}
-$stmt_draft->close();
-
-//Query untuk tab "Lengkapi Data"
-$userNipp = $_SESSION['nipp'];
-$query_lengkapi = "SELECT up.*, 
-                   id.keterangan_asset as nama_aset, 
-                   id.asset_class_name as kategori_aset,
-                   id.subreg,
-                   id.profit_center_text,
-                   id.masa_manfaat as umur_ekonomis,
-                   id.sisa_manfaat as sisa_umur_ekonomis,
-                   id.tgl_perolehan,
-                   id.nilai_buku_sd as nilai_buku,
-                   id.nilai_perolehan_sd as nilai_perolehan
-                   FROM usulan_penghapusan up 
-                   LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama 
-                   WHERE up.created_by = ? 
-                   AND up.status IN ('lengkapi_dokumen', 'dokumen_lengkap') 
-                   ORDER BY up.created_at DESC";
-$stmt_lengkapi = $con->prepare($query_lengkapi);
-$stmt_lengkapi->bind_param("s", $userNipp);
-$stmt_lengkapi->execute();
-$result_lengkapi = $stmt_lengkapi->get_result();
-
+$draft_asset_numbers = [];
 $lengkapi_data = [];
-$lengkapi_asset_numbers = []; // Array untuk auto-centang checkbox
-while ($row = $result_lengkapi->fetch_assoc()) {
-    // Hilangkan kode "AUC-" dari nama_aset dan kategori_aset
-    $row['nama_aset'] = str_replace('AUC-', '', $row['nama_aset']);
-    $row['kategori_aset'] = str_replace('AUC-', '', $row['kategori_aset']);
-    
-    $lengkapi_data[] = $row;
-    $lengkapi_asset_numbers[] = $row['nomor_asset_utama']; // Simpan nomor aset
-}
-$stmt_lengkapi->close();
+$lengkapi_asset_numbers = [];
+$userNipp = $_SESSION['nipp'];
 
 // Build filter condition for import_dat similar to dasbor.php logic
 $filterConditionBase = "WHERE id.nilai_perolehan_sd <> 0 AND id.asset_class_name NOT LIKE '%AUC%'";
@@ -200,8 +140,12 @@ if (isset($_SESSION['Type_User']) && stripos($_SESSION['Type_User'], 'Sub') !== 
   $userCabang = mysqli_real_escape_string($con, $_SESSION['Cabang'] ?? '');
   $determinedSubreg = '';
 
-  if ($userCabang !== '') {
-    // Cari subreg dari profit_center user
+  // Cache subreg ke session supaya tidak query DB tiap kali filter tahun berubah
+  $cacheKey = 'cached_subreg_' . md5($userCabang);
+  if (!empty($_SESSION[$cacheKey])) {
+    $determinedSubreg = $_SESSION[$cacheKey];
+  } elseif ($userCabang !== '') {
+    // Query sekali lalu simpan ke session
     $stmt = mysqli_prepare($con, "SELECT DISTINCT subreg FROM import_dat WHERE profit_center = ? AND TRIM(subreg) <> '' LIMIT 1");
     if ($stmt) {
       mysqli_stmt_bind_param($stmt, 's', $userCabang);
@@ -209,6 +153,7 @@ if (isset($_SESSION['Type_User']) && stripos($_SESSION['Type_User'], 'Sub') !== 
       $res = mysqli_stmt_get_result($stmt);
       if ($r = mysqli_fetch_assoc($res)) {
         $determinedSubreg = $r['subreg'];
+        $_SESSION[$cacheKey] = $determinedSubreg; // simpan ke session
       }
       mysqli_stmt_close($stmt);
     }
@@ -269,89 +214,26 @@ $subreg_pending_data = []; // Akan dimuat via AJAX
 // - Otherwise (asset creator): show items created by the current user
 // ========================================================
 
-$upload_data = [];
-// Reviewer view (SubRegional / Cabang / Regional) -> show items awaiting subreg approval
-// Also include ADMINISTRATOR or users with broad access for approval workflow
-if (isset($_SESSION['Type_User']) && (stripos($_SESSION['Type_User'], 'Sub') !== false || stripos($_SESSION['Type_User'], 'Cabang') !== false || stripos($_SESSION['Type_User'], 'Regional') !== false || strtolower($_SESSION['Type_User']) === 'administrator')) {
-  $uploadWhereClause = $filterCondition . " AND up.status IN ('submitted') AND COALESCE(up.status_approval_subreg, 'pending') IN ('pending','submitted')";
-
-  // Tambahkan filter tahun jika dipilih
-  if (!empty($tahunSelected)) {
-    $uploadWhereClause .= " AND up.tahun_usulan = '" . mysqli_real_escape_string($con, $tahunSelected) . "'";
-  }
-
-  $query_upload = "SELECT up.*, 
-           id.keterangan_asset as nama_aset,
-           id.profit_center_text,
-           id.subreg,
-           (SELECT COUNT(*) FROM dokumen_penghapusan WHERE usulan_id = up.id) as jumlah_dokumen
-           FROM usulan_penghapusan up 
-           LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama 
-           " . $uploadWhereClause . "
-           ORDER BY up.updated_at DESC";
-
-  $result_upload = mysqli_query($con, $query_upload);
-  if ($result_upload) {
-    while ($row = mysqli_fetch_assoc($result_upload)) {
-      $row['nama_aset'] = str_replace('AUC-', '', $row['nama_aset']);
-      $row['kategori_aset'] = isset($row['kategori_aset']) ? str_replace('AUC-', '', $row['kategori_aset']) : $row['kategori_aset'] ?? null;
-      $upload_data[] = $row;
-    }
-  }
-
-} else {
-  // Creator view: only show assets created by the logged-in user
-  $uploadWhereClause = "WHERE up.created_by = ? AND up.status IN ('lengkapi_dokumen','dokumen_lengkap')";
-  if (isset($isSubRegional) && $isSubRegional) {
-    $uploadWhereClause .= " AND (up.profit_center = ? OR up.subreg LIKE ?)";
-  } elseif (isset($isCabang) && $isCabang) {
-    $uploadWhereClause .= " AND up.profit_center = ?";
-  }
-
-  $query_upload = "SELECT up.*, 
-           id.keterangan_asset as nama_aset,
-           id.profit_center_text,
-           id.subreg,
-           (SELECT COUNT(*) FROM dokumen_penghapusan WHERE usulan_id = up.id) as jumlah_dokumen
-           FROM usulan_penghapusan up 
-           LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama 
-           " . $uploadWhereClause . "
-           ORDER BY up.updated_at DESC";
-
-  $stmt_upload = $con->prepare($query_upload);
-
-  if (isset($isSubRegional) && $isSubRegional) {
-    $subreg_pattern = $userProfitCenter . '%';
-    $stmt_upload->bind_param("sss", $userNipp, $userProfitCenter, $subreg_pattern);
-  } elseif (isset($isCabang) && $isCabang) {
-    $stmt_upload->bind_param("ss", $userNipp, $userProfitCenter);
-  } else {
-    $stmt_upload->bind_param("s", $userNipp);
-  }
-
-  $stmt_upload->execute();
-  $result_upload = $stmt_upload->get_result();
-
-  while ($row = $result_upload->fetch_assoc()) {
-    $row['nama_aset'] = str_replace('AUC-', '', $row['nama_aset']);
-    $upload_data[] = $row;
-  }
-  $stmt_upload->close();
-}
+// ========================================================
+// $upload_data tidak dirender langsung di halaman — hanya $upload_data_picker
+// yang dipakai untuk modal picker & badge count di tab.
+// Query ini sengaja dihapus dari page load untuk mempercepat filter tahun.
+// Data untuk tab Upload ditampilkan dari $upload_data_picker saja.
+// ========================================================
+$upload_data = []; // tidak diquery, diisi dari picker di bawah jika perlu
 
 // ========================================================
-// Query terpisah untuk ASET PICKER di modal upload dokumen
-// Menampilkan semua aset yang sudah submitted dalam subreg,
-// terlepas dari status approval — agar aset yang sudah di-upload
-// dokumennya tetap muncul di picker dan tidak hilang
+// Query untuk ASET PICKER di modal upload dokumen
+// Hanya aset yang sudah di-approve SubReg
+// Subquery COUNT diganti LEFT JOIN + COUNT untuk performa lebih baik
 // ========================================================
 $upload_data_picker = [];
 if (isset($_SESSION['Type_User']) && (stripos($_SESSION['Type_User'], 'Sub') !== false || stripos($_SESSION['Type_User'], 'Cabang') !== false || stripos($_SESSION['Type_User'], 'Regional') !== false)) {
-  // Hanya aset yang sudah di-approve SubReg yang boleh diupload dokumen
   $pickerWhereClause = $filterCondition . " AND up.status_approval_subreg IN ('approved','approved_subreg','approved_regional','pending_regional')";
   if (!empty($tahunSelected)) {
     $pickerWhereClause .= " AND up.tahun_usulan = '" . mysqli_real_escape_string($con, $tahunSelected) . "'";
   }
+  // Ganti correlated subquery COUNT(*) dengan LEFT JOIN GROUP untuk performa
   $query_picker = "SELECT up.id, up.nomor_asset_utama, up.mekanisme_penghapusan, up.fisik_aset,
                    up.status, up.status_approval_subreg,
                    id.keterangan_asset as nama_aset,
@@ -359,10 +241,12 @@ if (isset($_SESSION['Type_User']) && (stripos($_SESSION['Type_User'], 'Sub') !==
                    id.profit_center,
                    id.profit_center_text,
                    id.subreg,
-                   (SELECT COUNT(*) FROM dokumen_penghapusan WHERE usulan_id = up.id) as jumlah_dokumen
+                   COUNT(dp.id_dokumen) as jumlah_dokumen
                    FROM usulan_penghapusan up
                    LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama
+                   LEFT JOIN dokumen_penghapusan dp ON dp.usulan_id = up.id
                    " . $pickerWhereClause . "
+                   GROUP BY up.id
                    ORDER BY up.updated_at DESC";
   $result_picker = mysqli_query($con, $query_picker);
   if ($result_picker) {
@@ -373,37 +257,50 @@ if (isset($_SESSION['Type_User']) && (stripos($_SESSION['Type_User'], 'Sub') !==
     }
   }
 } else {
-  // Non-reviewer: sama dengan upload_data
   $upload_data_picker = $upload_data;
 }
 
 // ========================================================
-// Hitung jumlah untuk summary boxes
-// NOTE: Counts dimuat via AJAX (api_get_counts.php) untuk performa lebih baik
-// Jalankan 1 optimized query daripada 3 query terpisah
+// Hitung summary boxes — query ringan tanpa JOIN ke import_dat
+// jika $determinedSubreg sudah tersedia (ambil langsung dari usulan_penghapusan)
 // ========================================================
-// Hitung langsung di PHP berdasarkan filter subreg yang sudah ditentukan
 $count_pending = 0;
 $count_approved = 0;
 $count_rejected = 0;
 
-$countFilterCondition = "WHERE id.nilai_perolehan_sd <> 0 AND id.asset_class_name NOT LIKE '%AUC%'";
 if (!empty($determinedSubreg)) {
-    $countFilterCondition .= " AND id.subreg = '" . mysqli_real_escape_string($con, $determinedSubreg) . "'";
-}
-$tahunFilterCount = !empty($tahunSelected) ? " AND up.tahun_usulan = '" . mysqli_real_escape_string($con, $tahunSelected) . "'" : '';
-
-$q_count = mysqli_query($con, "
+  // Jalur cepat: filter lewat subquery EXISTS ke import_dat (lebih ringan dari JOIN + filter)
+  $tahunFilterCount = !empty($tahunSelected) ? " AND up.tahun_usulan = '" . mysqli_real_escape_string($con, $tahunSelected) . "'" : '';
+  $subregEsc = mysqli_real_escape_string($con, $determinedSubreg);
+  $q_count = mysqli_query($con, "
     SELECT 
         SUM(CASE WHEN COALESCE(up.status_approval_subreg,'pending') = 'pending' THEN 1 ELSE 0 END) as cnt_pending,
         SUM(CASE WHEN up.status_approval_subreg = 'approved' THEN 1 ELSE 0 END) as cnt_approved,
         SUM(CASE WHEN up.status_approval_subreg = 'rejected' THEN 1 ELSE 0 END) as cnt_rejected
     FROM usulan_penghapusan up
-    LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama
-    " . $countFilterCondition . "
-    AND up.status IN ('submitted','approved','rejected')
-    " . $tahunFilterCount
-);
+    WHERE up.status IN ('submitted','approved','rejected')
+    $tahunFilterCount
+    AND EXISTS (
+        SELECT 1 FROM import_dat id
+        WHERE id.nomor_asset_utama = up.nomor_asset_utama
+          AND id.subreg = '$subregEsc'
+          AND id.nilai_perolehan_sd <> 0
+          AND id.asset_class_name NOT LIKE '%AUC%'
+    )
+  ");
+} else {
+  // Fallback: tanpa filter subreg
+  $tahunFilterCount = !empty($tahunSelected) ? " AND up.tahun_usulan = '" . mysqli_real_escape_string($con, $tahunSelected) . "'" : '';
+  $q_count = mysqli_query($con, "
+    SELECT 
+        SUM(CASE WHEN COALESCE(up.status_approval_subreg,'pending') = 'pending' THEN 1 ELSE 0 END) as cnt_pending,
+        SUM(CASE WHEN up.status_approval_subreg = 'approved' THEN 1 ELSE 0 END) as cnt_approved,
+        SUM(CASE WHEN up.status_approval_subreg = 'rejected' THEN 1 ELSE 0 END) as cnt_rejected
+    FROM usulan_penghapusan up
+    WHERE up.status IN ('submitted','approved','rejected')
+    $tahunFilterCount
+  ");
+}
 if ($q_count && $row_count = mysqli_fetch_assoc($q_count)) {
     $count_pending  = intval($row_count['cnt_pending']);
     $count_approved = intval($row_count['cnt_approved']);
@@ -1486,8 +1383,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'get_daftar_usulan_data') {
             // Mekanisme badge
             (function() use ($row) {
                 $mek = $row['mekanisme_penghapusan'] ?? '';
-                if ($mek === 'Hapus Administrasi') return '<span class="badge" style="background:#6f42c1; color:#fff;">Hapus Administrasi</span>';
-                if ($mek === 'Jual Lelang') return '<span class="badge" style="background:#0d6efd; color:#fff;">Jual Lelang</span>';
+                if ($mek === 'Hapus Administrasi') return '<span>Hapus Administrasi</span>';
+                if ($mek === 'Jual Lelang') return '<span>Jual Lelang</span>';
                 return $mek !== '' ? '<span class="badge bg-secondary">' . htmlspecialchars($mek) . '</span>' : '-';
             })(),
             // Status SubReg
@@ -2223,8 +2120,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                             $docsSubreg = $determinedSubreg ?? '';
 
                             if (!empty($docsSubreg)) {
-                                // SubReg: Tampilkan semua dokumen dari usulan dalam subreg ini
-                                // (terlepas dari siapa yang upload, mencakup semua cabang dalam subreg)
+                                // SubReg: 1 query langsung filter by subreg — tidak perlu loop
                                 $q_all_dok = $con->prepare(
                                     "SELECT dp.id_dokumen, dp.tahun_dokumen, dp.profit_center, dp.subreg,
                                             dp.tipe_dokumen, dp.profit_center_text, dp.file_path, dp.file_name,
@@ -2240,36 +2136,28 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                 $q_all_dok->execute();
                                 $r_all_dok = $q_all_dok->get_result();
                                 while ($d = $r_all_dok->fetch_assoc()) {
-                                    if (in_array($d['id_dokumen'], $seen_dok_ids)) continue;
-                                    $seen_dok_ids[] = $d['id_dokumen'];
                                     $semua_dokumen[] = $d;
                                 }
                                 $q_all_dok->close();
-                            } else {
-                                // Fallback: ambil dari upload_data_picker (termasuk aset yang sudah approved)
-                                foreach ($upload_data_picker as $usulan) {
-                                    $nomor_ua = $usulan['nomor_asset_utama'];
-                                    $q_dok = $con->prepare(
-                                        "SELECT dp.id_dokumen, dp.tahun_dokumen, dp.profit_center, dp.subreg,
-                                                dp.tipe_dokumen, dp.profit_center_text, dp.file_path, dp.file_name,
-                                                dp.no_aset,
-                                                up.nomor_asset_utama, up.id as usulan_id
-                                         FROM dokumen_penghapusan dp
-                                         JOIN usulan_penghapusan up ON dp.usulan_id = up.id
-                                         WHERE dp.usulan_id = ?
-                                            OR (dp.no_aset LIKE CONCAT('%', ?, '%') AND dp.no_aset LIKE '%-%')
-                                         GROUP BY dp.id_dokumen
-                                         ORDER BY dp.id_dokumen DESC"
-                                    );
-                                    $q_dok->bind_param("is", $usulan['id'], $nomor_ua);
-                                    $q_dok->execute();
-                                    $r_dok = $q_dok->get_result();
-                                    while ($d = $r_dok->fetch_assoc()) {
-                                        if (in_array($d['id_dokumen'], $seen_dok_ids)) continue;
-                                        $seen_dok_ids[] = $d['id_dokumen'];
+                            } elseif (!empty($upload_data_picker)) {
+                                // Fallback: ambil semua usulan_id sekaligus — 1 query, bukan loop
+                                $picker_ids = array_map('intval', array_column($upload_data_picker, 'id'));
+                                $ids_placeholder = implode(',', $picker_ids);
+                                $q_dok_all = mysqli_query($con,
+                                    "SELECT dp.id_dokumen, dp.tahun_dokumen, dp.profit_center, dp.subreg,
+                                            dp.tipe_dokumen, dp.profit_center_text, dp.file_path, dp.file_name,
+                                            dp.no_aset,
+                                            up.nomor_asset_utama, up.id as usulan_id
+                                     FROM dokumen_penghapusan dp
+                                     JOIN usulan_penghapusan up ON dp.usulan_id = up.id
+                                     WHERE dp.usulan_id IN ($ids_placeholder)
+                                     GROUP BY dp.id_dokumen
+                                     ORDER BY dp.id_dokumen DESC"
+                                );
+                                if ($q_dok_all) {
+                                    while ($d = mysqli_fetch_assoc($q_dok_all)) {
                                         $semua_dokumen[] = $d;
                                     }
-                                    $q_dok->close();
                                 }
                             }
 
@@ -2584,12 +2472,16 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                   // Badge untuk mekanisme
                                   let mekanismeBadge = '-';
                                   const mekanismeVal = r.mekanisme_penghapusan || r.mekanisme || r.mekanisme_penghapusan_text || '';
-                                  if (mekanismeVal === 'Hapus Administrasi') {
-                                    mekanismeBadge = '<span class="badge" style="background:#6f42c1;">Hapus Administrasi</span>';
-                                  } else if (mekanismeVal === 'Jual Lelang') {
-                                    mekanismeBadge = '<span class="badge bg-primary">Jual Lelang</span>';
-                                  } else if (mekanismeVal) {
-                                    mekanismeBadge = '<span class="badge bg-secondary">' + escHtml(mekanismeVal) + '</span>';
+                                  if (mekanismeVal) {
+                                    let mekanismeStyle = '';
+                                    if (mekanismeVal === 'Hapus Administrasi') {
+                                      mekanismeStyle = 'background:#6f42c1; color:#fff;';
+                                    } else if (mekanismeVal === 'Jual Lelang') {
+                                      mekanismeStyle = 'background:#0d6efd; color:#fff;';
+                                    } else {
+                                      mekanismeStyle = 'background:#6c757d; color:#fff;';
+                                    }
+                                    mekanismeBadge = '<span class="badge" style="' + mekanismeStyle + '">' + escHtml(mekanismeVal) + '</span>';
                                   }
 
                                   // Badge untuk status
@@ -3078,60 +2970,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
           });
         }
 
-      // Initialize DataTable dengan responsive
-          $('#myTable').DataTable({
-            responsive: false,
-            autoWidth: false,
-            scrollX: true,
-            serverSide: true,
-            ajax: {
-                url: window.location.pathname + '?action=get_daftar_usulan_data',
-                type: 'GET',
-                data: function(d) {
-                    // Tambahkan parameter tahun ke request
-                    const urlParams = new URLSearchParams(window.location.search);
-                    d.tahun = urlParams.get('tahun') || '';
-                }
-            },
-            paging: true,
-            pageLength: 10,
-            searching: true,
-            ordering: true,
-            info: true,
-            processing: true,
-            deferRender: true,
-            retrieve: true,
-            columnDefs: [
-              {
-                targets: 0,
-                orderable: false,
-                width: '50px',
-                className: 'dt-body-center'
-              }
-            ],
-            language: {
-              url: '../../dist/js/i18n/id.json'
-          },
-            initComplete: function() {
-            console.log('DataTable initialized successfully');
-          }
-        });
       });
-
-// Initialize DataTable untuk tab Lengkapi Data
-        $('#lengkapiTable').DataTable({
-            responsive: false,
-            autoWidth: false,
-            scrollX: true,
-            paging: true,
-            pageLength: 10,
-            searching: true,
-            ordering: true,
-            info: true,
-            language: {
-                url: '../../dist/js/i18n/id.json'
-            }
-        });
 
 // Initialize DataTable untuk tab Daftar Usulan dengan server-side processing
         $('#daftarUsulanTable').DataTable({
@@ -3144,8 +2983,8 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                 type: 'GET',
                 data: function(d) {
                     d.action = 'get_daftar_usulan_data';
-                    // Tambahkan filter tahun dari dropdown
-                    const tahunSelect = document.getElementById('tahunSelect');
+                    // Ambil tahun dari dropdown yang benar (id="selectTahun")
+                    const tahunSelect = document.getElementById('selectTahun');
                     if (tahunSelect) {
                         d.tahun = tahunSelect.value;
                     }
@@ -3176,10 +3015,13 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
             }
         });
 
-// Event listener untuk refresh tabel ketika filter tahun berubah
-        document.getElementById('tahunSelect').addEventListener('change', function() {
-            $('#daftarUsulanTable').DataTable().ajax.reload();
-        });
+// Event listener untuk refresh tabel ketika filter tahun berubah (id yang benar: selectTahun)
+        const selectTahunEl = document.getElementById('selectTahun');
+        if (selectTahunEl) {
+            selectTahunEl.addEventListener('change', function() {
+                $('#daftarUsulanTable').DataTable().ajax.reload();
+            });
+        }
 
 // Auto-switch ke tab Upload Dokumen bila URL mengandung #upload (dipakai oleh redirect PHP)
         if (window.location.hash === '#upload') {
@@ -3192,15 +3034,6 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
             const asetTab = new bootstrap.Tab(document.getElementById('daftar-aset-tab'));
             asetTab.show();
         }
-
-// Update info text saat berpindah tab
-        document.getElementById('upload-dokumen-tab').addEventListener('shown.bs.tab', function () {
-          document.getElementById('infoTextContent').textContent = 'Unggah dokumen pendukung untuk melengkapi usulan penghapusan aset.';
-        });
-
-        document.getElementById('daftar-aset-tab').addEventListener('shown.bs.tab', function () {
-            document.getElementById('infoTextContent').textContent = 'Tinjau ringkasan approval untuk aset yang sudah di-submit.';
-        });
 
 // Function untuk konfirmasi hapus usulan
       function confirmDeleteUsulan(usulanId, nomorAset, namaAset) {
@@ -3661,7 +3494,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
         <div class="modal-content">
           <div class="modal-header bg-primary text-white">
             <h5 class="modal-title" id="modalFormLengkapiDokumenLabel">
-              <i class="bi bi-file-earmark-plus me-2"></i>Lengkapi Data Usulan Penghapusan Aset
+              <i class="bi bi-file-earmark-plus me-2"></i>Detail Data Usulan Penghapusan Aset
             </h5>
             <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
           </div>
@@ -3938,10 +3771,6 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                 onclick="openDokumen(${dok.id_dokumen}, window.location.pathname + '?action=view_dokumen&id_dok=${dok.id_dokumen}')">
                                 <i class="bi bi-eye"></i> Lihat
                             </button>
-                            <button type="button" class="btn btn-sm btn-outline-danger" style="font-size:0.75rem;padding:2px 6px;"
-                                onclick="confirmDeleteDokumen(${dok.id_dokumen}, decodeURIComponent('${safeFileName}'))">
-                                <i class="bi bi-trash"></i> Hapus
-                            </button>
                         </td>`;
                     tbody.appendChild(tr);
                 });
@@ -4110,10 +3939,6 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                   <button type="button" class="btn btn-sm btn-outline-secondary" style="font-size: 0.75rem; padding: 2px 6px;"
                           onclick="openDokumen(${dok.id_dokumen}, '<?= htmlspecialchars($_SERVER['PHP_SELF'] . '?action=view_dokumen&id_dok=') ?>' + ${dok.id_dokumen})">
                     <i class="bi bi-eye"></i> Lihat
-                  </button>
-                  <button type="button" class="btn btn-sm btn-outline-danger" style="font-size: 0.75rem; padding: 2px 6px;"
-                          onclick="confirmDeleteDokumen(${dok.id_dokumen}, decodeURIComponent('${safeFileName}'))">
-                    <i class="bi bi-trash"></i> Hapus
                   </button>
                 </td>
               `;

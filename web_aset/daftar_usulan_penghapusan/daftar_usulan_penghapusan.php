@@ -1194,9 +1194,9 @@ $stmt_docs->close();
     }
 
     const mek = usulan.mekanisme_penghapusan === 'Jual Lelang'
-      ? `<span class="badge-pill" style="background:#dbeafe;color:#1d4ed8;">Jual Lelang</span>`
+      ? `<span class="badge-pill" style="background:#e0f2fe;color:#0369a1;">Jual Lelang</span>`
       : usulan.mekanisme_penghapusan === 'Hapus Administrasi'
-      ? `<span class="badge-pill" style="background:#f3e8ff;color:#7c3aed;">Hapus Administrasi</span>`
+      ? `<span class="badge-pill" style="background:#ffedd5;color:#c2410c;">Hapus Administrasi</span>`
       : '—';
 
     const fisik = usulan.fisik_aset === 'Ada'

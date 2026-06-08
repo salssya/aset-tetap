@@ -1138,8 +1138,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'get_daftar_usulan_data') {
             // Mekanisme badge
             (function() use ($row) {
                 $mek = $row['mekanisme_penghapusan'] ?? '';
-                if ($mek === 'Hapus Administrasi') return '<span class="badge" style="background:#6f42c1; color:#fff;">Hapus Administrasi</span>';
-                if ($mek === 'Jual Lelang') return '<span class="badge" style="background:#0d6efd; color:#fff;">Jual Lelang</span>';
+                if ($mek === 'Hapus Administrasi') return '<span>Hapus Administrasi</span>';
+                if ($mek === 'Jual Lelang') return '<span>Jual Lelang</span>';
                 return $mek !== '' ? '<span class="badge bg-secondary">' . htmlspecialchars($mek) . '</span>' : '-';
             })(),
             // Status Regional

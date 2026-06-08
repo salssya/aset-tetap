@@ -5,17 +5,8 @@ $password   = "";
 $dbname     = "asetreg3_db";
 
 $con = mysqli_connect($servername, $username, $password, $dbname);
-session_start();
 
-// ── Hanya cek login, semua user yang login boleh akses ──────────────────────
-if (!isset($_SESSION["nipp"]) || !isset($_SESSION["name"])) {
-    header("Location: ../login/login_view.php");
-    exit();
-}
-
-$userNipp = $_SESSION['nipp'];
-$userType = isset($_SESSION['Type_User']) ? $_SESSION['Type_User'] : '';
-
+// ── serve file HARUS sebelum session_start ──
 // ── Helper: serve file dari DB atau filesystem ─────────────────────────────────
 function serveFileFromDb($filePathDb, $fileName, $forceDownload = false) {
     $fileName = !empty($fileName) ? basename($fileName) : 'dokumen.pdf';
@@ -80,6 +71,37 @@ function serveFileFromDb($filePathDb, $fileName, $forceDownload = false) {
 }
 
 // ── Helper: normalize path foto ──────────────────────────────────────────────
+
+// ── Handler file — sebelum session_start ──
+if (isset($_GET['action']) && $_GET['action'] === 'view_dok_ho' && isset($_GET['id_dok'])) {
+    while (ob_get_level()) ob_end_clean();
+    $id_dok = (int)$_GET['id_dok'];
+    $res = mysqli_query($con, "SELECT lokasi_file, file_name FROM dokumen_pelaksanaan WHERE id_dokumen = $id_dok LIMIT 1");
+    if (!$res || mysqli_num_rows($res) === 0) { http_response_code(404); echo 'Dokumen tidak ditemukan.'; exit(); }
+    $row = mysqli_fetch_assoc($res);
+    serveFileFromDb($row['lokasi_file'], $row['file_name'], isset($_GET['download']));
+}
+
+if (isset($_GET['action']) && $_GET['action'] === 'view_dok_usulan' && isset($_GET['id_dok'])) {
+    while (ob_get_level()) ob_end_clean();
+    $id_dok = (int)$_GET['id_dok'];
+    $res = mysqli_query($con, "SELECT file_path, file_name FROM dokumen_penghapusan WHERE id_dokumen = $id_dok LIMIT 1");
+    if (!$res || mysqli_num_rows($res) === 0) { http_response_code(404); echo 'Dokumen tidak ditemukan.'; exit(); }
+    $row = mysqli_fetch_assoc($res);
+    serveFileFromDb($row['file_path'], $row['file_name'], isset($_GET['download']));
+}
+
+session_start();
+
+// ── Hanya cek login, semua user yang login boleh akses ──────────────────────
+if (!isset($_SESSION["nipp"]) || !isset($_SESSION["name"])) {
+    header("Location: ../login/login_view.php");
+    exit();
+}
+
+$userNipp = $_SESSION['nipp'];
+$userType = isset($_SESSION['Type_User']) ? $_SESSION['Type_User'] : '';
+
 function normalize_foto_path($p) {
   if (empty($p)) return '';
   $p = (string)$p;
@@ -240,11 +262,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
     } elseif (empty($ids_str)) {
         $_SESSION['warning_message'] = 'Pilih minimal 1 aset!';
     } else {
-        $ids         = array_filter(array_map('intval', explode(',', $ids_str)));
-        $file_name   = basename($file['name']);
-        $file_size   = $file['size'];
+        $ids       = array_filter(array_map('intval', explode(',', $ids_str)));
+        $file_name = basename($file['name']);
+        $file_size = $file['size'];
 
-        // Baca file sebagai binary BLOB — tidak simpan ke filesystem
         $fileData = file_get_contents($file['tmp_name']);
         if ($fileData === false || strlen($fileData) === 0) {
             $_SESSION['warning_message'] = 'Gagal membaca file upload.';
@@ -252,18 +273,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
             exit();
         }
 
+        // Kumpulkan semua nomor aset dan pastikan pelaksanaan sudah ada
         $no_aset_list = [];
+        $id_pel_first = null;
+
         foreach ($ids as $uid) {
+            // Ambil nomor aset
             $q_no = $con->prepare("SELECT nomor_asset_utama FROM usulan_penghapusan WHERE id = ? LIMIT 1");
             $q_no->bind_param("i", $uid); $q_no->execute();
             $r_no = $q_no->get_result()->fetch_assoc(); $q_no->close();
             if ($r_no) $no_aset_list[] = $r_no['nomor_asset_utama'];
-        }
-        $no_aset_str = implode('; ', $no_aset_list);
 
-        $ok = 0;
-        foreach ($ids as $uid) {
-            // Cek pelaksanaan — jika belum ada, buat dulu
+            // Pastikan pelaksanaan ada
             $q_pel = $con->prepare("SELECT id FROM pelaksanaan_penghapusan WHERE usulan_id = ? LIMIT 1");
             $q_pel->bind_param("i", $uid); $q_pel->execute();
             $r_pel = $q_pel->get_result()->fetch_assoc(); $q_pel->close();
@@ -282,22 +303,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'uploa
                     $r_pel = $q_pel2->get_result()->fetch_assoc(); $q_pel2->close();
                 }
             }
-
-            if ($r_pel) {
-                $id_pel  = $r_pel['id'];
-                $null    = null;
-                // Simpan sebagai BLOB — bind_param 'b' untuk binary stream
-                $ins = $con->prepare("INSERT INTO dokumen_pelaksanaan
-                    (id_pelaksanaan, tahun_dokumen, deskripsi_dokumen, nomor_aset, lokasi_file, file_name, file_size, nipp)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-                $ins->bind_param("iissbsss", $id_pel, $tahun_dok, $deskripsi, $no_aset_str, $null, $file_name, $file_size, $userNipp);
-                $ins->send_long_data(4, $fileData);
-                if ($ins->execute()) $ok++;
-                $ins->close();
-            }
+            // Simpan id_pelaksanaan pertama sebagai anchor
+            if ($r_pel && $id_pel_first === null) $id_pel_first = (int)$r_pel['id'];
         }
-        $_SESSION['success_message'] = $ok > 0
-            ? "✅ Dokumen HO berhasil diupload untuk " . count($ids) . " aset."
+
+        // Gabung semua nomor aset jadi 1 string
+        $no_aset_str = implode('; ', $no_aset_list);
+
+        // ── INSERT HANYA 1 ROW untuk semua aset yang dipilih ──
+        $inserted = false;
+        if ($id_pel_first !== null) {
+            $null = null;
+            $ins = $con->prepare("INSERT INTO dokumen_pelaksanaan
+                (id_pelaksanaan, tahun_dokumen, deskripsi_dokumen, nomor_aset, lokasi_file, file_name, file_size, nipp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+            $ins->bind_param("iissbsss", $id_pel_first, $tahun_dok, $deskripsi, $no_aset_str, $null, $file_name, $file_size, $userNipp);
+            $ins->send_long_data(4, $fileData);
+            $inserted = $ins->execute();
+            $ins->close();
+        }
+
+        $_SESSION['success_message'] = $inserted
+            ? "✅ Dokumen HO berhasil diupload untuk " . count($ids) . " aset (" . implode(', ', $no_aset_list) . ")."
             : "⚠️ Gagal upload dokumen.";
     }
     header("Location: " . $_SERVER['PHP_SELF'] . "?tab=upload&tahun=" . $tahun_dok); exit();
@@ -441,11 +468,23 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
     .table-responsive::-webkit-scrollbar{height:8px;}
     .table-responsive::-webkit-scrollbar-track{background:#f1f1f1;}
     .table-responsive::-webkit-scrollbar-thumb{background:#888;border-radius:4px;}
-    #daftarTable thead th,#daftarTable tbody td,#uploadTable thead th,#uploadTable tbody td{padding:9px 13px;white-space:nowrap;vertical-align:middle;}
-    #daftarTable thead th,#uploadTable thead th{background:#f8f9fa;font-weight:600;font-size:.875rem;border-bottom:2px solid #dee2e6;}
+    #daftarTable thead th,#daftarTable tbody td,#uploadTable thead th,#uploadTable tbody td{
+      padding:9px 13px;vertical-align:middle;white-space:normal;font-size:.875rem;}
+    #daftarTable thead th,#uploadTable thead th{
+      background:#f8f9fa;font-weight:600;font-size:.875rem;border-bottom:2px solid #dee2e6;white-space:nowrap;}
     #daftarTable tbody tr:hover,#uploadTable tbody tr:hover{background:#f5f8ff;}
-
-    /* Selected bar */
+    /* Kolom no, nomor aset, nilai buku, jml dok, aksi: nowrap */
+    #daftarTable td:nth-child(1),#daftarTable td:nth-child(2),#daftarTable td:nth-child(3),
+    #daftarTable td:nth-child(7),#daftarTable td:nth-child(8),#daftarTable td:nth-child(9),
+    #daftarTable td:nth-child(10){white-space:nowrap;font-size:.875rem;}
+    /* Nama aset: ellipsis via class */
+    #daftarTable td:nth-child(4){
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+      max-width:180px;font-size:.875rem;}
+    /* SubReg, Profit Center */
+    #daftarTable td:nth-child(5),#daftarTable td:nth-child(6){
+      white-space:normal;min-width:90px;font-size:.875rem;}
+    .no-aset-cell{white-space:normal;word-break:break-word;min-width:160px;max-width:240px;font-size:.875rem;}
     .selected-bar{background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 16px;margin-bottom:14px;display:none;align-items:center;gap:10px;flex-wrap:wrap;}
     .selected-bar.show{display:flex;}
 
@@ -726,7 +765,7 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                           </td>
                           <td class="text-center"><?= $i+1 ?></td>
                           <td><code style="color:#2563eb;"><?= htmlspecialchars($u['nomor_asset_utama']) ?></code></td>
-                          <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;"><?= htmlspecialchars($u['nama_aset']??'-') ?></td>
+                          <td><?= htmlspecialchars($u['nama_aset']??'-') ?></td>
                           <td><?= htmlspecialchars($u['subreg']??'-') ?></td>
                           <td><?= htmlspecialchars($u['profit_center_text']??$u['profit_center']??'-') ?></td>
                           <td>
@@ -859,14 +898,34 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                             <td><?= htmlspecialchars($d['deskripsi_dokumen'] ?? '-') ?></td>
                             <td><?= htmlspecialchars($d['profit_center_text'] ?? '-') ?></td>
                             <td style="white-space:nowrap;">
-                              <?php $vu = "?action=view_dok_ho&id_dok={$d['id_dokumen']}"; ?>
+                              <?php
+                                $vu = "persetujuan_penghapusan.php?action=view_dok_ho&id_dok={$d['id_dokumen']}";
+                                $no_aset_raw2 = $d['nomor_aset'] ?? '';
+                                $no_list2 = array_filter(array_map('trim', explode(';', $no_aset_raw2)));
+                                // Kumpulkan data aset untuk modal detail
+                                $detail_aset_rows = [];
+                                foreach ($no_list2 as $na) {
+                                    $na_esc = mysqli_real_escape_string($con, $na);
+                                    $ra = mysqli_query($con, "SELECT up.nomor_asset_utama, up.nama_aset, up.mekanisme_penghapusan, up.status_approval_ho
+                                        FROM usulan_penghapusan up WHERE up.nomor_asset_utama = '$na_esc' LIMIT 1");
+                                    if ($ra && $row_a = mysqli_fetch_assoc($ra)) $detail_aset_rows[] = $row_a;
+                                }
+                                $detail_aset_json = json_encode($detail_aset_rows, JSON_HEX_APOS | JSON_HEX_QUOT);
+                                $pc_label = htmlspecialchars($d['profit_center'] ?? '-');
+                                $subreg_label = htmlspecialchars($d['subreg'] ?? '-');
+                              ?>
                               <button type="button" class="btn btn-sm btn-outline-secondary" style="margin-right:4px;"
                                       onclick="togglePrevExternal('dph-<?= $d['id_dokumen'] ?>','<?= $vu ?>')">
-                                Lihat Dokumen
+                                <i class="bi bi-file-earmark-pdf me-1"></i>Lihat Dokumen
+                              </button>
+                              <button type="button" class="btn btn-sm btn-outline-info btn-detail-aset" style="margin-right:4px;"
+                                      data-aset='<?= htmlspecialchars($detail_aset_json, ENT_QUOTES, "UTF-8") ?>'
+                                      data-subtitle="PC: <?= $pc_label ?> | Subreg: <?= $subreg_label ?>">
+                                <i class="bi bi-table me-1"></i>Detail Aset
                               </button>
                               <button type="button" class="btn btn-sm btn-outline-danger"
                                       onclick="confirmDeleteDokumen(<?= $d['id_dokumen'] ?>, '<?= htmlspecialchars(addslashes($d['deskripsi_dokumen']??'Dokumen')) ?>', <?= $filterTahun ?>)">
-                                Hapus
+                                <i class="bi bi-trash me-1"></i>Hapus
                               </button>
                             </td>
                           </tr>
@@ -1096,6 +1155,49 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
   </div>
 </div>
 
+<!-- ══ MODAL: DETAIL ASET ══ -->
+<div class="modal fade" id="modalDetailAset" tabindex="-1" aria-modal="true">
+  <div class="modal-dialog modal-xl modal-dialog-centered">
+    <div class="modal-content" style="border-radius:6px;overflow:hidden;">
+      <div class="modal-header" style="background:#fff;border-bottom:2px solid #0d6efd;padding:14px 20px;">
+        <div>
+          <div class="d-flex align-items-center mb-1">
+            <i class="bi bi-table me-2" style="color:#0d6efd;font-size:1.1rem;"></i>
+            <h5 class="modal-title mb-0 fw-bold" style="color:#0d6efd;">Detail Data Aset</h5>
+          </div>
+          <div style="font-size:0.875rem;color:#555;">
+            Profit Center: <strong id="detailAsetHoPC">-</strong>
+            &nbsp;|&nbsp; Subreg: <strong id="detailAsetHoSubreg">-</strong>
+          </div>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-0">
+        <div class="table-responsive">
+          <table class="table mb-0" style="border-collapse:collapse;">
+            <thead class="table-light">
+              <tr>
+                <th style="width:50px;">No</th>
+                <th style="width:180px;">Nomor Aset</th>
+                <th>Nama Aset</th>
+                <th style="width:160px;">Mekanisme</th>
+                <th style="width:130px;">Status</th>
+              </tr>
+            </thead>
+            <tbody id="modalDetailAsetBody">
+              <tr><td colspan="5" class="text-center py-3 text-muted">Memuat data...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer" style="background:#f8f9fa;border-top:1px solid #dee2e6;padding:10px 20px;justify-content:space-between;">
+        <span id="modalDetailAsetFooter" style="font-size:0.875rem;color:#555;"></span>
+        <button type="button" class="btn btn-secondary btn-sm px-4" data-bs-dismiss="modal">Tutup</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Scripts -->
 <script src="../../dist/js/jquery-3.6.0.min.js"></script>
 <script src="../../dist/js/popper.min.js"></script>
@@ -1262,6 +1364,15 @@ $(document).ready(function() {
     bootstrap.Modal.getInstance(document.getElementById('modalDetail'))?.hide();
     setTimeout(() => openReject(u.id, u.nomor_asset_utama), 300);
   });
+
+  // ── Detail Aset button — event delegation ──
+  $(document).on('click', '.btn-detail-aset', function() {
+    const raw      = $(this).attr('data-aset') || '[]';
+    const subtitle = $(this).attr('data-subtitle') || '';
+    let asetList = [];
+    try { asetList = JSON.parse(raw); } catch(e) { asetList = []; }
+    openDetailAset(asetList, subtitle);
+  });
 });
 
 function updateTabUrl(name) {
@@ -1380,7 +1491,8 @@ function openDetail(uid) {
       <div class="kajian-box${isEmpty?' empty':''}">${isEmpty?'Tidak diisi':value}</div>
     </div>`;
   };
-  const mekanismeBadge = u.mekanisme_penghapusan === 'Hapus Administrasi' ? '<span class="badge-pill" style="background:#ffedd5;color:#c2410c;">Hapus Administrasi</span>' : u.mekanisme_penghapusan === 'Jual Lelang' ? '<span class="badge-pill" style="background:#e0f2fe;color:#0369a1;">Jual Lelang</span>' : (u.mekanisme_penghapusan || '—');
+  const mekanismeBadge = u.mekanisme_penghapusan === 'Hapus Administrasi' ? '<span class="badge-pill" style="background:#ffedd5;color:#c2410c;">Hapus Administrasi</span>' 
+  : u.mekanisme_penghapusan === 'Jual Lelang' ? '<span class="badge-pill" style="background:#e0f2fe;color:#0369a1;">Jual Lelang</span>' : (u.mekanisme_penghapusan || '—');
   const fotoPath = u.foto_path || u.foto_aset || '';
   const fotoHtml = fotoPath
     ? `<div class="text-center py-3" style="background:#f8f9fa;border-bottom:1px solid #f0f0f0;">
@@ -1399,7 +1511,7 @@ function openDetail(uid) {
   });  const dokHtml = dok.length === 0
     ? '<p class="text-muted small mb-0">Belum ada dokumen pendukung.</p>'
     : dok.map((d,i) => {
-        const url = `?action=view_dok_usulan&id_dok=${d.id_dokumen}`;
+        const url = `persetujuan_penghapusan.php?action=view_dok_usulan&id_dok=${d.id_dokumen}`;
         const pid = `dd-${d.id_dokumen}`;
         return `<div style="padding:10px 0;${i>0?'border-top:1px solid #f3f4f6':''}">
           <div style="display:flex;align-items:flex-start;justify-content:space-between;">
@@ -1520,6 +1632,48 @@ function tutupLightbox() {
   document.getElementById('lightboxOverlay').style.display = 'none';
   document.getElementById('lightboxImg').src = '';
   document.body.style.overflow = '';
+}
+function openDetailAset(asetList, subtitle) {
+  const tbody   = document.getElementById('modalDetailAsetBody');
+  const pcEl    = document.getElementById('detailAsetHoPC');
+  const subEl   = document.getElementById('detailAsetHoSubreg');
+  const totalEl = document.getElementById('modalDetailAsetFooter');
+
+  const pcMatch  = (subtitle || '').match(/PC:\s*([^|]+)/);
+  const subMatch = (subtitle || '').match(/Subreg:\s*(.+)/);
+  if (pcEl)  pcEl.textContent  = pcMatch  ? pcMatch[1].trim()  : '-';
+  if (subEl) subEl.textContent = subMatch ? subMatch[1].trim() : '-';
+
+  if (!asetList || asetList.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" class="text-center py-3 text-muted">Data aset tidak ditemukan.</td></tr>';
+    if (totalEl) totalEl.textContent = '';
+  } else {
+    tbody.innerHTML = '';
+    asetList.forEach(function(a, i) {
+      const mekVal = a.mekanisme_penghapusan || '';
+      let mekBadge = '-';
+      if (mekVal) {
+        const mekStyle = mekVal === 'Hapus Administrasi' ? 'background:#ffedd5;color:#c2410c;'
+          : mekVal === 'Jual Lelang' ? 'background:#e0f2fe;color:#0369a1;' : 'background:#f3f4f6;color:#6b7280;';
+        mekBadge = '<span class="badge" style="' + mekStyle + '">' + mekVal + '</span>';
+      }
+      const stVal = a.status_approval_ho || '';
+      let stBadge = '-';
+      if (stVal === 'approved')      stBadge = '<span class="badge" style="background:#28a745;color:#fff;">Approved</span>';
+      else if (stVal === 'rejected') stBadge = '<span class="badge" style="background:#dc3545;color:#fff;">Rejected</span>';
+      else if (stVal)                stBadge = '<span class="badge" style="background:#ffc107;color:#333;">Pending</span>';
+      const namaLink = '<a href="#" style="color:#0d6efd;text-decoration:none;">' + (a.nama_aset || '-') + '</a>';
+      tbody.innerHTML += '<tr style="background:' + (i%2===0 ? '#f8f9fa' : '#fff') + '">'
+        + '<td class="text-center">' + (i+1) + '</td>'
+        + '<td><code style="color:#2563eb;font-size:.82rem;">' + (a.nomor_asset_utama || '-') + '</code></td>'
+        + '<td>' + namaLink + '</td>'
+        + '<td class="text-center">' + mekBadge + '</td>'
+        + '<td class="text-center">' + stBadge + '</td>'
+        + '</tr>';
+    });
+    if (totalEl) totalEl.textContent = 'Total: ' + asetList.length + ' aset dimuat';
+  }
+  new bootstrap.Modal(document.getElementById('modalDetailAset')).show();
 }
 document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape') tutupLightbox();

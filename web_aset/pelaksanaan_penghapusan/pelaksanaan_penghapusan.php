@@ -5,6 +5,29 @@ $password   = "";
 $dbname     = "asetreg3_db";
 
 $con = mysqli_connect($servername, $username, $password, $dbname);
+
+// ── Handle file serve SEBELUM session_start agar header tidak terlambat ──
+if (isset($_GET['action']) && in_array($_GET['action'], ['view_dok_ho', 'view_dok_usulan'])) {
+    while (ob_get_level()) ob_end_clean();
+    
+    if ($_GET['action'] === 'view_dok_ho' && isset($_GET['id_dok'])) {
+        $id_dok = (int)$_GET['id_dok'];
+        $res = mysqli_query($con, "SELECT lokasi_file, file_name FROM dokumen_pelaksanaan WHERE id_dokumen = $id_dok LIMIT 1");
+        if (!$res || mysqli_num_rows($res) === 0) { http_response_code(404); echo 'Dokumen tidak ditemukan.'; exit(); }
+        $row = mysqli_fetch_assoc($res);
+        serveFileFromDb($row['lokasi_file'], $row['file_name'], isset($_GET['download']));
+    }
+
+    if ($_GET['action'] === 'view_dok_usulan' && isset($_GET['id_dok'])) {
+        $id_dok = (int)$_GET['id_dok'];
+        $res = mysqli_query($con, "SELECT file_path, file_name FROM dokumen_penghapusan WHERE id_dokumen = $id_dok LIMIT 1");
+        if (!$res || mysqli_num_rows($res) === 0) { http_response_code(404); echo 'Dokumen tidak ditemukan.'; exit(); }
+        $row = mysqli_fetch_assoc($res);
+        serveFileFromDb($row['file_path'], $row['file_name'], isset($_GET['download']));
+    }
+    exit();
+}
+
 session_start();
 
 if (!isset($_SESSION["nipp"]) || !isset($_SESSION["name"])) {
@@ -133,6 +156,8 @@ function normalize_foto_path($p) {
 }
 
 if (isset($_GET['action']) && $_GET['action'] === 'view_dok_usulan' && isset($_GET['id_dok'])) {
+    while (ob_get_level()) ob_end_clean();
+    
     $id_dok = (int)$_GET['id_dok'];
     $res = mysqli_query($con, "SELECT file_path, file_name FROM dokumen_penghapusan WHERE id_dokumen = $id_dok LIMIT 1");
     if (!$res || mysqli_num_rows($res) === 0) { http_response_code(404); echo 'Dokumen tidak ditemukan.'; exit(); }
@@ -141,6 +166,9 @@ if (isset($_GET['action']) && $_GET['action'] === 'view_dok_usulan' && isset($_G
 }
 
 if (isset($_GET['action']) && $_GET['action'] === 'view_dok_ho' && isset($_GET['id_dok'])) {
+    // Bersihkan semua output buffer sebelum kirim file
+    while (ob_get_level()) ob_end_clean();
+    
     $id_dok = (int)$_GET['id_dok'];
     $res = mysqli_query($con, "SELECT lokasi_file, file_name FROM dokumen_pelaksanaan WHERE id_dokumen = $id_dok LIMIT 1");
     if (!$res || mysqli_num_rows($res) === 0) { http_response_code(404); echo 'Dokumen tidak ditemukan.'; exit(); }
@@ -326,16 +354,16 @@ $res_main = mysqli_query($con, "SELECT pp.*,
     up.justifikasi_alasan, up.kajian_hukum, up.kajian_ekonomis, up.kajian_risiko,
     up.status_approval_ho, up.catatan_ho, up.tanggal_approval_ho,
     up.tahun_usulan, up.nilai_buku, up.jumlah_aset,
-    id.keterangan_asset as nama_aset, id.asset_class_name as kategori_aset,
-    id.profit_center_text, id.subreg, id.nilai_perolehan_sd,
-    id.nilai_buku_sd as nilai_buku_awal, id.tgl_perolehan,
-    id.masa_manfaat as umur_ekonomis, id.sisa_manfaat as sisa_umur_ekonomis,
+    up.nama_aset, up.kategori_aset,
+    up.profit_center_text, up.subreg,
+    up.nilai_perolehan as nilai_perolehan_sd,
+    up.nilai_buku as nilai_buku_awal,
+    up.tgl_perolehan, up.umur_ekonomis, up.sisa_umur_ekonomis,
     (SELECT COUNT(*) FROM dokumen_pelaksanaan dp WHERE dp.id_pelaksanaan = pp.id) as jml_dok_ho,
     (SELECT COUNT(*) FROM dokumen_penghapusan dp2 WHERE dp2.usulan_id = up.id) as jml_dok_usulan,
     (SELECT COUNT(*) FROM dokumen_pelaksanaan dp3 WHERE dp3.id_pelaksanaan = pp.id AND COALESCE(dp3.kategori,'ho') = 'pendukung') as has_pendukung
     FROM pelaksanaan_penghapusan pp
     JOIN usulan_penghapusan up ON pp.usulan_id = up.id
-    LEFT JOIN import_dat id ON up.nomor_asset_utama = id.nomor_asset_utama
     WHERE up.tahun_usulan = $filterTahun $whereStatus
     ORDER BY pp.created_at DESC");
 
@@ -356,11 +384,10 @@ $res_dpend = mysqli_query($con, "SELECT
     dp.id_dokumen, dp.id_pelaksanaan, dp.deskripsi_dokumen, dp.file_name,
     dp.tahun_dokumen, COALESCE(dp.nomor_aset, up.nomor_asset_utama) as nomor_aset,
     pp.profit_center, pp.subreg,
-    id2.profit_center_text as cabang
+    up.profit_center_text as cabang
     FROM dokumen_pelaksanaan dp
     JOIN pelaksanaan_penghapusan pp ON dp.id_pelaksanaan = pp.id
     JOIN usulan_penghapusan up ON pp.usulan_id = up.id
-    LEFT JOIN import_dat id2 ON up.nomor_asset_utama = id2.nomor_asset_utama
     WHERE COALESCE(dp.kategori,'ho') = 'pendukung'
     ORDER BY dp.id_dokumen DESC");
 while ($r = mysqli_fetch_assoc($res_dpend)) $daftar_dok_pendukung[] = $r;
@@ -400,6 +427,7 @@ foreach ($data_pelaksanaan as $d) {
     if ($mek === 'Hapus Administrasi') $cnt_hapus_admin_total++;
 }
 $cnt_total_pelaksanaan = count($data_pelaksanaan);
+$cnt_belum_disetujui_ho = $cnt_total_usulan - $cnt_disetujui_ho;
 $cnt_jual_progress = $cnt_appraisal + $cnt_lelang + $cnt_terjual;
 
 $list_tahun = [];
@@ -446,9 +474,10 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
     .card-table-header h5{margin:0;font-size:.95rem;font-weight:600;color:#1f2937;}
     .card-table-body{padding:16px 20px;}
     .table-responsive{overflow-x:auto;-webkit-overflow-scrolling:touch;}
-    #pelaksanaanTable thead th,#pelaksanaanTable tbody td{padding:9px 13px;white-space:nowrap;vertical-align:middle;}
-    #pelaksanaanTable thead th{background:#f8f9fa;font-weight:600;font-size:.875rem;border-bottom:2px solid #dee2e6;}
-    #pelaksanaanTable tbody tr:hover{background:#f5f8ff;}
+    #tblJualLelang thead th,#tblJualLelang tbody td,
+    #tblHapusAdmin thead th,#tblHapusAdmin tbody td{padding:9px 13px;white-space:nowrap;vertical-align:middle;}
+    #tblJualLelang tbody tr:hover{background:#f0f2f5!important;}
+    #tblHapusAdmin tbody tr:hover{background:#e8f0fe!important;}
     .modal{padding-left:0!important;} body.modal-open{overflow:hidden!important;padding-right:0!important;}
     .detail-section{padding:16px 22px;border-bottom:1px solid #f0f0f0;}
     .detail-section:last-child{border-bottom:none;}
@@ -463,12 +492,12 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
     .detail-item-value{font-size:.88rem;font-weight:600;color:#1f2937;}
     .badge-pill{padding:3px 11px;border-radius:20px;font-size:.8rem;font-weight:600;display:inline-block;}
     /* Status Pelaksanaan badges — warna lebih terang/kontras, tidak overlap dengan Mekanisme */
-    .st-disetujui{background:#d1fae5;color:#065f46;}        /* Hijau — Disetujui/OK */
-    .st-appraisal{background:#fef9c3;color:#854d0e;}        /* Kuning — tahap evaluasi, belum final */
-    .st-lelang{background:#ede9fe;color:#5b21b6;}           /* Ungu — sedang berjalan */
-    .st-terjual{background:#ccfbf1;color:#0f766e;}          /* Teal muda — terjual/selesai */
-    .st-ditolak{background:#fee2e2;color:#991b1b;}          /* Merah muda — ditolak */
-    .st-musnahkan{background:#dc2626;color:#fff;}           /* Merah solid — aksi administratif penting */
+    .st-disetujui{background:#dbeafe;color:#1d4ed8;}        /* Biru  — Disetujui */
+    .st-appraisal{background:#fef9c3;color:#854d0e;}        /* Kuning — Appraisal */
+    .st-lelang   {background:#ede9fe;color:#5b21b6;}        /* Ungu  — Proses Lelang */
+    .st-terjual  {background:#bbf7d0;color:#166534;}        /* Hijau — Terjual */
+    .st-ditolak  {background:#fee2e2;color:#991b1b;}        /* Merah muda — Ditolak */
+    .st-musnahkan{background:#dc2626;color:#fff;}           /* Merah solid — Hapus Administrasi */
     /* Tab styles in modal edit */
     .edit-tab-nav{display:flex;border-bottom:2px solid #e9ecef;background:#f8f9fa;padding:0 22px;}
     .edit-tab-btn{padding:10px 16px;border:none;background:none;font-size:.82rem;font-weight:600;color:#6b7280;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:all .18s;}
@@ -700,21 +729,21 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
         <!-- GROUP 1: Total Pelaksanaan -->
         <div class="col-12 col-md-3">
           <div style="border-radius:14px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.08);height:100%;">
-            <div style="background:linear-gradient(135deg,#1e40af,#3b82f6);padding:16px 20px 10px;color:#fff;">
+            <div style="background:linear-gradient(135deg,#1e293b,#334155);padding:16px 20px 10px;color:#fff;">
               <div style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;opacity:.85;margin-bottom:6px;">
                 <i class="bi bi-collection me-1"></i>Total Usulan
               </div>
               <div style="font-size:2.4rem;font-weight:800;line-height:1;"><?= $cnt_total_usulan ?></div>
-              <div style="font-size:.75rem;opacity:.8;margin-top:2px;">Total aset tahun ini</div>
+              <div style="font-size:.75rem;opacity:.8;margin-top:2px;">Total usulan tahun ini</div>
             </div>
             <div style="background:#fff;padding:12px 20px;border-top:1px solid #e0eaff;">
               <div style="display:flex;align-items:center;justify-content:space-between;">
-                <span style="font-size:.8rem;color:#6b7280;"><i class="bi bi-collection me-1 text-primary"></i>Total Pelaksanaan</span>
-                <span style="font-size:.9rem;font-weight:700;color:#1e40af;"><?= $cnt_total_pelaksanaan ?></span>
-              </div>
-              <div style="display:flex;align-items:center;justify-content:space-between;margin-top:5px;">
                 <span style="font-size:.8rem;color:#6b7280;"><i class="bi bi-check-circle me-1 text-success"></i>Disetujui HO</span>
                 <span style="font-size:.9rem;font-weight:700;color:#059669;"><?= $cnt_disetujui_ho ?></span>
+              </div>
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-top:5px;">
+                <span style="font-size:.8rem;color:#6b7280;"><i class="bi bi-clock me-1 text-warning"></i>Belum Disetujui HO</span>
+                <span style="font-size:.9rem;font-weight:700;color:#d97706;"><?= $cnt_belum_disetujui_ho ?></span>
               </div>
            
             </div>
@@ -726,7 +755,7 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
           <div style="border-radius:14px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.08);height:100%;">
             <div style="background:linear-gradient(135deg,#0369a1,#0ea5e9);padding:16px 20px 10px;color:#fff;">
               <div style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;opacity:.85;margin-bottom:6px;">
-                <i class="bi bi-hammer me-1"></i>Jual / Lelang
+                <i class="bi bi-tag-fill me-1"></i>Jual / Lelang
               </div>
               <div style="font-size:2.4rem;font-weight:800;line-height:1;"><?= $cnt_jual_lelang_total ?></div>
               <div style="font-size:.75rem;opacity:.8;margin-top:2px;">Total aset mekanisme Jual Lelang</div>
@@ -739,7 +768,7 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                 </div>
                 <div style="background:#ede9fe;border-radius:8px;padding:8px 6px;">
                   <div style="font-size:1.4rem;font-weight:800;color:#6d28d9;"><?= $cnt_lelang ?></div>
-                  <div style="font-size:.72rem;color:#5b21b6;font-weight:600;"><i class="bi bi-hammer me-1"></i>Proses Lelang</div>
+                  <div style="font-size:.72rem;color:#5b21b6;font-weight:600;"><i class="bi bi-arrow-repeat me-1"></i>Proses Lelang</div>
                 </div>
                 <div style="background:#ccfbf1;border-radius:8px;padding:8px 6px;">
                   <div style="font-size:1.4rem;font-weight:800;color:#0f766e;"><?= $cnt_terjual ?></div>
@@ -798,94 +827,111 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
 
             <!-- ══ TAB 1: DAFTAR PELAKSANAAN ══ -->
             <div class="tab-pane fade <?= $activeTab==='daftar'?'show active':'' ?>" id="tab-pel-daftar">
-              <div class="card-table">
-                <div class="card-table-header">
-                  <!-- <i class="bi bi-gear-wide-connected text-primary"></i> -->
-                  <h5>Pelaksanaan Penghapusan</h5>
-                  <span class="badge bg-primary me-2">Tahun <?= $filterTahun ?></span>
+
+              <?php
+              // Split data by mekanisme
+              $data_jual_lelang   = array_values(array_filter($data_pelaksanaan, fn($d) => ($d['mekanisme_penghapusan'] ?? '') === 'Jual Lelang'));
+              $data_hapus_admin   = array_values(array_filter($data_pelaksanaan, fn($d) => ($d['mekanisme_penghapusan'] ?? '') === 'Hapus Administrasi'));
+
+              $stMap = [
+                'Disetujui'           =>['st-disetujui','bi-check-circle'],
+                'Appraisal Aset'      =>['st-appraisal','bi-calculator'],
+                'Proses Lelang'       =>['st-lelang','bi-arrow-repeat'],
+                'Terjual'             =>['st-terjual','bi-bag-check'],
+                'Ditolak'             =>['st-ditolak','bi-x-circle'],
+                'Hapus Administrasi'  =>['st-musnahkan','bi-trash3'],
+                'Telah Dimusnahkan'   =>['st-musnahkan','bi-trash3'],
+                'Telah dimusnahkan'   =>['st-musnahkan','bi-trash3']
+              ];
+              ?>
+
+              <?php if (empty($data_pelaksanaan)): ?>
+                <div class="text-center text-muted py-5">
+                  <i class="bi bi-inbox" style="font-size:2.5rem;opacity:.3;display:block;margin-bottom:.75rem;"></i>
+                  Belum ada data pelaksanaan untuk tahun <?= $filterTahun ?>.
                 </div>
-                <div class="card-table-body">
-                  <?php if (empty($data_pelaksanaan)): ?>
-                    <div class="text-center text-muted py-5">
-                      <i class="bi bi-inbox" style="font-size:2.5rem;opacity:.3;display:block;margin-bottom:.75rem;"></i>
-                      Belum ada data pelaksanaan untuk tahun <?= $filterTahun ?>.
+              <?php else: ?>
+
+              <!-- ── TABEL 1: JUAL LELANG ── -->
+              <div class="card-table mb-4" style="border:1px solid #dee2e6;border-radius:10px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06);">
+                <div class="card-table-header" style="background:#fff;border-bottom:2px solid #dee2e6;padding:13px 20px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                  <i class="bi bi-tag-fill" style="font-size:1rem;color:#374151;"></i>
+                  <h5 style="margin:0;font-size:.95rem;font-weight:700;color:#1f2937;flex:1;">Jual / Lelang</h5>
+                  <span class="badge bg-secondary" style="font-size:.78rem;"><?= count($data_jual_lelang) ?> Aset</span>
+                  <span class="badge bg-primary" style="font-size:.75rem;">Tahun <?= $filterTahun ?></span>
+                </div>
+                <div class="card-table-body" style="padding:0;">
+                  <?php if (empty($data_jual_lelang)): ?>
+                    <div class="text-center text-muted py-4" style="font-size:.88rem;">
+                      <i class="bi bi-inbox" style="font-size:1.8rem;opacity:.3;display:block;margin-bottom:.5rem;"></i>
+                      Belum ada data Jual Lelang untuk tahun <?= $filterTahun ?>.
                     </div>
                   <?php else: ?>
                   <div class="table-responsive">
-                    <table id="pelaksanaanTable" class="table table-bordered table-hover align-middle w-100">
+                    <table id="tblJualLelang" class="table table-bordered table-hover align-middle w-100 mb-0" style="font-size:.875rem;">
                       <thead>
                         <tr>
-                          <th>No</th>
-                          <th>Nomor Aset</th>
-                          <th>SubReg</th>
-                          <th>Profit Center</th>
-                          <th>Nama Aset</th>
-                          <th>Umur Aset</th>
-                          <th>Mekanisme</th>
-                          <th>Tgl Persetujuan</th>
-                          <th>Status</th>
-                          <th>Dokumen Aset</th>
-                          <th>Aksi</th>
+                          <th style="white-space:nowrap;">No</th>
+                          <th style="white-space:nowrap;">Profit Center</th>
+                          <th style="white-space:nowrap;">Nomor Aset</th>
+                          <th style="white-space:nowrap;">Nomor Aset Baru</th>
+                          <th style="white-space:nowrap;">Deskripsi</th>
+                          <th style="white-space:nowrap;">Tahun Perolehan</th>
+                          <th style="white-space:nowrap;">Umur Aset</th>
+                          <th style="white-space:nowrap;">Nilai Buku</th>
+                          <th style="white-space:nowrap;">Nilai Pasar (Appraisal KJPP)</th>
+                          <th style="white-space:nowrap;">Nilai Hasil Penjualan/Pelelangan</th>
+                          <th style="white-space:nowrap;">Status Pelaksanaan</th>
+                          <th style="white-space:nowrap;text-align:center;">Dokumen</th>
+                          <th style="white-space:nowrap;text-align:center;">Aksi</th>
                         </tr>
                       </thead>
                       <tbody>
-                        <?php foreach ($data_pelaksanaan as $i => $p):
-                          $stMap = [
-                            'Disetujui'           =>['st-disetujui','bi-check-circle'],
-                            'Appraisal Aset'      =>['st-appraisal','bi-calculator'],
-                            'Proses Lelang'       =>['st-lelang','bi-hammer'],
-                            'Terjual'             =>['st-terjual','bi-bag-check'],
-                            'Ditolak'             =>['st-ditolak','bi-x-circle'],
-                            'Hapus Administrasi'  =>['st-musnahkan','bi-trash3'],
-                            'Telah Dimusnahkan'   =>['st-musnahkan','bi-trash3'],
-                            'Telah dimusnahkan'   =>['st-musnahkan','bi-trash3']
-                          ];
+                        <?php foreach ($data_jual_lelang as $i => $p):
                           $stKey = $p['status_pelaksanaan'];
-                          // case-insensitive fallback
                           if (!isset($stMap[$stKey])) {
                             foreach ($stMap as $k => $v) { if (strtolower($k) === strtolower($stKey)) { $stKey = $k; break; } }
                           }
                           [$stClass,$stIcon] = $stMap[$stKey] ?? ['st-disetujui','bi-circle'];
                           $stLabel = (stripos($stKey,'telah dimusnahkan')!==false || stripos($stKey,'hapus administrasi')!==false) ? 'Hapus Administrasi' : $stKey;
+                          $total_dokumen = (int)$p['jml_dok_ho'] + (int)$p['jml_dok_usulan'];
+                          $tgl_perolehan = $p['tgl_perolehan'] ?? '-';
+                          $thn_perolehan = ($tgl_perolehan !== '-' && $tgl_perolehan) ? date('Y', strtotime($tgl_perolehan)) : '-';
                         ?>
-                        <tr style="font-size:.875rem;">
+                        <tr>
                           <td class="text-center"><?= $i+1 ?></td>
-                          <td><code style="color:#2563eb;font-size:.875rem;"><?= htmlspecialchars($p['nomor_asset_utama']) ?></code></td>
-                          <td><?= htmlspecialchars($p['subreg']??'-') ?></td>
                           <td><?= htmlspecialchars($p['profit_center_text']??$p['profit_center']??'-') ?></td>
-                          <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;"><?= htmlspecialchars($p['nama_aset']??'-') ?></td>
+                          <td><code style="color:#2563eb;font-size:.82rem;"><?= htmlspecialchars($p['nomor_asset_utama']) ?></code></td>
+                          <td><code style="color:#6b7280;font-size:.82rem;"><?= htmlspecialchars($p['nomor_aset_pengganti']??'-') ?></code></td>
+                          <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;"><?= htmlspecialchars($p['nama_aset']??'-') ?></td>
+                          <td class="text-center"><?= $thn_perolehan ?></td>
                           <td style="white-space:nowrap;"><?php
-                            if (isset($p['umur_ekonomis']) && $p['umur_ekonomis'] !== null && $p['umur_ekonomis'] !== '') {
-                              $umur_bln = (int)$p['umur_ekonomis'];
-                              $umur_thn = (int)round($umur_bln / 12);
-                              if ($umur_bln < 60) {
-                                echo '<div style="font-size:.78rem;font-weight:600;">Di bawah 5 thn</div>';
-                              } else {
-                                echo '<div style="font-size:.78rem;font-weight:600;">Sampai dengan 5 thn';
-                              }
-                             
-                            } else {
+                            $u_bln = isset($p['umur_ekonomis']) ? (int)$p['umur_ekonomis'] : null;
+                            if ($u_bln === null) {
                               echo '<span style="color:#9ca3af;">-</span>';
+                            } elseif ($u_bln < 60) {
+                              echo '<div style="font-size:.78rem;font-weight:600;">Di bawah 5 thn</div>';
+                            } else {
+                              echo '<div style="font-size:.78rem;font-weight:600;">Sampai dengan 5 thn';
                             }
                           ?></td>
-                          <td>
-                            <?php if ($p['mekanisme_penghapusan']==='Jual Lelang'): ?>
-                              <span class="badge-pill" style="background:#e0f2fe;color:#0369a1;">Jual Lelang</span>
-                            <?php elseif ($p['mekanisme_penghapusan']==='Hapus Administrasi'): ?>
-                              <span class="badge-pill" style="background:#ffedd5;color:#c2410c;">Hapus Administrasi</span>
-                            <?php else: ?>&#8212;<?php endif; ?>
-                          </td>
-                          <td><?= $p['tanggal_persetujuan'] ?? '-' ?></td>
+                          <td class="text-end" style="font-family:monospace;font-size:.82rem;"><?php
+                            $nb = $p['nilai_buku_bulan_berjalan'] ?? $p['nilai_buku_awal'] ?? $p['nilai_buku'] ?? null;
+                            echo $nb !== null ? number_format((float)$nb, 0, ',', '.') : '-';
+                          ?></td>
+                          <td class="text-end" style="font-family:monospace;font-size:.82rem;"><?php
+                            $nap = $p['nilai_appraisal_pasar'] ?? null;
+                            echo $nap !== null ? number_format((float)$nap, 0, ',', '.') : '-';
+                          ?></td>
+                          <td class="text-end" style="font-family:monospace;font-size:.82rem;"><?php
+                            $npj = $p['nilai_penjualan'] ?? null;
+                            echo $npj !== null ? number_format((float)$npj, 0, ',', '.') : '-';
+                          ?></td>
                           <td><span class="badge-pill <?= $stClass ?>"><i class="bi <?= $stIcon ?> me-1"></i><?= $stLabel ?></span></td>
-                          <?php
-                          $total_dokumen = (int)$p['jml_dok_ho'] + (int)$p['jml_dok_usulan'];
-                          ?>
                           <td class="text-center">
-                            <span class="badge bg-<?= $total_dokumen > 0 ? 'success' : 'secondary' ?>">
-                              <?= $total_dokumen ?>
-                            </span>
+                            <span class="badge bg-<?= $total_dokumen > 0 ? 'success' : 'secondary' ?>"><?= $total_dokumen ?></span>
                           </td>
-                          <td class="text-center">
+                          <td class="text-center" style="white-space:nowrap;">
                             <button class="btn btn-sm btn-outline-primary btn-detail-pel" data-id="<?= $p['id'] ?>" title="Detail"><i class="bi bi-eye"></i></button>
                             <?php if ($canEdit): ?>
                             <button class="btn btn-sm btn-outline-warning ms-1 btn-edit-pel" data-id="<?= $p['id'] ?>" title="Edit"><i class="bi bi-pencil"></i></button>
@@ -899,6 +945,108 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                   <?php endif; ?>
                 </div>
               </div>
+              <!-- END TABEL 1 -->
+
+              <!-- ── TABEL 2: HAPUS ADMINISTRASI ── -->
+              <div class="card-table" style="border:1px solid #dee2e6;border-radius:10px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06);">
+                <div class="card-table-header" style="background:#fff;border-bottom:2px solid #dee2e6;padding:13px 20px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                  <i class="bi bi-trash3" style="font-size:1rem;color:#374151;"></i>
+                  <h5 style="margin:0;font-size:.95rem;font-weight:700;color:#1f2937;flex:1;">Hapus Administrasi</h5>
+                  <span class="badge bg-secondary" style="font-size:.78rem;"><?= count($data_hapus_admin) ?> Aset</span>
+                  <span class="badge bg-primary" style="font-size:.75rem;">Tahun <?= $filterTahun ?></span>
+                </div>
+                <div class="card-table-body" style="padding:0;">
+                  <?php if (empty($data_hapus_admin)): ?>
+                    <div class="text-center text-muted py-4" style="font-size:.88rem;">
+                      <i class="bi bi-inbox" style="font-size:1.8rem;opacity:.3;display:block;margin-bottom:.5rem;"></i>
+                      Belum ada data Hapus Administrasi untuk tahun <?= $filterTahun ?>.
+                    </div>
+                  <?php else: ?>
+                  <div class="table-responsive">
+                    <table id="tblHapusAdmin" class="table table-bordered table-hover align-middle w-100 mb-0" style="font-size:.875rem;">
+                      <thead>
+                        <tr>
+                          <th style="white-space:nowrap;">No</th>
+                          <th style="white-space:nowrap;">Sub Regional</th>
+                          <th style="white-space:nowrap;">Lokasi</th>
+                          <th style="white-space:nowrap;">No Aset Usulan</th>
+                          <th style="white-space:nowrap;">Aset Tetap</th>
+                          <th style="white-space:nowrap;text-align:center;">Jumlah</th>
+                          <th style="white-space:nowrap;">Umur Ekonomis</th>
+                          <th style="white-space:nowrap;">Tahun Perolehan</th>
+                          <th style="white-space:nowrap;">Nilai Perolehan (Rp)</th>
+                          <th style="white-space:nowrap;">Nilai Buku</th>
+                          <th style="white-space:nowrap;">Fisik Aset</th>
+                          <th style="white-space:nowrap;">Status Pelaksanaan</th>
+                          <th style="white-space:nowrap;text-align:center;">Dokumen</th>
+                          <th style="white-space:nowrap;text-align:center;">Aksi</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <?php foreach ($data_hapus_admin as $i => $p):
+                          $stKey = $p['status_pelaksanaan'];
+                          if (!isset($stMap[$stKey])) {
+                            foreach ($stMap as $k => $v) { if (strtolower($k) === strtolower($stKey)) { $stKey = $k; break; } }
+                          }
+                          [$stClass,$stIcon] = $stMap[$stKey] ?? ['st-disetujui','bi-circle'];
+                          $stLabel = (stripos($stKey,'telah dimusnahkan')!==false || stripos($stKey,'hapus administrasi')!==false) ? 'Hapus Administrasi' : $stKey;
+                          $total_dokumen = (int)$p['jml_dok_ho'] + (int)$p['jml_dok_usulan'];
+                          $tgl_perolehan = $p['tgl_perolehan'] ?? '-';
+                          $thn_perolehan = ($tgl_perolehan !== '-' && $tgl_perolehan) ? date('Y', strtotime($tgl_perolehan)) : '-';
+                          $umur_bln = isset($p['umur_ekonomis']) ? (int)$p['umur_ekonomis'] : null;
+                        ?>
+                        <tr>
+                          <td class="text-center"><?= $i+1 ?></td>
+                          <td><?= htmlspecialchars($p['subreg']??'-') ?></td>
+                          <td><?= htmlspecialchars($p['profit_center_text']??$p['profit_center']??'-') ?></td>
+                          <td><code style="color:#2563eb;font-size:.82rem;"><?= htmlspecialchars($p['nomor_asset_utama']) ?></code></td>
+                          <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;"><?= htmlspecialchars($p['nama_aset']??'-') ?></td>
+                          <td class="text-center"><?= htmlspecialchars($p['jumlah_aset']??'1') ?></td>
+                          <td style="white-space:nowrap;"><?php
+                            $u_bln = isset($p['umur_ekonomis']) ? (int)$p['umur_ekonomis'] : null;
+                            if ($u_bln === null) {
+                              echo '<span style="color:#9ca3af;">-</span>';
+                            } elseif ($u_bln < 60) {
+                              echo '<div style="font-size:.78rem;font-weight:600;">Di bawah 5 thn</div>';
+                            } else {
+                              echo '<div style="font-size:.78rem;font-weight:600;">Sampai dengan 5 thn</div>';
+                            }
+                          ?></td>
+                          <td class="text-center"><?= $thn_perolehan ?></td>
+                          <td class="text-end" style="font-family:monospace;font-size:.82rem;"><?php
+                            $np = $p['nilai_perolehan_sd'] ?? null;
+                            echo $np !== null ? number_format((float)$np, 0, ',', '.') : '-';
+                          ?></td>
+                          <td class="text-end" style="font-family:monospace;font-size:.82rem;"><?php
+                            $nb = $p['nilai_buku_bulan_berjalan'] ?? $p['nilai_buku_awal'] ?? $p['nilai_buku'] ?? null;
+                            echo $nb !== null ? number_format((float)$nb, 0, ',', '.') : '-';
+                          ?></td>
+                          <td class="text-center"><?php
+                            $fis = $p['fisik_aset'] ?? '-';
+                            echo $fis && $fis !== '-' ? '<div style="font-size:.78rem;font-size:.82rem;">'.htmlspecialchars($fis).'</div>' : '<span style="color:#9ca3af;">-</span>';
+                          ?></td>
+                          <td><span class="badge-pill <?= $stClass ?>"><i class="bi <?= $stIcon ?> me-1"></i><?= $stLabel ?></span></td>
+                          <td class="text-center">
+                            <span class="badge bg-<?= $total_dokumen > 0 ? 'success' : 'secondary' ?>"><?= $total_dokumen ?></span>
+                          </td>
+                          <td class="text-center" style="white-space:nowrap;">
+                            <button class="btn btn-sm btn-outline-primary btn-detail-pel" data-id="<?= $p['id'] ?>" title="Detail"><i class="bi bi-eye"></i></button>
+                            <?php if ($canEdit): ?>
+                            <button class="btn btn-sm btn-outline-warning ms-1 btn-edit-pel" data-id="<?= $p['id'] ?>" title="Edit"><i class="bi bi-pencil"></i></button>
+                            <?php endif; ?>
+                          </td>
+                        </tr>
+                        <?php endforeach; ?>
+                      </tbody>
+                    </table>
+                  </div>
+                  <?php endif; ?>
+                </div>
+              </div>
+              <!-- END TABEL 2 -->
+
+              <?php endif; ?>
+
             </div>
             <!-- End Tab Daftar -->
 
@@ -1000,9 +1148,9 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                                       onclick="showDetailAsetPel('<?= htmlspecialchars(addslashes($d['nomor_aset'] ?? '')) ?>')">
                                 <i class="bi bi-table me-1"></i>Detail Aset
                               </button>
-                              <button type="button" class="btn btn-sm btn-outline-danger ms-1"
-                                      onclick="confirmHapusDokPendukung(<?= $d['id_dokumen'] ?>, '<?= htmlspecialchars(addslashes($d['deskripsi_dokumen'] ?? '')) ?>')">
-                                Hapus
+                              <button type="button" class="btn btn-sm btn-outline-danger"
+                                      onclick="confirmDeleteDokumen(<?= $d['id_dokumen'] ?>, '<?= htmlspecialchars(addslashes($d['deskripsi_dokumen']??'Dokumen')) ?>', <?= $filterTahun ?>)">
+                                <i class="bi bi-trash me-1"></i>Hapus
                               </button>
                             </td>
                           </tr>
@@ -1386,19 +1534,26 @@ const dataDokUsulan   = <?= json_encode($daftar_dok_usulan) ?>;
 const dataDokPendukung = <?= json_encode($daftar_dok_pendukung) ?>;
 
 $(document).ready(function() {
-  if ($('#pelaksanaanTable tbody tr').length) {
-    const dt = $('#pelaksanaanTable').DataTable({
-      language:{search:"Cari:",lengthMenu:"Tampilkan _MENU_ data",info:"_START_-_END_ dari _TOTAL_ data",
-        paginate:{first:"&laquo;",previous:"&lsaquo;",next:"&rsaquo;",last:"&raquo;"},zeroRecords:"Tidak ada data"},
-      pageLength:25,
-      columnDefs:[
-        {orderable:false, targets:[0, 9, 10]},  // No, Dokumen Aset, Aksi (ada kolom Umur Aset baru di index 5)
-      ],
-      order: [[1, 'asc']]
-    });
-
+  // Helper: init DataTable on a table
+  function initDT(tableId) {
+  if (!$('#' + tableId + ' tbody tr').length) return;
+  var noOrderCols = tableId === 'tblJualLelang' ? [0, 11, 12] : [0, 12, 13];
+  var dt = $('#' + tableId).DataTable({
+    language:{search:"Cari:",lengthMenu:"Tampilkan _MENU_ data",info:"_START_-_END_ dari _TOTAL_ data",
+      paginate:{first:"&laquo;",previous:"&lsaquo;",next:"&rsaquo;",last:"&raquo;"},zeroRecords:"Tidak ada data"},
+    pageLength:10,
+    lengthMenu:[10, 25, 50, 100],
+    columnDefs:[
+      {orderable:false, targets: noOrderCols},
+    ],
+    order: [[1, 'asc']],
+    rowCallback: function(row, data, index) {      
+      var info = this.api().page.info();
+      $('td:first', row).html(info.start + index + 1);
+    }
+  });
     function refreshSortIcons() {
-      $('#pelaksanaanTable thead th').each(function() {
+      $('#' + tableId + ' thead th').each(function() {
         $(this).find('.sort-icon').remove();
         if ($(this).hasClass('sorting') || $(this).hasClass('sorting_asc') || $(this).hasClass('sorting_desc')) {
           let icon = '\uF127';
@@ -1409,9 +1564,13 @@ $(document).ready(function() {
       });
     }
     refreshSortIcons();
-    $('#pelaksanaanTable').on('order.dt', refreshSortIcons);
+    $('#' + tableId).on('order.dt', refreshSortIcons);
   }
+
+  initDT('tblJualLelang');
+  initDT('tblHapusAdmin');
 });
+
 
 $(document).on('click','.btn-detail-pel',function(){ openDetail($(this).data('id')); });
 $(document).on('click','.btn-edit-pel',function(){ openEdit($(this).data('id')); });
@@ -1420,7 +1579,7 @@ const rupiah = n => (n !== null && n !== '' && n !== undefined) ? 'Rp ' + parseF
 const stConfig = {
   'Disetujui':          {cls:'st-disetujui', ic:'bi-check-circle'},
   'Appraisal Aset':     {cls:'st-appraisal', ic:'bi-calculator'},
-  'Proses Lelang':      {cls:'st-lelang',    ic:'bi-hammer'},
+  'Proses Lelang':      {cls:'st-lelang',    ic:'bi-arrow-repeat'},
   'Terjual':            {cls:'st-terjual',   ic:'bi-bag-check'},
   'Hapus Administrasi': {cls:'st-musnahkan', ic:'bi-trash3'},
   'Telah Dimusnahkan':  {cls:'st-musnahkan', ic:'bi-trash3'},
@@ -1584,7 +1743,10 @@ function openDetail(id) {
       return `<span style="font-weight:600;">Sampai dengan 5 thn</span>`;
     }
   })();
-  const mekanismeBadge = p.mekanisme_penghapusan === 'Hapus Administrasi' ? '<span class="badge-pill" style="background:#ffedd5;color:#c2410c;">Hapus Administrasi</span>' : p.mekanisme_penghapusan === 'Jual Lelang' ? '<span class="badge-pill" style="background:#e0f2fe;color:#0369a1;">Jual Lelang</span>' : (p.mekanisme_penghapusan || '&mdash;');
+  const mekanismeBadge = p.mekanisme_penghapusan === 'Hapus Administrasi' 
+  ? '<span class="badge-pill" style="background:#ffedd5;color:#c2410c;">Hapus Administrasi</span>' 
+  : p.mekanisme_penghapusan === 'Jual Lelang' 
+  ? '<span class="badge-pill" style="background:#e0f2fe;color:#0369a1;">Jual Lelang</span>' : (p.mekanisme_penghapusan || '&mdash;');
   const fotoHtml = p.foto_path
     ? `<div class="text-center py-3" style="background:#f8f9fa;border-bottom:1px solid #f0f0f0;">
          <img src="${p.foto_path}" class="foto-aset-img img-fluid"
@@ -1616,7 +1778,7 @@ function openDetail(id) {
         <div class="detail-item"><div class="detail-item-label">Sisa Umur Ekonomis</div><div class="detail-item-value">${p.sisa_umur_ekonomis ? p.sisa_umur_ekonomis + ' bulan' : '&mdash;'}</div></div>
         <div class="detail-item"><div class="detail-item-label">Jumlah Aset</div><div class="detail-item-value">${p.jumlah_aset||'&mdash;'}</div></div>
         <div class="detail-item"><div class="detail-item-label">Mekanisme Penghapusan</div><div class="detail-item-value">${mekanismeBadge}</div></div>
-        <div class="detail-item"><div class="detail-item-label">Fisik Aset</div><div class="detail-item-value">${p.fisik_aset ? `<span class="badge-pill" style="background:${p.fisik_aset==='Ada'?'#d1fae5':'#fee2e2'};color:${p.fisik_aset==='Ada'?'#065f46':'#991b1b'};">${p.fisik_aset}</span>` : '&mdash;'}</div></div>
+       <div class="detail-item"><div class="detail-item-label">Fisik Aset</div><div class="detail-item-value">${p.fisik_aset ? `<div style="font-size:.78rem;font-weight:600;">${p.fisik_aset}</div>` : '&mdash;'}</div></div>
         <div class="detail-item"><div class="detail-item-label">Jumlah Dokumen</div><div class="detail-item-value"><span class="badge-pill" style="background:#0ea5e9;color:#fff;">${totalDokumen} file(s)</span></div></div>
       </div>
     </div>
@@ -1924,7 +2086,8 @@ function showDetailAsetPel(nomorAset) {
           const mekVal = r.mekanisme_penghapusan || '';
           let mekBadge = '-';
           if (mekVal) {
-            const mekStyle = mekVal === 'Hapus Administrasi' ? 'background:#ffedd5;color:#c2410c;' : mekVal === 'Jual Lelang' ? 'background:#e0f2fe;color:#0369a1;' : 'background:#f3f4f6;color:#6b7280;';
+            const mekStyle = mekVal === 'Hapus Administrasi' ? 'background:#ffedd5;color:#c2410c;' 
+            : mekVal === 'Jual Lelang' ? 'background:#e0f2fe;color:#0369a1;' : 'background:#f3f4f6;color:#6b7280;';
             mekBadge = '<span class="badge" style="' + mekStyle + '">' + mekVal + '</span>';
           }
           const stVal = r.status_penghapusan || '';
