@@ -1894,44 +1894,104 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
               data-accordion="false"
               id="navigation"
             >
-            <?php  
-            $ $userNipp = isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : '';
-              $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '" . mysqli_real_escape_string($con, $userNipp) . "' ORDER BY menus.urutan_menu ASC";
-              $result_menu = mysqli_query($con, $query) or die(mysqli_error($con));
-              $iconMap = [
-                  'Dasboard'                       => 'bi bi-grid-fill',
-                  'Usulan Penghapusan'              => 'bi bi-file-earmark-plus',
-                  'Daftar Usulan Penghapusan'       => 'bi bi-collection',
-                  'Approval SubReg'                 => 'bi bi-person-check',
-                  'Approval Regional'               => 'bi bi-building-check',
-                  'Persetujuan Penghapusan'         => 'bi bi-shield-check',
-                  'Daftar Persetujuan Penghapusan'  => 'bi bi-journal-check',
-                  'Pelaksanaan Penghapusan'         => 'bi bi-gear-wide-connected',
-                  'Daftar Pelaksanaan Penghapusan'  => 'bi bi-archive-fill',
-                  'Manajemen Menu'                  => 'bi bi-layout-text-sidebar',
-                  'Import DAT'                      => 'bi bi-file-earmark-arrow-up',
-                  'Daftar Aset Tetap'               => 'bi bi-card-list',
-                  'Manajemen User'                  => 'bi bi-people',
-              ];
-                $allMenus = [];
-                while ($row = mysqli_fetch_assoc($result_menu)) {
-                    $allMenus[] = $row;
-                }
+           <?php  
+            $userNipp = isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : '';
+            $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '" . mysqli_real_escape_string($con, $userNipp) . "' ORDER BY menus.urutan_menu ASC";
+            $result_menu = mysqli_query($con, $query) or die(mysqli_error($con));
+            $iconMap = [
+                'Dasboard'                       => 'bi bi-grid-fill',
+                'Usulan Penghapusan'              => 'bi bi-file-earmark-plus',
+                'Daftar Usulan Penghapusan'       => 'bi bi-collection',
+                'Approval SubReg'                 => 'bi bi-person-check',
+                'Approval Regional'               => 'bi bi-building-check',
+                'Persetujuan Penghapusan'         => 'bi bi-shield-check',
+                'Daftar Persetujuan Penghapusan'  => 'bi bi-journal-check',
+                'Pelaksanaan Penghapusan'         => 'bi bi-gear-wide-connected',
+                'Daftar Pelaksanaan Penghapusan'  => 'bi bi-archive-fill',
+                'Manajemen Menu'                  => 'bi bi-layout-text-sidebar',
+                'Import DAT'                      => 'bi bi-file-earmark-arrow-up',
+                'Import Data Penyusutan'          => 'bi bi-cloud-upload',
+                'Daftar Data Penyusutan'          => 'bi bi-table',
+                'Selisih Penyusutan'              => 'bi bi-bar-chart-line',
+                'Daftar Aset Tetap'               => 'bi bi-boxes',
+                'Manajemen User'                  => 'bi bi-people',
+            ];
 
-                // Sort berdasarkan urutan_menu untuk memastikan urutan selalu konsisten
-                usort($allMenus, function($a, $b) {
-                    return $a['urutan_menu'] <=> $b['urutan_menu'];
-                });
+            // ── Pengelompokan menu jadi 3 grup dropdown: Penghapusan, Penyusutan, Manajemen Admin ──
+            // (menu di luar mapping ini, misal "Dasboard", dirender sebagai item biasa di luar grup)
+            $groupMap = [
+                'Usulan Penghapusan'             => 'Penghapusan',
+                'Daftar Usulan Penghapusan'      => 'Penghapusan',
+                'Approval SubReg'                => 'Penghapusan',
+                'Approval Regional'              => 'Penghapusan',
+                'Persetujuan Penghapusan'        => 'Penghapusan',
+                'Daftar Persetujuan Penghapusan' => 'Penghapusan',
+                'Pelaksanaan Penghapusan'        => 'Penghapusan',
+                'Daftar Aset Tetap'              => 'Penghapusan',
+                'Daftar Pelaksanaan Penghapusan' => 'Penghapusan',
 
-                $currentPage = basename($_SERVER['PHP_SELF']);
-                foreach ($allMenus as $row) {
-                    $namaMenu = trim($row['nama_menu']);
-                    $icon     = $iconMap[$namaMenu] ?? 'bi bi-circle';
-                    $isActive = ($currentPage === $row['menu'] . '.php') ? 'active' : '';
-                    if ($namaMenu === 'Manajemen Menu') echo '<li class="nav-header"></li>';
-                    echo '<li class="nav-item"><a href="../' . $row['menu'] . '/' . $row['menu'] . '.php" class="nav-link ' . $isActive . '"><i class="nav-icon ' . $icon . '"></i><p>' . htmlspecialchars($namaMenu) . '</p></a></li>';
+                'Import Data Penyusutan'         => 'Penyusutan',
+                'Daftar Data Penyusutan'         => 'Penyusutan',
+                'Selisih Penyusutan'             => 'Penyusutan',
+
+                'Import DAT'                     => 'Manajemen Admin',
+                'Manajemen Menu'                 => 'Manajemen Admin',
+                'Manajemen User'                 => 'Manajemen Admin',
+            ];
+            $groupIcon = [
+                'Penghapusan'      => 'bi bi-file-earmark-minus',
+                'Penyusutan'       => 'bi bi-graph-down-arrow',
+                'Manajemen Admin'  => 'bi bi-sliders',
+            ];
+            $groupOrder = ['Penghapusan', 'Penyusutan', 'Manajemen Admin'];
+
+            $currentPage = basename($_SERVER['PHP_SELF']);
+
+            $ungrouped = [];
+            $grouped   = [];
+            while ($row = mysqli_fetch_assoc($result_menu)) {
+                $namaMenu = trim($row['nama_menu']);
+                if (isset($groupMap[$namaMenu])) {
+                    $grouped[$groupMap[$namaMenu]][] = $row;
+                } else {
+                    $ungrouped[] = $row;
                 }
-        ?>
+            }
+
+            // ── Render item di luar grup (mis. Dasboard) di paling atas, seperti sebelumnya ──
+            foreach ($ungrouped as $row) {
+                $namaMenu = trim($row['nama_menu']);
+                $icon     = $iconMap[$namaMenu] ?? 'bi bi-circle';
+                $isActive = ($currentPage === $row['menu'] . '.php') ? 'active' : '';
+                echo '<li class="nav-item"><a href="../' . $row['menu'] . '/' . $row['menu'] . '.php" class="nav-link ' . $isActive . '"><i class="nav-icon ' . $icon . '"></i><p>' . htmlspecialchars($namaMenu) . '</p></a></li>';
+            }
+
+            // ── Render tiap grup sebagai dropdown treeview, isinya cuma menu yang user PUNYA AKSES ──
+            foreach ($groupOrder as $groupName) {
+                if (empty($grouped[$groupName])) continue; // user gak punya akses menu apapun di grup ini
+
+                $itemsGrup = $grouped[$groupName];
+                $adaAktif  = false;
+                foreach ($itemsGrup as $itemG) {
+                    if ($currentPage === $itemG['menu'] . '.php') { $adaAktif = true; break; }
+                }
+                $liClassGrup   = 'nav-item' . ($adaAktif ? ' menu-open' : '');
+                $linkClassGrup = 'nav-link' . ($adaAktif ? ' active' : '');
+                $iconGrup      = $groupIcon[$groupName] ?? 'bi bi-folder';
+
+                echo '<li class="' . $liClassGrup . '">';
+                echo '<a href="#" class="' . $linkClassGrup . '"><i class="nav-icon ' . $iconGrup . '"></i><p>' . htmlspecialchars($groupName) . '<i class="nav-arrow bi bi-chevron-right"></i></p></a>';
+                echo '<ul class="nav nav-treeview">';
+                foreach ($itemsGrup as $itemG) {
+                    $namaMenuG = trim($itemG['nama_menu']);
+                    $iconItemG = $iconMap[$namaMenuG] ?? 'bi bi-circle';
+                    $isActiveG = ($currentPage === $itemG['menu'] . '.php') ? 'active' : '';
+                    echo '<li class="nav-item"><a href="../' . $itemG['menu'] . '/' . $itemG['menu'] . '.php" class="nav-link ' . $isActiveG . '"><i class="nav-icon ' . $iconItemG . '"></i><p>' . htmlspecialchars($namaMenuG) . '</p></a></li>';
+                }
+                echo '</ul>';
+                echo '</li>';
+            }
+              ?>
         </ul>
       </nav>
     </div>
