@@ -12,17 +12,13 @@ if(!isset($_SESSION["nipp"]) || !isset($_SESSION["name"])) {
     exit();
 }
 
-// ==========================================================
 // Variabel untuk card "Import DAT"
-// ==========================================================
 $importedData = [];
 $pesan = "";
 $tipe_pesan = "";
 $saved_count = 0;
 
-// ==========================================================
 // Variabel untuk card "Import Data Penyusutan"
-// ==========================================================
 $importedDataPenyusutan = [];
 $pesanPenyusutan = "";
 $tipePenyusutan = "";
@@ -32,10 +28,7 @@ $TARGET_HEADERS_PENYUSUTAN = [
     'cost center', 'asset', 'asset subnumber', 'account',
     'posting date', 'amount in local currency', 'profit center', 'text', 'document number'
 ];
-// Document Number TIDAK wajib ada (opsional) -- dipakai untuk membedakan transaksi yang
-// kebetulan identik di 5 kolom kunci lain (cost_center/asset/sub/account/posting_date),
-// misal 2 dokumen jurnal berbeda untuk aset & tanggal yang sama. Kalau file tidak
-// punya kolom ini, tetap boleh diimport, cuma document_number-nya kosong.
+
 $WAJIB_HEADERS_PENYUSUTAN = [
     'cost center', 'asset', 'asset subnumber', 'account',
     'posting date', 'amount in local currency', 'profit center', 'text'
@@ -940,10 +933,12 @@ function saveDatPenyusutanToDatabase($con, $importedData) {
         tgl_perolehan VARCHAR(20),
         sisa_manfaat_aset VARCHAR(20),
         gl_account_exp VARCHAR(25),
+        sub_number_num INT UNSIGNED NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         imported_by VARCHAR(20),
-        UNIQUE KEY uk_asset_sub_periode (nomor_asset, sub_number, periode_bulan, tahun_buku)
+        UNIQUE KEY uk_asset_sub_periode (nomor_asset, sub_number, periode_bulan, tahun_buku),
+        KEY idx_nomor_asset_sub_num (nomor_asset, sub_number_num)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
 
     if (!mysqli_query($con, $create_table_sql)) {
@@ -966,6 +961,17 @@ function saveDatPenyusutanToDatabase($con, $importedData) {
     }
     if (!in_array('cabang', $existingColsDat, true)) {
         mysqli_query($con, "ALTER TABLE import_dat_penyusutan ADD COLUMN cabang VARCHAR(100) AFTER profit_center");
+    }
+    // Migrasi AMAN: kolom sub_number_num (versi angka dari sub_number, dipakai biar JOIN ke
+    // import_penyusutan bisa pakai index -- lihat komentar di dasbor_penyusutan.php).
+    if (!in_array('sub_number_num', $existingColsDat, true)) {
+        mysqli_query($con, "ALTER TABLE import_dat_penyusutan ADD COLUMN sub_number_num INT UNSIGNED NULL");
+    }
+    $existingIdxDat = [];
+    $resIdxDat = mysqli_query($con, "SHOW INDEX FROM import_dat_penyusutan");
+    if ($resIdxDat) { while ($ix = mysqli_fetch_assoc($resIdxDat)) { $existingIdxDat[] = $ix['Key_name']; } }
+    if (!in_array('idx_nomor_asset_sub_num', $existingIdxDat, true)) {
+        mysqli_query($con, "ALTER TABLE import_dat_penyusutan ADD INDEX idx_nomor_asset_sub_num (nomor_asset, sub_number_num)");
     }
 
     // Cari posisi kolom periode_bulan & tahun_buku secara dinamis dari $DB_COLUMNS_DAT_ORDERED,
@@ -1011,6 +1017,7 @@ function saveDatPenyusutanToDatabase($con, $importedData) {
     $failed_rows = [];
     $skipped_blank = 0;
     $idxNomorAssetCol = array_search('nomor_asset', $column_names);
+    $idxSubNumberCol = array_search('sub_number', $column_names);
 
     mysqli_begin_transaction($con);
 
@@ -1028,12 +1035,20 @@ function saveDatPenyusutanToDatabase($con, $importedData) {
             $values = [];
             foreach ($column_names as $col_idx => $col_name) {
                 $value = isset($row[$col_idx]) ? $row[$col_idx] : '';
+                // Trim nomor_asset & sub_number saat insert supaya JOIN ke import_penyusutan bisa
+                // pakai perbandingan langsung (index-friendly) tanpa TRIM() di query.
+                if ($col_name === 'nomor_asset' || $col_name === 'sub_number') {
+                    $value = trim((string)$value);
+                }
                 $values[] = "'" . mysqli_real_escape_string($con, $value) . "'";
             }
-            
+
+            $subNumberNum = normalisasi_subnumber_num_ps($row[$idxSubNumberCol] ?? '');
+            $values[] = $subNumberNum === null ? 'NULL' : $subNumberNum;
+
             $values[] = "'" . mysqli_real_escape_string($con, $nipp) . "'";
             
-            $columns = implode(', ', $column_names) . ', imported_by';
+            $columns = implode(', ', $column_names) . ', sub_number_num, imported_by';
             $insert_sql = "INSERT INTO import_dat_penyusutan (" . $columns . ") VALUES (" . implode(', ', $values) . ")";
             
             try {
@@ -1077,6 +1092,59 @@ function saveDatPenyusutanToDatabase($con, $importedData) {
     return $saved_count;
 }
 
+// ── Normalisasi posting_date & amount SEKALI di sini, saat data masuk ──
+// Ini persis logika date_expr()/amount_expr() di dasbor_penyusutan.php, tapi dijalankan di PHP
+// saat INSERT, bukan di SQL saat SELECT. Hasilnya disimpan ke kolom posting_date_norm/amount_norm
+// (DATE & DECIMAL asli + ter-index), supaya dashboard & export tinggal baca kolom itu langsung
+// tanpa perlu parsing string berulang-ulang tiap query dijalankan.
+// Meniru persis CAST(TRIM(x) AS UNSIGNED) di MySQL: ambil angka di awal string setelah di-trim.
+// Dipakai untuk sub_number (tabel DAT) & asset_subnumber (tabel penyusutan), supaya "001" dan "1"
+// dianggap sama tanpa perlu CAST/TRIM saat query (yang mematikan index).
+function normalisasi_subnumber_num_ps($raw) {
+    $raw = trim((string)$raw);
+    if ($raw === '') { return null; }
+    if (preg_match('/^\d+/', $raw, $m)) {
+        return (int)$m[0];
+    }
+    return null; // sama seperti MySQL: string tanpa awalan angka -> tidak match numerik
+}
+
+function normalisasi_posting_date_ps($raw) {
+    $raw = trim((string)$raw);
+    if ($raw === '') { return null; }
+
+    // Urutan format sama seperti STR_TO_DATE di date_expr(): m/d/Y, d.m.Y, d/m/Y, Y-m-d
+    $formats = ['m/d/Y', 'd.m.Y', 'd/m/Y', 'Y-m-d'];
+    foreach ($formats as $fmt) {
+        $d = DateTime::createFromFormat('!' . $fmt, $raw);
+        $errors = DateTime::getLastErrors();
+        if ($d && (!$errors || ($errors['warning_count'] === 0 && $errors['error_count'] === 0))) {
+            return $d->format('Y-m-d');
+        }
+    }
+
+    // Excel serial date number (mis. 46142), sama seperti fallback di date_expr()
+    if (ctype_digit($raw)) {
+        $num = (int)$raw;
+        if ($num >= 3653 && $num <= 100000) {
+            $d = new DateTime('1899-12-30');
+            $d->modify('+' . $num . ' days');
+            return $d->format('Y-m-d');
+        }
+    }
+
+    return null; // gagal parse -> biarkan NULL, sama seperti COALESCE(...) di date_expr()
+}
+
+function normalisasi_amount_ps($raw) {
+    $raw = trim((string)$raw);
+    if ($raw === '') { return null; }
+    // Sama seperti amount_expr(): buang '.' dan ',' lalu CAST ke DECIMAL(20,2)
+    $clean = str_replace(['.', ','], '', $raw);
+    if ($clean === '' || !is_numeric($clean)) { return null; }
+    return round((float)$clean, 2);
+}
+
 function saveDataPenyusutanToDatabase($con, $importedData) {
     if (empty($importedData)) {
         return 0;
@@ -1094,10 +1162,17 @@ function saveDataPenyusutanToDatabase($con, $importedData) {
         cabang VARCHAR(100),
         text VARCHAR(255),
         document_number VARCHAR(30),
+        posting_date_norm DATE NULL,
+        amount_norm DECIMAL(20,2) NULL,
+        asset_subnumber_num INT UNSIGNED NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         imported_by VARCHAR(20),
-        KEY idx_penyusutan_lookup (cost_center, asset, asset_subnumber, account, posting_date)
+        KEY idx_penyusutan_lookup (cost_center, asset, asset_subnumber, account, posting_date),
+        KEY idx_posting_date_norm (posting_date_norm),
+        KEY idx_account (account),
+        KEY idx_asset_sub (asset, asset_subnumber),
+        KEY idx_asset_sub_num (asset, asset_subnumber_num)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
     
     if (!mysqli_query($con, $create_table_sql)) {
@@ -1110,6 +1185,28 @@ function saveDataPenyusutanToDatabase($con, $importedData) {
     if ($resColsPs) { while ($c = mysqli_fetch_assoc($resColsPs)) { $existingColsPs[] = $c['Field']; } }
     if (!in_array('document_number', $existingColsPs, true)) {
         mysqli_query($con, "ALTER TABLE import_penyusutan ADD COLUMN document_number VARCHAR(30) AFTER text");
+    }
+    // Migrasi AMAN: tambah kolom hasil normalisasi (posting_date_norm/amount_norm) + index-nya kalau
+    // belum ada, jaga-jaga kalau server ini belum pernah dijalankan migrasi manualnya lewat phpMyAdmin.
+    if (!in_array('posting_date_norm', $existingColsPs, true)) {
+        mysqli_query($con, "ALTER TABLE import_penyusutan ADD COLUMN posting_date_norm DATE NULL, ADD COLUMN amount_norm DECIMAL(20,2) NULL");
+    }
+    // Migrasi AMAN: kolom asset_subnumber_num (versi angka asset_subnumber) buat JOIN cepat ke
+    // import_dat_penyusutan.sub_number_num.
+    if (!in_array('asset_subnumber_num', $existingColsPs, true)) {
+        mysqli_query($con, "ALTER TABLE import_penyusutan ADD COLUMN asset_subnumber_num INT UNSIGNED NULL");
+    }
+    $existingIdxPs = [];
+    $resIdxPs = mysqli_query($con, "SHOW INDEX FROM import_penyusutan");
+    if ($resIdxPs) { while ($ix = mysqli_fetch_assoc($resIdxPs)) { $existingIdxPs[] = $ix['Key_name']; } }
+    if (!in_array('idx_posting_date_norm', $existingIdxPs, true)) {
+        mysqli_query($con, "ALTER TABLE import_penyusutan ADD INDEX idx_posting_date_norm (posting_date_norm)");
+    }
+    if (!in_array('idx_asset_sub', $existingIdxPs, true)) {
+        mysqli_query($con, "ALTER TABLE import_penyusutan ADD INDEX idx_asset_sub (asset, asset_subnumber)");
+    }
+    if (!in_array('idx_asset_sub_num', $existingIdxPs, true)) {
+        mysqli_query($con, "ALTER TABLE import_penyusutan ADD INDEX idx_asset_sub_num (asset, asset_subnumber_num)");
     }
 
     // ── PENTING: hapus UNIQUE KEY lama kalau masih ada ──
@@ -1160,12 +1257,29 @@ function saveDataPenyusutanToDatabase($con, $importedData) {
             $values = [];
             foreach ($column_names as $col_idx => $col_name) {
                 $value = isset($row[$col_idx]) ? $row[$col_idx] : '';
+                // Trim asset & asset_subnumber saat insert supaya JOIN ke import_dat_penyusutan
+                // bisa pakai perbandingan langsung (index-friendly) tanpa TRIM() di query.
+                if ($col_name === 'asset' || $col_name === 'asset_subnumber') {
+                    $value = trim((string)$value);
+                }
                 $values[] = "'" . mysqli_real_escape_string($con, $value) . "'";
             }
-            
+
+            // Hitung kolom hasil normalisasi dari posting_date (index 4) & amount_local_currency (index 5) mentah
+            $rawPostingDate = isset($row[4]) ? $row[4] : '';
+            $rawAmount      = isset($row[5]) ? $row[5] : '';
+            $postingDateNorm = normalisasi_posting_date_ps($rawPostingDate);
+            $amountNorm      = normalisasi_amount_ps($rawAmount);
+            $values[] = $postingDateNorm === null ? 'NULL' : "'" . mysqli_real_escape_string($con, $postingDateNorm) . "'";
+            $values[] = $amountNorm === null ? 'NULL' : $amountNorm;
+
+            // asset_subnumber_num: versi angka dari asset_subnumber (index 2), buat JOIN cepat
+            $assetSubnumberNum = normalisasi_subnumber_num_ps($row[2] ?? '');
+            $values[] = $assetSubnumberNum === null ? 'NULL' : $assetSubnumberNum;
+
             $values[] = "'" . mysqli_real_escape_string($con, $nipp) . "'";
 
-            $columns = implode(', ', $column_names) . ', imported_by';
+            $columns = implode(', ', $column_names) . ', posting_date_norm, amount_norm, asset_subnumber_num, imported_by';
             $insert_sql = "INSERT INTO import_penyusutan (" . $columns . ") VALUES (" . implode(', ', $values) . ")";
             
             if (mysqli_query($con, $insert_sql)) {
@@ -1440,7 +1554,6 @@ function saveDataPenyusutanToDatabase($con, $importedData) {
                 'Persetujuan Penghapusan'        => 'Penghapusan',
                 'Daftar Persetujuan Penghapusan' => 'Penghapusan',
                 'Pelaksanaan Penghapusan'        => 'Penghapusan',
-                'Daftar Aset Tetap'              => 'Penghapusan',
                 'Daftar Pelaksanaan Penghapusan' => 'Penghapusan',
 
                 'Import Data Penyusutan'         => 'Penyusutan',
@@ -1448,6 +1561,7 @@ function saveDataPenyusutanToDatabase($con, $importedData) {
                 'Selisih Penyusutan'             => 'Penyusutan',
 
                 'Import DAT'                     => 'Manajemen Admin',
+                'Daftar Aset Tetap'              => 'Manajemen Admin',
                 'Manajemen Menu'                 => 'Manajemen Admin',
                 'Manajemen User'                 => 'Manajemen Admin',
             ];

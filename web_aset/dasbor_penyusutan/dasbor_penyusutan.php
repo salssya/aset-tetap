@@ -135,12 +135,12 @@ if (isset($_POST['action']) && $_POST['action'] === 'get_account_detail') {
                         COUNT(DISTINCT CONCAT(ip.asset,'|',ip.asset_subnumber)) AS jml_aset,
                         SUM(" . amount_expr('ip.amount_local_currency') . ") AS total $selectBulanD
                   FROM import_penyusutan ip
+                  -- JOIN pakai kolom yang sudah di-trim & dinormalisasi saat import (asset/asset_subnumber_num
+                  -- di import_penyusutan, nomor_asset/sub_number_num di import_dat_penyusutan) -- BUKAN
+                  -- TRIM()/CAST() runtime lagi, supaya index idx_asset_sub_num & idx_nomor_asset_sub_num kepakai.
                   LEFT JOIN import_dat_penyusutan dat
-                         ON TRIM(dat.nomor_asset) = TRIM(ip.asset)
-                        AND (
-                              TRIM(dat.sub_number) = TRIM(ip.asset_subnumber)
-                              OR CAST(TRIM(dat.sub_number) AS UNSIGNED) = CAST(TRIM(ip.asset_subnumber) AS UNSIGNED)
-                            )
+                         ON dat.nomor_asset = ip.asset
+                        AND (dat.sub_number = ip.asset_subnumber OR dat.sub_number_num = ip.asset_subnumber_num)
                         AND CAST(dat.tahun_buku AS UNSIGNED) = YEAR(" . date_expr('ip.posting_date') . ")
                         AND CAST(dat.periode_bulan AS UNSIGNED) = MONTH(" . date_expr('ip.posting_date') . ")
                   -- Fallback AMAN: kalau match ketat (asset+periode persis) di atas gagal (mis. DAT
@@ -149,16 +149,13 @@ if (isset($_POST['action']) && $_POST['action'] === 'get_account_detail') {
                   -- Center (sudah dicoba, terbukti salah karena 1 Profit Center bisa beda Cabang).
                   -- Cabang & Keterangan Aset untuk 1 aset fisik yang sama biasanya stabil antar bulan.
                   LEFT JOIN (
-                        SELECT nomor_asset, sub_number,
+                        SELECT nomor_asset, sub_number, sub_number_num,
                                MAX(NULLIF(cabang, '')) AS cabang,
                                MAX(NULLIF(keterangan_asset, '')) AS keterangan_asset
                         FROM import_dat_penyusutan
-                        GROUP BY nomor_asset, sub_number
-                  ) datAny ON TRIM(datAny.nomor_asset) = TRIM(ip.asset)
-                           AND (
-                                 TRIM(datAny.sub_number) = TRIM(ip.asset_subnumber)
-                                 OR CAST(TRIM(datAny.sub_number) AS UNSIGNED) = CAST(TRIM(ip.asset_subnumber) AS UNSIGNED)
-                               )
+                        GROUP BY nomor_asset, sub_number, sub_number_num
+                  ) datAny ON datAny.nomor_asset = ip.asset
+                           AND (datAny.sub_number = ip.asset_subnumber OR datAny.sub_number_num = ip.asset_subnumber_num)
                   WHERE $accWhere
                     AND " . date_expr('ip.posting_date') . " >= '$awalD' AND " . date_expr('ip.posting_date') . " < '$akhirD'
                   GROUP BY cabang, profit_center, keterangan_asset
@@ -407,7 +404,19 @@ $adaTabelPenyusutan   = table_exists($con, 'import_penyusutan');
 $adaTabelDat          = table_exists($con, 'import_dat_penyusutan');
 $adaTabelDatRingkas   = table_exists($con, 'import_dat_penyusutan');
 
+// ── PENTING (perf): posting_date & amount_local_currency disimpan sebagai VARCHAR di DB
+// (format tanggal SAP campur-campur & angka pakai pemisah ribuan). Dulu date_expr()/amount_expr()
+// mem-parsing ulang STRING itu di SETIAP baris SETIAP query (STR_TO_DATE 4x + REGEXP, tanpa bisa
+// pakai index -> full table scan). Sekarang tabel import_penyusutan sudah punya kolom hasil
+// normalisasi (posting_date_norm DATE, amount_norm DECIMAL) yang di-index dan diisi otomatis saat
+// import (lihat import_penyusutan.php). Jadi di sini kita cukup ARAHKAN ke kolom _norm itu --
+// SEMUA query yang manggil date_expr()/amount_expr() otomatis jadi cepat tanpa perlu diubah satu-satu.
 function date_expr($col) {
+    // Terima 'posting_date' atau 'alias.posting_date' -> jadi 'posting_date_norm' / 'alias.posting_date_norm'
+    if (preg_match('/^(\w+\.)?posting_date$/', trim($col), $m)) {
+        return ($m[1] ?? '') . 'posting_date_norm';
+    }
+    // Fallback (kolom lain / belum ternormalisasi): cara lama, tetap aman dipakai.
     return "COALESCE(
         STR_TO_DATE($col,'%m/%d/%Y'),
         STR_TO_DATE($col,'%d.%m.%Y'),
@@ -421,6 +430,11 @@ function date_expr($col) {
     )";
 }
 function amount_expr($col) {
+    // Terima 'amount_local_currency' atau 'alias.amount_local_currency' -> jadi kolom amount_norm
+    if (preg_match('/^(\w+\.)?amount_local_currency$/', trim($col), $m)) {
+        return ($m[1] ?? '') . 'amount_norm';
+    }
+    // Fallback (kolom lain): cara lama.
     return "CAST(REPLACE(REPLACE($col,'.',''),',','') AS DECIMAL(20,2))";
 }
 
@@ -1091,23 +1105,17 @@ if ($adaTabelPenyusutan) {
         if ($adaTabelDat) {
             $selectKet = "COALESCE(NULLIF(dat.keterangan_asset, ''), NULLIF(datAny.keterangan_asset, ''), '-') AS keterangan_asset";
             $joinDatKet = "LEFT JOIN import_dat_penyusutan dat
-                                  ON TRIM(dat.nomor_asset) = TRIM(ip.asset)
-                                 AND (
-                                       TRIM(dat.sub_number) = TRIM(ip.asset_subnumber)
-                                       OR CAST(TRIM(dat.sub_number) AS UNSIGNED) = CAST(TRIM(ip.asset_subnumber) AS UNSIGNED)
-                                     )
+                                  ON dat.nomor_asset = ip.asset
+                                 AND (dat.sub_number = ip.asset_subnumber OR dat.sub_number_num = ip.asset_subnumber_num)
                                  AND CAST(dat.tahun_buku AS UNSIGNED) = YEAR(" . date_expr('ip.posting_date') . ")
                                  AND CAST(dat.periode_bulan AS UNSIGNED) = MONTH(" . date_expr('ip.posting_date') . ")
                             LEFT JOIN (
-                                  SELECT nomor_asset, sub_number,
+                                  SELECT nomor_asset, sub_number, sub_number_num,
                                          MAX(NULLIF(keterangan_asset, '')) AS keterangan_asset
                                   FROM import_dat_penyusutan
-                                  GROUP BY nomor_asset, sub_number
-                            ) datAny ON TRIM(datAny.nomor_asset) = TRIM(ip.asset)
-                                     AND (
-                                           TRIM(datAny.sub_number) = TRIM(ip.asset_subnumber)
-                                           OR CAST(TRIM(datAny.sub_number) AS UNSIGNED) = CAST(TRIM(ip.asset_subnumber) AS UNSIGNED)
-                                         )";
+                                  GROUP BY nomor_asset, sub_number, sub_number_num
+                            ) datAny ON datAny.nomor_asset = ip.asset
+                                     AND (datAny.sub_number = ip.asset_subnumber OR datAny.sub_number_num = ip.asset_subnumber_num)";
         }
         $sqlDetailAll = "SELECT ip.account, ip.cost_center, ip.asset, ip.asset_subnumber, $selectKet, ip.profit_center,
                                 ip.posting_date, ip.text, ip.amount_local_currency,
@@ -1808,8 +1816,10 @@ if ($adaTabelPenyusutan) {
 <script src="../../dist/js/overlayscrollbars.browser.es6.min.js"></script>
 <script src="../../dist/js/popper.min.js"></script>
 <script src="../../dist/js/adminlte.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/datatables/1.13.11/js/jquery.dataTables.min.js"></script>
+<script src="../../dist/js/jquery-3.7.1.min.js"></script>
+<script src="../../dist/js/dataTables.min.js"></script>
+<script src="../../dist/js/dataTables.bootstrap5.min.js"></script>
+
 <script
   src="../../dist/js/apexcharts.min.js"
   integrity="sha256-+vh8GkaU7C9/wbSLIcwq82tQ2wTf44aOHA8HlBMwRI8="
