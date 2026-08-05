@@ -117,7 +117,7 @@ if (isset($_POST['action']) && $_POST['action'] === 'get_account_detail') {
 
     // ── Bulan mana saja yang ada datanya untuk account & tahun ini (biar kolomnya dinamis, sama kayak tabel atas) ──
     $resBulanD = mysqli_query($con, "SELECT DISTINCT MONTH(" . date_expr('ip.posting_date') . ") AS bln
-                                      FROM import_penyusutan ip
+                                      FROM import_fagll ip
                                       WHERE $accWhere AND " . date_expr('ip.posting_date') . " >= '$awalD' AND " . date_expr('ip.posting_date') . " < '$akhirD'
                                       ORDER BY bln ASC");
     $listBulanD = [];
@@ -134,9 +134,9 @@ if (isset($_POST['action']) && $_POST['action'] === 'get_account_detail') {
                         COALESCE(NULLIF(dat.keterangan_asset, ''), NULLIF(datAny.keterangan_asset, ''), '-') AS keterangan_asset,
                         COUNT(DISTINCT CONCAT(ip.asset,'|',ip.asset_subnumber)) AS jml_aset,
                         SUM(" . amount_expr('ip.amount_local_currency') . ") AS total $selectBulanD
-                  FROM import_penyusutan ip
+                  FROM import_fagll ip
                   -- JOIN pakai kolom yang sudah di-trim & dinormalisasi saat import (asset/asset_subnumber_num
-                  -- di import_penyusutan, nomor_asset/sub_number_num di import_dat_penyusutan) -- BUKAN
+                  -- di import_fagll, nomor_asset/sub_number_num di import_dat_penyusutan) -- BUKAN
                   -- TRIM()/CAST() runtime lagi, supaya index idx_asset_sub_num & idx_nomor_asset_sub_num kepakai.
                   LEFT JOIN import_dat_penyusutan dat
                          ON dat.nomor_asset = ip.asset
@@ -372,14 +372,14 @@ function export_multi_sheet_xlsx($filename, $sheets) {
     exit;
 }
 
-function sort_link($col, $label, $sortBy, $sortDir, $baseQuery) {
+function sort_link($col, $label, $sortBy, $sortDir, $baseQuery, $anchor = '') {
     $nextDir = ($sortBy === $col && $sortDir === 'asc') ? 'desc' : 'asc';
     if ($sortBy === $col) {
         $icon = $sortDir === 'asc' ? ' <i class="bi bi-caret-up-fill"></i>' : ' <i class="bi bi-caret-down-fill"></i>';
     } else {
         $icon = ' <i class="bi bi-arrow-down-up text-muted" style="font-size:.7em;"></i>';
     }
-    $href = '?' . $baseQuery . '&sort_by=' . urlencode($col) . '&sort_dir=' . urlencode($nextDir);
+    $href = '?' . $baseQuery . '&sort_by=' . urlencode($col) . '&sort_dir=' . urlencode($nextDir) . $anchor;
     return '<a href="' . htmlspecialchars($href) . '" class="text-decoration-none text-dark">' . htmlspecialchars($label) . '</a>' . $icon;
 }
 
@@ -400,16 +400,16 @@ function table_exists($con, $table) {
     $res = mysqli_query($con, "SHOW TABLES LIKE '" . mysqli_real_escape_string($con, $table) . "'");
     return $res && mysqli_num_rows($res) > 0;
 }
-$adaTabelPenyusutan   = table_exists($con, 'import_penyusutan');
+$adaTabelPenyusutan   = table_exists($con, 'import_fagll');
 $adaTabelDat          = table_exists($con, 'import_dat_penyusutan');
 $adaTabelDatRingkas   = table_exists($con, 'import_dat_penyusutan');
 
 // ── PENTING (perf): posting_date & amount_local_currency disimpan sebagai VARCHAR di DB
 // (format tanggal SAP campur-campur & angka pakai pemisah ribuan). Dulu date_expr()/amount_expr()
 // mem-parsing ulang STRING itu di SETIAP baris SETIAP query (STR_TO_DATE 4x + REGEXP, tanpa bisa
-// pakai index -> full table scan). Sekarang tabel import_penyusutan sudah punya kolom hasil
+// pakai index -> full table scan). Sekarang tabel import_fagll sudah punya kolom hasil
 // normalisasi (posting_date_norm DATE, amount_norm DECIMAL) yang di-index dan diisi otomatis saat
-// import (lihat import_penyusutan.php). Jadi di sini kita cukup ARAHKAN ke kolom _norm itu --
+// import (lihat import_fagll.php). Jadi di sini kita cukup ARAHKAN ke kolom _norm itu --
 // SEMUA query yang manggil date_expr()/amount_expr() otomatis jadi cepat tanpa perlu diubah satu-satu.
 function date_expr($col) {
     // Terima 'posting_date' atau 'alias.posting_date' -> jadi 'posting_date_norm' / 'alias.posting_date_norm'
@@ -444,13 +444,28 @@ function amount_expr($col) {
  * Kembalikan salah satu: Reklas Asset Class, Relokasi Aset, Perubahan Umur Ekonomis,
  * Pencatatan Aset Baru, Umur Ekonomis Habis, Penghapusan Aset, Perlu Dicek Manual, atau null (Tetap).
  */
-function deteksi_kategori_ps($status, $entA, $entB, $dmA, $dmB, $accR, $tahunFilter, $bulanA, $bulanB) {
+function deteksi_kategori_ps($status, $entA, $entB, $dmA, $dmB, $accR, $tahunFilter, $bulanA, $bulanB, $bulanPertamaAset = null) {
     if ($status === 'Naik' || $status === 'Turun') {
         if ($entA && $entB && $entA['gl'] !== '' && $entB['gl'] !== '' && $entA['gl'] !== $entB['gl']) {
             return 'Reklas Asset Class';
         } elseif ($entA && $entB && $entA['cabang'] !== '' && $entB['cabang'] !== '' && $entA['cabang'] !== $entB['cabang']) {
             return 'Relokasi Aset';
-        } elseif ($entA && $entB && $entA['sisa'] !== null && $entB['sisa'] !== null) {
+        }
+        // Aset yang baru saja mulai ADA POSTING tahun ini (assetSubBulanPertama === bulan A)
+        // DAN tanggal perolehannya (DAT) memang baru (tahun ini atau tahun sebelumnya) --
+        // genuinely aset baru yang postingnya baru mulai berjalan/nyusul dari tanggal perolehan
+        // aslinya. Sisa umur manfaat yang "belum berkurang sesuai jadwal" dari bulan A ke B
+        // masih WAJAR untuk kondisi ini (bukan indikasi perpanjangan umur ekonomis). Makanya
+        // dicek SEBELUM cek delta sisa manfaat, supaya tidak keburu dicap "Perubahan Umur Ekonomis".
+        $tglAcuanBaru = ($entA['tgl'] ?? '') !== '' ? $entA['tgl'] : ($entB['tgl'] ?? '');
+        $acquisitionRecent = false;
+        if ($tglAcuanBaru !== '' && strtotime($tglAcuanBaru) !== false) {
+            $acquisitionRecent = ((int) date('Y', strtotime($tglAcuanBaru))) >= ($tahunFilter - 1);
+        }
+        if ($acquisitionRecent && $bulanPertamaAset !== null && $bulanPertamaAset === $bulanA) {
+            return 'Pencatatan Aset Baru';
+        }
+        if ($entA && $entB && $entA['sisa'] !== null && $entB['sisa'] !== null) {
             $deltaSisa = $entB['sisa'] - $entA['sisa'];
             $expectedDeltaSisa = $bulanA - $bulanB;
             $sudahHabisMasaManfaat = ($entA['sisa'] <= 0 && $entB['sisa'] <= 0);
@@ -458,20 +473,34 @@ function deteksi_kategori_ps($status, $entA, $entB, $dmA, $dmB, $accR, $tahunFil
                 return 'Perubahan Umur Ekonomis';
             }
         }
+        if ($entA === null && $bulanPertamaAset !== null && $bulanPertamaAset === $bulanA) {
+            // PENTING: syarat $entA === null wajib ada -- kalau DAT periode A justru SUDAH
+            // menemukan aset ini terdaftar, berarti aset ini memang sudah lama ada (cuma
+            // kebetulan bulan A adalah bulan pertama dalam RENTANG TAHUN yang difilter, mis.
+            // bulan A = Januari, yang trivial jadi "bulan pertama" untuk hampir semua aset
+            // lama juga). Tanpa syarat ini, aset lama yang dibandingkan mulai dari Januari
+            // akan salah kena label "Pencatatan Aset Baru".
+            // Aset ini baru mulai tercatat/disusutkan persis di bulan A -- Naik/Turun besar
+            // antara bulan A ke bulan B masih wajar sebagai bagian dari pencatatan aset baru
+            // (mis. bulan pertama ada penyesuaian/catch-up, lalu normal di bulan berikutnya).
+            return 'Pencatatan Aset Baru';
+        }
         return null; // selisih kecil/wajar tanpa penyebab spesifik terdeteksi
     } elseif ($status === 'Tercatat Baru') {
         if ($entA && $entA['gl'] !== '' && $entA['gl'] !== $accR['account']) {
             return 'Reklas Asset Class';
         } elseif ($dmA && (($dmA['cost_center'] != $accR['cost_center']) || ($dmA['profit_center'] != $accR['profit_center']))) {
             return 'Relokasi Aset';
-        } elseif ($entB && !$entA) {
-            // Aset baru ketemu di data DAT pada periode B, dan sama sekali belum ada di
-            // periode A -- ini cukup jadi bukti "aset baru dicatat", terlepas dari apakah
-            // tgl_perolehan-nya persis jatuh di bulan B atau tidak (kadang pencatatan di
-            // SAP telat dari tanggal perolehan aslinya).
-            return 'Pencatatan Aset Baru';
-        } elseif ($entA && $entA['sisa'] !== null && $entA['sisa'] <= 0 && $entB && $entB['sisa'] !== null && $entB['sisa'] > 0) {
+        } elseif ($entA && $entA['sisa'] !== null && $entA['sisa'] <= 1 && $entB && $entB['sisa'] !== null && $entB['sisa'] > 1) {
+            // Sisa umur manfaat sebelumnya sudah habis/hampir habis, lalu di periode B
+            // direvisi naik lagi -- itu baru dianggap perpanjangan umur ekonomis.
             return 'Perubahan Umur Ekonomis';
+        } elseif ($entB) {
+            // Aset mulai ada posting/tercatat di periode B -- baik yang sama sekali belum
+            // ada di DAT periode A, maupun yang sudah terdaftar di DAT periode A tapi belum
+            // mulai disusutkan (posting-nya baru mulai di periode B, mis. SAP telat posting
+            // dari tanggal perolehan aslinya). Keduanya tetap "Pencatatan Aset Baru".
+            return 'Pencatatan Aset Baru';
         }
         return 'Perlu Dicek Manual';
     } elseif ($status === 'Hilang/Selesai') {
@@ -495,7 +524,7 @@ function deteksi_kategori_ps($status, $entA, $entB, $dmA, $dmB, $accR, $tahunFil
  * Butuh lookup data setahun penuh: $datByBulan[bln][asset|sub] , $dimByBulan[bln][asset|sub],
  * $nilaiPerBulanAsset[bln][cost_center|asset|sub|account|profit_center] = nilai.
  */
-function hitung_ringkasan_kategori_bulan($bulanA, $bulanB, $datByBulan, $dimByBulan, $nilaiPerBulanAsset, $namaBulan, $tahunFilter) {
+function hitung_ringkasan_kategori_bulan($bulanA, $bulanB, $datByBulan, $dimByBulan, $nilaiPerBulanAsset, $namaBulan, $tahunFilter, $assetSubBulanPertama = []) {
     if ($bulanA === null || $bulanB === null) return null;
     $keysA = $nilaiPerBulanAsset[$bulanA] ?? [];
     $keysB = $nilaiPerBulanAsset[$bulanB] ?? [];
@@ -525,7 +554,7 @@ function hitung_ringkasan_kategori_bulan($bulanA, $bulanB, $datByBulan, $dimByBu
         $dmB  = $dimByBulan[$bulanB][$dkey] ?? null;
         $accR = ['account' => $account, 'cost_center' => $costCenter, 'profit_center' => $profitCenter];
 
-        $kategori = deteksi_kategori_ps($status, $entA, $entB, $dmA, $dmB, $accR, $tahunFilter, $bulanA, $bulanB);
+        $kategori = deteksi_kategori_ps($status, $entA, $entB, $dmA, $dmB, $accR, $tahunFilter, $bulanA, $bulanB, $assetSubBulanPertama[$dkey] ?? null);
         if ($kategori === null) { $kategori = 'Perlu Dicek Manual'; }
 
         if (!isset($kategoriNet[$kategori])) { $kategoriNet[$kategori] = 0.0; }
@@ -562,11 +591,11 @@ $anomaliRowsPaged = []; $halamanAnom = 1; $totalHalamanAnom = 1; $perHalamanAnom
 if ($adaTabelPenyusutan) {
 
     // ── Berapa baris yang tanggalnya gagal diparsing (buat notifikasi) ──
-    $resCekTgl = mysqli_query($con, "SELECT COUNT(*) AS c FROM import_penyusutan WHERE " . date_expr('posting_date') . " IS NULL");
+    $resCekTgl = mysqli_query($con, "SELECT COUNT(*) AS c FROM import_fagll WHERE " . date_expr('posting_date') . " IS NULL");
     $totalTanpaTanggalValid = $resCekTgl ? (int)mysqli_fetch_assoc($resCekTgl)['c'] : 0;
 
     // ── Daftar tahun yang tersedia ──
-    $resTahun = mysqli_query($con, "SELECT DISTINCT YEAR(" . date_expr('posting_date') . ") AS th FROM import_penyusutan WHERE " . date_expr('posting_date') . " IS NOT NULL ORDER BY th DESC");
+    $resTahun = mysqli_query($con, "SELECT DISTINCT YEAR(" . date_expr('posting_date') . ") AS th FROM import_fagll WHERE " . date_expr('posting_date') . " IS NOT NULL ORDER BY th DESC");
     if ($resTahun) { while ($r = mysqli_fetch_assoc($resTahun)) { $listTahun[] = $r['th']; } }
 
     $tahunFilter = isset($_GET['tahun']) && $_GET['tahun'] !== '' ? $_GET['tahun'] : ($listTahun[0] ?? date('Y'));
@@ -577,7 +606,7 @@ if ($adaTabelPenyusutan) {
     $rangeTahunWhere  = "" . date_expr('ip.posting_date') . " >= '$tahunAwal' AND " . date_expr('ip.posting_date') . " < '$tahunAkhirExkl'";
 
     // ── Daftar bulan yang ada datanya untuk tahun terpilih ──
-    $resBulan = mysqli_query($con, "SELECT DISTINCT MONTH(" . date_expr('posting_date') . ") AS bln FROM import_penyusutan WHERE " . date_expr('posting_date') . " >= '$tahunAwal' AND " . date_expr('posting_date') . " < '$tahunAkhirExkl' ORDER BY bln ASC");
+    $resBulan = mysqli_query($con, "SELECT DISTINCT MONTH(" . date_expr('posting_date') . ") AS bln FROM import_fagll WHERE " . date_expr('posting_date') . " >= '$tahunAwal' AND " . date_expr('posting_date') . " < '$tahunAkhirExkl' ORDER BY bln ASC");
     if ($resBulan) { while ($r = mysqli_fetch_assoc($resBulan)) { $listBulan[] = (int)$r['bln']; } }
 
     $bulanFilter = isset($_GET['bulan']) && $_GET['bulan'] !== '' ? (int)$_GET['bulan'] : 'Semua';
@@ -586,7 +615,7 @@ if ($adaTabelPenyusutan) {
     $prevAggSql = "(SELECT cost_center, asset, asset_subnumber, account,
                             YEAR(" . date_expr('posting_date') . ") AS thn, MONTH(" . date_expr('posting_date') . ") AS bln,
                             SUM(" . amount_expr('amount_local_currency') . ") AS total_amt
-                     FROM import_penyusutan
+                     FROM import_fagll
                      WHERE " . date_expr('posting_date') . " IS NOT NULL
                      GROUP BY cost_center, asset, asset_subnumber, account, thn, bln)";
     $joinPrevBulan = "LEFT JOIN $prevAggSql prevagg
@@ -604,7 +633,7 @@ if ($adaTabelPenyusutan) {
                   SUM(CASE WHEN prevagg.total_amt IS NULL THEN 1 ELSE 0 END) AS tidak_ada,
                   SUM(CASE WHEN prevagg.total_amt IS NOT NULL AND " . amount_expr('ip.amount_local_currency') . " > prevagg.total_amt THEN 1 ELSE 0 END) AS naik,
                   SUM(CASE WHEN prevagg.total_amt IS NOT NULL AND " . amount_expr('ip.amount_local_currency') . " < prevagg.total_amt THEN 1 ELSE 0 END) AS turun
-               FROM import_penyusutan ip
+               FROM import_fagll ip
                $joinPrevBulan
                WHERE $rangeTahunWhere $bulanWhere";
     $resKpi = mysqli_query($con, $sqlKpi);
@@ -621,7 +650,7 @@ if ($adaTabelPenyusutan) {
     $trenBulanNum = [];
     $sqlTren = "SELECT MONTH(" . date_expr('ip.posting_date') . ") AS bln,
                        SUM(" . amount_expr('ip.amount_local_currency') . ") AS total_upload
-                FROM import_penyusutan ip
+                FROM import_fagll ip
                 WHERE $rangeTahunWhere
                 GROUP BY bln ORDER BY bln ASC";
     $resTren = mysqli_query($con, $sqlTren);
@@ -656,7 +685,7 @@ if ($adaTabelPenyusutan) {
         }
     }
     $sqlDimFull = "SELECT MONTH(" . date_expr('posting_date') . ") AS bln, asset, asset_subnumber, cost_center, profit_center
-                   FROM import_penyusutan WHERE $rangeTahunWherePlain";
+                   FROM import_fagll WHERE $rangeTahunWherePlain";
     $resDimFull = mysqli_query($con, $sqlDimFull);
     if ($resDimFull) {
         while ($d = mysqli_fetch_assoc($resDimFull)) {
@@ -669,7 +698,7 @@ if ($adaTabelPenyusutan) {
     }
     $sqlNilaiFull = "SELECT MONTH(" . date_expr('posting_date') . ") AS bln, cost_center, asset, asset_subnumber, account, profit_center,
                             SUM(" . amount_expr('amount_local_currency') . ") AS nilai
-                     FROM import_penyusutan WHERE $rangeTahunWherePlain
+                     FROM import_fagll WHERE $rangeTahunWherePlain
                      GROUP BY bln, cost_center, asset, asset_subnumber, account, profit_center";
     $resNilaiFull = mysqli_query($con, $sqlNilaiFull);
     if ($resNilaiFull) {
@@ -677,6 +706,22 @@ if ($adaTabelPenyusutan) {
             $blnN = (int)$r['bln'];
             $fullkey = trim((string)$r['cost_center']) . '|' . trim((string)$r['asset']) . '|' . trim((string)$r['asset_subnumber']) . '|' . trim((string)$r['account']) . '|' . trim((string)$r['profit_center']);
             $nilaiPerBulanAssetFull[$blnN][$fullkey] = (float)$r['nilai'];
+        }
+    }
+
+    // ── Bulan pertama kemunculan tiap aset (asset|sub) sepanjang tahun ini -- dipakai supaya
+    // Naik/Turun besar yang murni karena aset itu BARU MULAI disusutkan (bukan sudah lama
+    // ada) tetap dikategorikan "Pencatatan Aset Baru", bukan "Perlu Dicek Manual". ──
+    $assetSubBulanPertama = [];
+    foreach ($nilaiPerBulanAssetFull as $blnN => $keysN) {
+        foreach ($keysN as $fullkeyN => $nilaiN) {
+            if (abs($nilaiN) < 0.01) continue;
+            $partsN = explode('|', $fullkeyN);
+            if (count($partsN) < 5) continue;
+            $dkeyN = $partsN[1] . '|' . $partsN[2]; // asset|sub
+            if (!isset($assetSubBulanPertama[$dkeyN]) || $blnN < $assetSubBulanPertama[$dkeyN]) {
+                $assetSubBulanPertama[$dkeyN] = $blnN;
+            }
         }
     }
 
@@ -697,7 +742,7 @@ if ($adaTabelPenyusutan) {
             $ringkasanKat = hitung_ringkasan_kategori_bulan(
                 $trenBulanNum[$i - 1], $trenBulanNum[$i],
                 $datByBulanFull, $dimByBulanFull, $nilaiPerBulanAssetFull,
-                $namaBulan, $tahunFilter
+                $namaBulan, $tahunFilter, $assetSubBulanPertama
             );
             if ($ringkasanKat !== null) {
                 $kategoriUtamaBulan     = $ringkasanKat['kategori_utama'];
@@ -771,7 +816,7 @@ if ($adaTabelPenyusutan) {
             }
         }
         $sqlDim = "SELECT MONTH(" . date_expr('posting_date') . ") AS bln, asset, asset_subnumber, cost_center, profit_center
-                   FROM import_penyusutan ip
+                   FROM import_fagll ip
                    WHERE $rangeTahunWhere AND MONTH(" . date_expr('posting_date') . ") IN ($bulanAnomA, $bulanAnomB)";
         $resDim = mysqli_query($con, $sqlDim);
         if ($resDim) {
@@ -799,7 +844,7 @@ if ($adaTabelPenyusutan) {
                            SUM(CASE WHEN MONTH(" . date_expr('posting_date') . ") = $bulanAnomB THEN " . amount_expr('amount_local_currency') . " ELSE 0 END) AS nilai_b,
                            MAX(CASE WHEN MONTH(" . date_expr('posting_date') . ") = $bulanAnomA THEN 1 ELSE 0 END) AS ada_a,
                            MAX(CASE WHEN MONTH(" . date_expr('posting_date') . ") = $bulanAnomB THEN 1 ELSE 0 END) AS ada_b
-                    FROM import_penyusutan ip
+                    FROM import_fagll ip
                     WHERE $rangeTahunWhere AND MONTH(" . date_expr('posting_date') . ") IN ($bulanAnomA, $bulanAnomB)
                     GROUP BY cost_center, asset, asset_subnumber, account, profit_center";
         $resAnom = mysqli_query($con, $sqlAnom);
@@ -840,13 +885,36 @@ if ($adaTabelPenyusutan) {
                 $namaBulanA = $namaBulan[$bulanAnomA] ?? $bulanAnomA;
                 $namaBulanB = $namaBulan[$bulanAnomB] ?? $bulanAnomB;
 
-                if ($status === 'Naik' || $status === 'Turun') {
+                // Baris auto PSAK 73 / Penyusutan KSP (tidak punya nomor aset asli -- ditandai
+                // "-" oleh proses import) TIDAK ikut diperhitungkan sebagai penyusutan aset tetap,
+                // jadi jangan dipetakan ke kategori Naik/Turun/Tercatat Baru/Hilang-Selesai biasa.
+                $isPsakKsp = (trim((string)$r['asset']) === '-' && trim((string)$r['asset_subnumber']) === '-');
+
+                if ($isPsakKsp) {
+                    $kategori = 'PSAK/KSP';
+                    $ketDetail = "Entri otomatis PSAK 73 / Penyusutan KSP dari SAP (tidak memiliki nomor aset tetap asli), sehingga tidak ikut diperhitungkan dalam kategori perubahan penyusutan aset tetap manapun.";
+                } elseif ($status === 'Naik' || $status === 'Turun') {
                     if ($entA && $entB && $entA['gl'] !== '' && $entB['gl'] !== '' && $entA['gl'] !== $entB['gl']) {
                         $kategori = 'Reklas Asset Class';
                         $ketDetail = "GL Account referensi DAT berubah dari {$entA['gl']} ($namaBulanA) menjadi {$entB['gl']} ($namaBulanB), meski posting aktual masih tercatat di GL Account {$r['account']}.";
                     } elseif ($entA && $entB && $entA['cabang'] !== '' && $entB['cabang'] !== '' && $entA['cabang'] !== $entB['cabang']) {
                         $kategori = 'Relokasi Aset';
                         $ketDetail = "Cabang referensi DAT berubah dari {$entA['cabang']} ($namaBulanA) menjadi {$entB['cabang']} ($namaBulanB).";
+                    } elseif ((function () use ($entA, $entB, $tahunFilter, $assetSubBulanPertama, $dkey, $bulanAnomA) {
+                        // Aset yang baru saja mulai ada posting tahun ini (assetSubBulanPertama ===
+                        // bulan A) DAN tanggal perolehannya (DAT) memang baru (tahun ini/tahun
+                        // sebelumnya) -- genuinely aset baru yang postingnya baru mulai berjalan/
+                        // nyusul dari tanggal perolehan aslinya. Dicek SEBELUM cek delta sisa
+                        // manfaat, supaya tidak keburu dicap "Perubahan Umur Ekonomis" cuma karena
+                        // sisa manfaatnya belum sempat berkurang (wajar untuk aset yang baru mulai).
+                        $tglAcuanBaru = ($entA['tgl'] ?? '') !== '' ? $entA['tgl'] : ($entB['tgl'] ?? '');
+                        if ($tglAcuanBaru === '' || strtotime($tglAcuanBaru) === false) return false;
+                        $acquisitionRecent = ((int) date('Y', strtotime($tglAcuanBaru))) >= ($tahunFilter - 1);
+                        return $acquisitionRecent && (($assetSubBulanPertama[$dkey] ?? null) === $bulanAnomA);
+                    })()) {
+                        $kategori = 'Pencatatan Aset Baru';
+                        $tglPerolehanInfo = ($entA['tgl'] ?? '') !== '' ? $entA['tgl'] : ($entB['tgl'] ?? '-');
+                        $ketDetail = "Aset ini baru diperoleh (tanggal perolehan: $tglPerolehanInfo) dan baru mulai ada posting penyusutan sejak $namaBulanA, sehingga sisa umur manfaat yang belum berkurang sesuai jadwal dari $namaBulanA ke $namaBulanB masih wajar sebagai bagian dari pencatatan aset baru (posting baru mulai berjalan/menyusul).";
                     } elseif ($entA && $entB && $entA['sisa'] !== null && $entB['sisa'] !== null) {
                         $deltaSisa = $entB['sisa'] - $entA['sisa'];
                         $expectedDeltaSisa = $bulanAnomA - $bulanAnomB;
@@ -865,8 +933,21 @@ if ($adaTabelPenyusutan) {
                             }
                         }
                     }
-                    // Tidak ada satupun pemicu spesifik (GL Account/Cabang/Sisa Manfaat) yang terdeteksi dari DAT.
-                    // Jangan tampilkan mentah "Naik"/"Turun" -- tetap dipetakan ke kategori supaya user tahu ini butuh dicek manual.
+                    // Aset ini baru mulai tercatat/disusutkan PERSIS di bulan A (belum pernah ada
+                    // sama sekali di bulan-bulan sebelumnya tahun ini) -- Naik/Turun besar dari bulan
+                    // A ke bulan B masih wajar sebagai bagian dari pencatatan aset baru (mis. bulan
+                    // pertama ada penyesuaian/catch-up, baru normal di bulan berikutnya), BUKAN
+                    // sesuatu yang perlu dicek manual.
+                    if ($kategori === null && $entA === null && ($assetSubBulanPertama[$dkey] ?? null) === $bulanAnomA) {
+                        // Syarat $entA === null wajib: kalau DAT periode A ternyata SUDAH ada
+                        // (aset sudah terdaftar), berarti ini aset LAMA, bukan aset baru -- cuma
+                        // kebetulan bulan A adalah bulan pertama dalam rentang tahun yang difilter.
+                        $kategori = 'Pencatatan Aset Baru';
+                        $ketDetail = "Aset ini baru mulai tercatat/disusutkan sejak $namaBulanA (belum pernah ada datanya di bulan manapun sebelum itu di tahun $tahunFilter), sehingga perubahan nilai dari $namaBulanA ke $namaBulanB masih wajar sebagai bagian dari pencatatan aset baru.";
+                    }
+                    // Tidak ada satupun pemicu spesifik (GL Account/Cabang/Sisa Manfaat/Aset Baru) yang
+                    // terdeteksi dari DAT. Jangan tampilkan mentah "Naik"/"Turun" -- tetap dipetakan ke
+                    // kategori supaya user tahu ini butuh dicek manual.
                     if ($kategori === null) {
                         $kategori = 'Perlu Dicek Manual';
                         $arahPerubahan = $status === 'Naik' ? 'kenaikan' : 'penurunan';
@@ -887,22 +968,32 @@ if ($adaTabelPenyusutan) {
                     } elseif ($dmA && (($dmA['cost_center'] != $r['cost_center']) || ($dmA['profit_center'] != $r['profit_center']))) {
                         $kategori = 'Relokasi Aset';
                         $ketDetail = "Sebelumnya di Cost Center {$dmA['cost_center']} / Profit Center {$dmA['profit_center']} ($namaBulanA), sekarang di Cost Center {$r['cost_center']} / Profit Center {$r['profit_center']} ($namaBulanB).";
-                    } elseif ($entB && !$entA) {
-                        // Aset baru ketemu di DAT pada periode B dan belum ada sama sekali di periode A
-                        // -- ini sudah cukup jadi bukti "aset baru dicatat", terlepas dari apakah
-                        // tgl_perolehan-nya persis jatuh di bulan B (kadang pencatatan SAP telat
-                        // dari tanggal perolehan aslinya).
-                        $kategori = 'Pencatatan Aset Baru';
-                        if ($entB['tgl'] !== '' && date('Y-m', strtotime($entB['tgl'])) === sprintf('%04d-%02d', $tahunFilter, $bulanAnomB)) {
-                            $ketDetail = "Tanggal perolehan aset: " . $entB['tgl'] . ' (sesuai periode ' . $namaBulanB . ').';
-                        } else {
-                            $ketDetail = "Aset baru muncul di data DAT pada periode $namaBulanB"
-                                . ($entB['tgl'] !== '' ? " (tanggal perolehan tercatat: {$entB['tgl']})" : '')
-                                . ", sebelumnya ($namaBulanA) belum ada di data DAT sama sekali.";
-                        }
-                    } elseif ($entA && $entA['sisa'] !== null && $entA['sisa'] <= 0 && $entB && $entB['sisa'] !== null && $entB['sisa'] > 0) {
+                    } elseif ($entA && $entA['sisa'] !== null && $entA['sisa'] <= 1 && $entB && $entB['sisa'] !== null && $entB['sisa'] > 1) {
+                        // Sisa umur manfaat sebelumnya sudah habis/hampir habis (<=1 bulan), lalu di
+                        // periode B direvisi naik lagi -- itu baru dianggap perpanjangan umur ekonomis
+                        // yang jelas, terlepas dari berapa persisnya sisa umur manfaat sebelumnya.
                         $kategori = 'Perubahan Umur Ekonomis';
-                        $ketDetail = "Sudah tercatat di DAT sejak $namaBulanA dengan sisa umur manfaat habis (" . (int)$entA['sisa'] . " bulan), tapi di $namaBulanB sisa umur manfaatnya direvisi jadi " . (int)$entB['sisa'] . " bulan — penyusutan aktif lagi karena umur ekonomisnya diperpanjang.";
+                        $ketDetail = "Sudah tercatat di DAT sejak $namaBulanA dengan sisa umur manfaat sudah/hampir habis (" . (int)$entA['sisa'] . " bulan), tapi di $namaBulanB sisa umur manfaatnya direvisi jadi " . (int)$entB['sisa'] . " bulan — penyusutan aktif lagi karena umur ekonomisnya diperpanjang.";
+                    } elseif ($entB) {
+                        // Aset mulai ada posting di periode B -- baik yang sama sekali belum ada di
+                        // DAT periode A, maupun yang sudah terdaftar di DAT periode A tapi belum
+                        // mulai disusutkan (posting-nya baru mulai di periode B, mis. SAP telat
+                        // posting dari tanggal perolehan aslinya). Keduanya tetap "Pencatatan Aset Baru".
+                        $kategori = 'Pencatatan Aset Baru';
+                        if (!$entA) {
+                            if ($entB['tgl'] !== '' && date('Y-m', strtotime($entB['tgl'])) === sprintf('%04d-%02d', $tahunFilter, $bulanAnomB)) {
+                                $ketDetail = "Tanggal perolehan aset: " . $entB['tgl'] . ' (sesuai periode ' . $namaBulanB . ').';
+                            } else {
+                                $ketDetail = "Aset baru muncul di data DAT pada periode $namaBulanB"
+                                    . ($entB['tgl'] !== '' ? " (tanggal perolehan tercatat: {$entB['tgl']})" : '')
+                                    . ", sebelumnya ($namaBulanA) belum ada di data DAT sama sekali.";
+                            }
+                        } else {
+                            $sisaAInfo = $entA['sisa'] !== null ? ((int)$entA['sisa'] . ' bulan') : 'tidak diketahui';
+                            $ketDetail = "Aset sudah terdaftar di DAT sejak $namaBulanA (sisa umur manfaat saat itu $sisaAInfo), namun baru mulai ada posting penyusutan di $namaBulanB"
+                                . ($entB['tgl'] !== '' ? " (tanggal perolehan tercatat: {$entB['tgl']})" : '')
+                                . " — kemungkinan pencatatan/posting di SAP telat dari tanggal perolehan aslinya, jadi tetap dihitung sebagai pencatatan aset baru.";
+                        }
                     } else {
                         $kategori = 'Perlu Dicek Manual';
                         $ketDetail = $adaTabelDat
@@ -1019,7 +1110,7 @@ if ($adaTabelPenyusutan) {
     // ── Pivot Account x Bulan (abaikan filter bulan, selalu tampilkan semua bulan di tahun itu) ──
     $sqlPivot = "SELECT ip.account, MONTH(" . date_expr('ip.posting_date') . ") AS bln,
                         SUM(" . amount_expr('ip.amount_local_currency') . ") AS total
-                 FROM import_penyusutan ip
+                 FROM import_fagll ip
                  WHERE $rangeTahunWhere
                  GROUP BY ip.account, bln";
     $resPivot = mysqli_query($con, $sqlPivot);
@@ -1120,7 +1211,7 @@ if ($adaTabelPenyusutan) {
         $sqlDetailAll = "SELECT ip.account, ip.cost_center, ip.asset, ip.asset_subnumber, $selectKet, ip.profit_center,
                                 ip.posting_date, ip.text, ip.amount_local_currency,
                                 prevagg.total_amt AS amount_bulan_lalu
-                         FROM import_penyusutan ip
+                         FROM import_fagll ip
                          $joinPrevBulan
                          $joinDatKet
                          WHERE $rangeTahunWhere $bulanWhere
@@ -1157,7 +1248,7 @@ if ($adaTabelPenyusutan) {
     $sqlDetail = "SELECT ip.account, ip.cost_center, ip.asset, ip.asset_subnumber, ip.profit_center,
                          ip.posting_date, ip.text, ip.amount_local_currency,
                          prevagg.total_amt AS amount_bulan_lalu
-                  FROM import_penyusutan ip
+                  FROM import_fagll ip
                   $joinPrevBulan
                   WHERE $rangeTahunWhere $bulanWhere
                   ORDER BY ip.id DESC
@@ -1187,7 +1278,7 @@ if ($adaTabelPenyusutan) {
 <html lang="id">
 <head>
   <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-  <title>Selisih Penyusutan - Web Aset Tetap</title>
+  <title>Dasbor Biaya Penyusutan - Web Aset Tetap</title>
   <link rel="icon" type="image/png" href="../../dist/assets/img/emblem.png" />
   <link rel="shortcut icon" type="image/png" href="../../dist/assets/img/emblem.png" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
@@ -1223,6 +1314,12 @@ if ($adaTabelPenyusutan) {
     .badge-nodat  { background:#fef9c3; color:#854d0e; }
     .tabel-perbandingan th { white-space: nowrap; vertical-align: middle; }
     .tabel-perbandingan th a { white-space: nowrap; }
+    .tabel-perbandingan, .tabel-perbandingan td, .tabel-perbandingan th {
+      font-size: 0.85rem;
+    }
+    .tabel-rekap-gl, .tabel-rekap-gl td, .tabel-rekap-gl th {
+      font-size: 0.85rem;
+    }
   </style>
 </head>
 <body class="layout-fixed sidebar-expand-lg sidebar-open bg-body-tertiary">
@@ -1279,8 +1376,8 @@ if ($adaTabelPenyusutan) {
             $userNipp = isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : '';
             $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '" . mysqli_real_escape_string($con, $userNipp) . "' ORDER BY menus.urutan_menu ASC";
             $result_menu = mysqli_query($con, $query) or die(mysqli_error($con));
-            $iconMap = [
-                'Dasboard'                       => 'bi bi-grid-fill',
+             $iconMap = [
+                'Dasboard'                        => 'bi bi-grid-fill',
                 'Usulan Penghapusan'              => 'bi bi-file-earmark-plus',
                 'Daftar Usulan Penghapusan'       => 'bi bi-collection',
                 'Approval SubReg'                 => 'bi bi-person-check',
@@ -1291,41 +1388,51 @@ if ($adaTabelPenyusutan) {
                 'Daftar Pelaksanaan Penghapusan'  => 'bi bi-archive-fill',
                 'Manajemen Menu'                  => 'bi bi-layout-text-sidebar',
                 'Import DAT'                      => 'bi bi-file-earmark-arrow-up',
-                'Import Data Penyusutan'          => 'bi bi-cloud-upload',
+
+                // Penyusutan
+                'Import Data Penyusutan'          => 'bi bi-upload',
                 'Daftar Data Penyusutan'          => 'bi bi-table',
-                'Selisih Penyusutan'              => 'bi bi-bar-chart-line',
+                'Dasbor Monitoring Beban Penyusutan'  => 'bi-bar-chart-line',
+
+                // Monitoring SAP-DAT
+                'Import Data Monitoring'          => 'bi bi-upload',
+                'Daftar Data Monitoring'          => 'bi bi-table',
+                'Dasbor Monitoring SAP-DAT'       => 'bi bi-speedometer2',
+
                 'Daftar Aset Tetap'               => 'bi bi-boxes',
                 'Manajemen User'                  => 'bi bi-people',
             ];
 
-            // ── Pengelompokan menu jadi 3 grup dropdown: Penghapusan, Penyusutan, Manajemen Admin ──
-            // (menu di luar mapping ini, misal "Dasboard", dirender sebagai item biasa di luar grup)
             $groupMap = [
-                'Usulan Penghapusan'             => 'Penghapusan',
-                'Daftar Usulan Penghapusan'      => 'Penghapusan',
-                'Approval SubReg'                => 'Penghapusan',
-                'Approval Regional'              => 'Penghapusan',
-                'Persetujuan Penghapusan'        => 'Penghapusan',
-                'Daftar Persetujuan Penghapusan' => 'Penghapusan',
-                'Pelaksanaan Penghapusan'        => 'Penghapusan',
-                'Daftar Aset Tetap'              => 'Penghapusan',
-                'Daftar Pelaksanaan Penghapusan' => 'Penghapusan',
+                'Usulan Penghapusan'              => 'Penghapusan',
+                'Daftar Usulan Penghapusan'       => 'Penghapusan',
+                'Approval SubReg'                 => 'Penghapusan',
+                'Approval Regional'               => 'Penghapusan',
+                'Persetujuan Penghapusan'         => 'Penghapusan',
+                'Daftar Persetujuan Penghapusan'  => 'Penghapusan',
+                'Pelaksanaan Penghapusan'         => 'Penghapusan',
+                'Daftar Aset Tetap'               => 'Penghapusan',
+                'Daftar Pelaksanaan Penghapusan'  => 'Penghapusan',
 
-                'Import Data Penyusutan'         => 'Penyusutan',
-                'Daftar Data Penyusutan'         => 'Penyusutan',
-                'Selisih Penyusutan'             => 'Penyusutan',
+                'Import Data Penyusutan'          => 'Penyusutan',
+                'Daftar Data Penyusutan'          => 'Penyusutan',
+                'Dasbor Monitoring Beban Penyusutan'  => 'Penyusutan',
 
-                'Import DAT'                     => 'Manajemen Admin',
-                'Manajemen Menu'                 => 'Manajemen Admin',
-                'Manajemen User'                 => 'Manajemen Admin',
+                'Import Data Monitoring'          => 'Monitoring SAP-DAT',
+                'Daftar Data Monitoring'          => 'Monitoring SAP-DAT',
+                'Dasbor Monitoring SAP-DAT'       => 'Monitoring SAP-DAT',
+
+                'Import DAT'                      => 'Manajemen Admin',
+                'Manajemen Menu'                  => 'Manajemen Admin',
+                'Manajemen User'                  => 'Manajemen Admin',
             ];
             $groupIcon = [
-                'Penghapusan'      => 'bi bi-file-earmark-minus',
-                'Penyusutan'       => 'bi bi-graph-down-arrow',
-                'Manajemen Admin'  => 'bi bi-sliders',
+                'Penghapusan'                     => 'bi bi-file-earmark-minus',
+                'Penyusutan'                      => 'bi bi-graph-down-arrow',
+                'Monitoring SAP-DAT'              => 'bi bi-arrow-left-right',
+                'Manajemen Admin'                 => 'bi bi-sliders',               
             ];
-            $groupOrder = ['Penghapusan', 'Penyusutan', 'Manajemen Admin'];
-
+            $groupOrder = ['Penghapusan', 'Penyusutan', 'Monitoring SAP-DAT', 'Manajemen Admin'];
             $currentPage = basename($_SERVER['PHP_SELF']);
 
             $ungrouped = [];
@@ -1384,11 +1491,11 @@ if ($adaTabelPenyusutan) {
     <div class="app-content-header">
       <div class="container-fluid">
         <div class="row align-items-center">
-          <div class="col-sm-6"><h3 class="mb-0">Selisih Penyusutan</h3></div>
+          <div class="col-sm-6"><h3 class="mb-0">Dasbor Biaya Penyusutan</h3></div>
           <div class="col-sm-6">
             <ol class="breadcrumb float-sm-end mb-0">
               <li class="breadcrumb-item"><a href="../dasbor/dasbor.php">Home</a></li>
-              <li class="breadcrumb-item active">Selisih Penyusutan</li>
+              <li class="breadcrumb-item active">Dasbor Biaya Penyusutan</li>
             </ol>
           </div>
         </div>
@@ -1401,7 +1508,7 @@ if ($adaTabelPenyusutan) {
         <?php if (!$adaTabelPenyusutan): ?>
         <div class="alert alert-info">
           <i class="bi bi-info-circle"></i>
-          Belum ada data sama sekali — tabel <code>import_penyusutan</code> baru akan otomatis
+          Belum ada data sama sekali — tabel <code>import_fagll</code> baru akan otomatis
           terbuat setelah kamu upload file pertama kali di menu
           <strong>Import DAT &amp; Penyusutan</strong> (card "Import Data Penyusutan").
         </div>
@@ -1410,7 +1517,7 @@ if ($adaTabelPenyusutan) {
         <?php if ($totalTanpaTanggalValid > 0): ?>
         <div class="alert alert-warning">
           <i class="bi bi-exclamation-triangle"></i>
-          <?php echo $totalTanpaTanggalValid; ?> baris di <code>import_penyusutan</code> punya
+          <?php echo $totalTanpaTanggalValid; ?> baris di <code>import_fagll</code> punya
           <strong>Posting Date</strong> yang formatnya tidak terbaca otomatis, jadi tidak ikut
           dihitung di dasbor ini (kemungkinan sisa data lama sebelum perbaikan format tanggal).
         </div>
@@ -1439,7 +1546,7 @@ if ($adaTabelPenyusutan) {
           </div>
           <?php if (!$adaTabelPenyusutan): ?>
           <div class="col-auto">
-            <span class="badge bg-warning text-dark">Belum ada data di tabel import_penyusutan — upload dulu di menu Import DAT.</span>
+            <span class="badge bg-warning text-dark">Belum ada data di tabel Akumulasi Penyusutan— upload dulu di menu Import DAT.</span>
           </div>
           <?php endif; ?>
           <div class="col ms-auto text-end">
@@ -1486,9 +1593,8 @@ if ($adaTabelPenyusutan) {
                 <tr>
                   <th>Bulan</th>
                   <th class="text-end">Total Amount (Rp)</th>
-                  <th class="text-end">Perubahan Penyusutan (Rp)</th>
+                  <th class="text-end">Perubahan Biaya Penyusutan (Rp)</th>
                   <th class="text-end">Persentase (%)</th>
-                  <th>Status</th>
                 </tr>
               </thead>
               <tbody>
@@ -1512,35 +1618,12 @@ if ($adaTabelPenyusutan) {
                   <td class="text-end <?php echo $rb['persen'] === null ? '' : ($rb['persen'] > 0 ? 'text-success fw-semibold' : ($rb['persen'] < 0 ? 'text-danger fw-semibold' : '')); ?>">
                     <?php echo $rb['persen'] === null ? '-' : (($rb['persen'] > 0 ? '+' : '') . number_format($rb['persen'], 1, ',', '.') . '%'); ?>
                   </td>
-                  <td>
-                    <?php
-                      $clsBulan = $rb['status'] === 'Naik' ? 'badge-naik' : ($rb['status'] === 'Turun' ? 'badge-turun' : ($rb['status'] === 'Tetap' ? 'badge-tetap' : 'badge-nodat'));
-                      $popTitleBulan = $rb['kategori_utama'] ?: $rb['status'];
-                      if ($rb['kategori_utama'] !== null) {
-                          $labelArahKategori = $rb['status'] === 'Naik' ? 'Penambahan Penyusutan' : 'Pengurangan Penyusutan';
-                          $breakdownTitle = '';
-                          foreach ($rb['kategori_breakdown'] as $katB => $netB) {
-                              $breakdownTitle .= ($katB . ': ' . ($netB > 0 ? '+' : '') . fmt_rp($netB) . "\n");
-                          }
-                          $popBodyBulan = $labelArahKategori . ' · ' . number_format($rb['kategori_persen'], 0) . '% dari total perubahan bulan ini.' . "\n\n" . trim($breakdownTitle);
-                      } elseif ($rb['status'] === 'Naik' || $rb['status'] === 'Turun') {
-                          $popBodyBulan = 'Tidak ada kategori penyebab spesifik yang terdeteksi dari data DAT untuk perubahan bulan ini. Cek rincian per aset untuk detail lebih lanjut.';
-                      } else {
-                          $popBodyBulan = $rb['status'] === 'Awal' ? 'Bulan pertama yang ada datanya di tahun ini, belum ada bulan sebelumnya untuk dibandingkan.' : 'Tidak ada perubahan total Amount dibanding bulan sebelumnya.';
-                      }
-                    ?>
-                    <span class="badge <?php echo $clsBulan; ?> anom-status-badge" style="cursor:pointer; white-space:normal;"
-                          data-kategori="<?php echo htmlspecialchars($popTitleBulan); ?>"
-                          data-ket="<?php echo htmlspecialchars($popBodyBulan); ?>">
-                      <?php echo htmlspecialchars($popTitleBulan); ?><?php if ($rb['status'] === 'Naik' || $rb['status'] === 'Turun'): ?> <i class="bi bi-info-circle" style="font-size:.75em;"></i><?php endif; ?>
-                    </span>
-                  </td>
                 </tr>
                 <?php endforeach; ?>
               </tbody>
             </table>
             <!-- <small class="text-muted d-block mt-2">
-              Total Amount dihitung dari SUM seluruh <code>Amount in Local Currency</code> pada <code>import_penyusutan</code>,
+              Total Amount dihitung dari SUM seluruh <code>Amount in Local Currency</code> pada <code>import_fagll</code>,
               dikelompokkan per bulan berdasarkan <code>Posting Date</code>. Selisih &amp; persen dihitung terhadap bulan tepat sebelumnya
               (mis. Feb dibanding Jan, Mar dibanding Feb, dst).
             </small> -->
@@ -1559,12 +1642,12 @@ if ($adaTabelPenyusutan) {
               Bandingkan nilai <code>Amount in Local Currency</code> per aset antara 2 bulan mana saja
               (gak harus berurutan, misal Januari vs April) untuk mencari aset yang nilainya berubah tidak wajar.
             </p> -->
-            <form method="get" class="row g-2 align-items-end mb-3">
+            <form method="get" class="row g-2 align-items-end mb-3" id="formFilterAnomBulan">
               <input type="hidden" name="tahun" value="<?php echo htmlspecialchars($tahunFilter); ?>">
               <input type="hidden" name="bulan" value="<?php echo htmlspecialchars($bulanFilter === 'Semua' ? '' : $bulanFilter); ?>">
               <div class="col-auto">
                 <label class="form-label mb-0 small text-muted">Bulan Pertama</label>
-                <select name="bulan_a" class="form-select form-select-sm" onchange="this.form.submit()">
+                <select name="bulan_a" class="form-select form-select-sm" onchange="submitFormAnomBulan(this)">
                   <?php foreach ($listBulan as $b): ?>
                   <option value="<?php echo $b; ?>" <?php echo ($b === $bulanAnomA) ? 'selected' : ''; ?>><?php echo $namaBulan[$b] ?? $b; ?></option>
                   <?php endforeach; ?>
@@ -1572,7 +1655,7 @@ if ($adaTabelPenyusutan) {
               </div>
               <div class="col-auto">
                 <label class="form-label mb-0 small text-muted">Bulan Kedua</label>
-                <select name="bulan_b" class="form-select form-select-sm" onchange="this.form.submit()">
+                <select name="bulan_b" class="form-select form-select-sm" onchange="submitFormAnomBulan(this)">
                   <?php foreach ($listBulan as $b): ?>
                   <option value="<?php echo $b; ?>" <?php echo ($b === $bulanAnomB) ? 'selected' : ''; ?>><?php echo $namaBulan[$b] ?? $b; ?></option>
                   <?php endforeach; ?>
@@ -1616,17 +1699,17 @@ if ($adaTabelPenyusutan) {
               <table class="table table-bordered align-middle mb-2 w-100 tabel-perbandingan" style="table-layout:auto;">
                 <thead class="table-light">
                   <tr>
-                    <th><?php echo sort_link('cost_center', 'Cost Center', $sortByAnom, $sortDirAnom, $qBaseAnom); ?></th>
-                    <th><?php echo sort_link('asset', 'Nomor Aset', $sortByAnom, $sortDirAnom, $qBaseAnom); ?></th>
-                    <th><?php echo sort_link('asset_subnumber', 'Sub', $sortByAnom, $sortDirAnom, $qBaseAnom); ?></th>
-                    <th><?php echo sort_link('account', 'Account', $sortByAnom, $sortDirAnom, $qBaseAnom); ?></th>
+                    <th><?php echo sort_link('cost_center', 'Cost Center', $sortByAnom, $sortDirAnom, $qBaseAnom, '#perbandingan-amount-antar-bulan'); ?></th>
+                    <th><?php echo sort_link('asset', 'Nomor Aset', $sortByAnom, $sortDirAnom, $qBaseAnom, '#perbandingan-amount-antar-bulan'); ?></th>
+                    <th><?php echo sort_link('asset_subnumber', 'Sub', $sortByAnom, $sortDirAnom, $qBaseAnom, '#perbandingan-amount-antar-bulan'); ?></th>
+                    <th><?php echo sort_link('account', 'Account', $sortByAnom, $sortDirAnom, $qBaseAnom, '#perbandingan-amount-antar-bulan'); ?></th>
                     <th>Keterangan Aset</th>
-                    <th><?php echo sort_link('profit_center', 'Profit Center', $sortByAnom, $sortDirAnom, $qBaseAnom); ?></th>
-                    <th class="text-end"><?php echo sort_link('nilai_a', 'Nilai ' . ($namaBulan[$bulanAnomA] ?? $bulanAnomA), $sortByAnom, $sortDirAnom, $qBaseAnom); ?></th>
-                    <th class="text-end"><?php echo sort_link('nilai_b', 'Nilai ' . ($namaBulan[$bulanAnomB] ?? $bulanAnomB), $sortByAnom, $sortDirAnom, $qBaseAnom); ?></th>
-                    <th class="text-end"><?php echo sort_link('selisih', 'Selisih', $sortByAnom, $sortDirAnom, $qBaseAnom); ?></th>
-                    <th class="text-end"><?php echo sort_link('persen', '%', $sortByAnom, $sortDirAnom, $qBaseAnom); ?></th>
-                    <th class="text-center"><?php echo sort_link('status', 'Status', $sortByAnom, $sortDirAnom, $qBaseAnom); ?></th>
+                    <th><?php echo sort_link('profit_center', 'Profit Center', $sortByAnom, $sortDirAnom, $qBaseAnom, '#perbandingan-amount-antar-bulan'); ?></th>
+                    <th class="text-end"><?php echo sort_link('nilai_a', 'Nilai ' . ($namaBulan[$bulanAnomA] ?? $bulanAnomA), $sortByAnom, $sortDirAnom, $qBaseAnom, '#perbandingan-amount-antar-bulan'); ?></th>
+                    <th class="text-end"><?php echo sort_link('nilai_b', 'Nilai ' . ($namaBulan[$bulanAnomB] ?? $bulanAnomB), $sortByAnom, $sortDirAnom, $qBaseAnom, '#perbandingan-amount-antar-bulan'); ?></th>
+                    <th class="text-end"><?php echo sort_link('selisih', 'Selisih', $sortByAnom, $sortDirAnom, $qBaseAnom, '#perbandingan-amount-antar-bulan'); ?></th>
+                    <th class="text-end"><?php echo sort_link('persen', '%', $sortByAnom, $sortDirAnom, $qBaseAnom, '#perbandingan-amount-antar-bulan'); ?></th>
+                    <th class="text-center"><?php echo sort_link('status', 'Status', $sortByAnom, $sortDirAnom, $qBaseAnom, '#perbandingan-amount-antar-bulan'); ?></th>
                     <th>Catatan</th>
                   </tr>
                 </thead>
@@ -1634,10 +1717,10 @@ if ($adaTabelPenyusutan) {
                   <?php foreach ($anomaliRowsPaged as $ar): ?>
                   <tr>
                     <td><?php echo htmlspecialchars($ar['cost_center']); ?></td>
-                    <td><code><?php echo htmlspecialchars($ar['asset']); ?></code></td>
+                    <td><?php echo htmlspecialchars($ar['asset']); ?></td>
                     <td><?php echo htmlspecialchars($ar['asset_subnumber']); ?></td>
                     <td><?php echo htmlspecialchars($ar['account']); ?></td>
-                    <td class="text-muted small"><?php echo htmlspecialchars($ar['keterangan_asset'] ?? '-'); ?></td>
+                    <td><?php echo htmlspecialchars($ar['keterangan_asset'] ?? '-'); ?></td>
                     <td><?php echo htmlspecialchars($ar['profit_center']); ?></td>
                     <td class="text-end"><?php echo $ar['nilai_a'] !== null ? fmt_rp($ar['nilai_a']) : '-'; ?></td>
                     <td class="text-end"><?php echo $ar['nilai_b'] !== null ? fmt_rp($ar['nilai_b']) : '-'; ?></td>
@@ -1701,25 +1784,25 @@ if ($adaTabelPenyusutan) {
               <nav>
                 <ul class="pagination pagination-sm flex-wrap mb-0 mt-2">
                   <li class="page-item <?php echo $halamanAnom <= 1 ? 'disabled' : ''; ?>">
-                    <a class="page-link" href="?<?php echo $qBaseAnomPage; ?>&halaman_anom=1" title="Halaman pertama">&laquo;&laquo;</a>
+                    <a class="page-link" href="?<?php echo $qBaseAnomPage; ?>&halaman_anom=1#perbandingan-amount-antar-bulan" title="Halaman pertama">&laquo;&laquo;</a>
                   </li>
                   <li class="page-item <?php echo $halamanAnom <= 1 ? 'disabled' : ''; ?>">
-                    <a class="page-link" href="?<?php echo $qBaseAnomPage; ?>&halaman_anom=<?php echo max(1, $halamanAnom - 1); ?>">&laquo; Sebelumnya</a>
+                    <a class="page-link" href="?<?php echo $qBaseAnomPage; ?>&halaman_anom=<?php echo max(1, $halamanAnom - 1); ?>#perbandingan-amount-antar-bulan">&laquo; Sebelumnya</a>
                   </li>
                   <?php foreach ($itemsHalaman as $it): ?>
                     <?php if ($it === '...'): ?>
                       <li class="page-item disabled"><span class="page-link">&hellip;</span></li>
                     <?php else: ?>
                       <li class="page-item <?php echo $it === $halamanAnom ? 'active' : ''; ?>">
-                        <a class="page-link" href="?<?php echo $qBaseAnomPage; ?>&halaman_anom=<?php echo $it; ?>"><?php echo $it; ?></a>
+                        <a class="page-link" href="?<?php echo $qBaseAnomPage; ?>&halaman_anom=<?php echo $it; ?>#perbandingan-amount-antar-bulan"><?php echo $it; ?></a>
                       </li>
                     <?php endif; ?>
                   <?php endforeach; ?>
                   <li class="page-item <?php echo $halamanAnom >= $totalHalamanAnom ? 'disabled' : ''; ?>">
-                    <a class="page-link" href="?<?php echo $qBaseAnomPage; ?>&halaman_anom=<?php echo min($totalHalamanAnom, $halamanAnom + 1); ?>">Selanjutnya &raquo;</a>
+                    <a class="page-link" href="?<?php echo $qBaseAnomPage; ?>&halaman_anom=<?php echo min($totalHalamanAnom, $halamanAnom + 1); ?>#perbandingan-amount-antar-bulan">Selanjutnya &raquo;</a>
                   </li>
                   <li class="page-item <?php echo $halamanAnom >= $totalHalamanAnom ? 'disabled' : ''; ?>">
-                    <a class="page-link" href="?<?php echo $qBaseAnomPage; ?>&halaman_anom=<?php echo $totalHalamanAnom; ?>" title="Halaman terakhir">&raquo;&raquo;</a>
+                    <a class="page-link" href="?<?php echo $qBaseAnomPage; ?>&halaman_anom=<?php echo $totalHalamanAnom; ?>#perbandingan-amount-antar-bulan" title="Halaman terakhir">&raquo;&raquo;</a>
                   </li>
                 </ul>
               </nav>
@@ -1746,8 +1829,8 @@ if ($adaTabelPenyusutan) {
             <table class="table table-bordered table-sm align-middle mb-2" style="min-width:900px;">
               <thead class="table-light">
                 <tr>
-                  <th>Account (GL Account)</th>
-                  <th>Keterangan <small class="text-muted">(Asset Class Name)</small></th>
+                  <th>GL Account</th>
+                  <th>Keterangan Aset</th>
                   <?php foreach ($listBulan as $b): ?>
                     <th class="text-end"><?php echo $namaBulan[$b] ?? $b; ?></th>
                   <?php endforeach; ?>
@@ -1761,8 +1844,8 @@ if ($adaTabelPenyusutan) {
                     $accId = 'accdet_' . md5($acc);
                 ?>
                 <tr class="acc-row" style="cursor:pointer;" data-account="<?php echo htmlspecialchars($acc); ?>" data-target="<?php echo $accId; ?>" data-tahun="<?php echo (int)$tahunFilter; ?>" title="Klik untuk lihat detail Cabang &amp; Profit Center">
-                  <td class="fw-semibold"><i class="bi bi-caret-right-fill acc-caret me-1 text-muted" style="font-size:.7em;"></i><?php echo htmlspecialchars($acc); ?></td>
-                  <td class="text-muted small"><?php echo htmlspecialchars($keterangan); ?></td>
+                  <td class="fw-semibold text-nowrap"><i class="bi bi-caret-right-fill acc-caret me-1 text-muted" style="font-size:.7em;"></i><?php echo htmlspecialchars($acc); ?></td>
+                  <td><?php echo htmlspecialchars($keterangan); ?></td>
                   <?php foreach ($listBulan as $b):
                       $val = $perBulan[$b] ?? null;
                       $cellClass = '';
@@ -1826,6 +1909,15 @@ if ($adaTabelPenyusutan) {
   crossorigin="anonymous"
 ></script>
 <script>
+// ── Submit form filter bulan pada card "Perbandingan Amount Antar Bulan" via JS (bukan
+// this.form.submit() biasa) supaya setelah reload, browser langsung scroll balik ke
+// card ini (anchor #perbandingan-amount-antar-bulan) -- gak perlu scroll ulang manual. ──
+function submitFormAnomBulan(el) {
+  const form = el.form;
+  const params = new URLSearchParams(new FormData(form));
+  window.location.href = window.location.pathname + '?' + params.toString() + '#perbandingan-amount-antar-bulan';
+}
+
 document.addEventListener('DOMContentLoaded', function () {
 
   // ── Popover ringan untuk keterangan kategori perubahan (Perbandingan Amount Antar Bulan) ──

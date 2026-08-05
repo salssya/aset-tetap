@@ -470,11 +470,26 @@ function extract_row_by_header_ps($dataRow, $indexMap) {
  * di baris pertamanya, baris-baris berikutnya memang kosong di data mentah.
  * TIDAK forward-fill Posting Date / Amount / Text karena itu memang unik per baris transaksi.
  * Reset $lastValues ke [] setiap kali mulai sheet/file baru.
+ *
+ * PENGECUALIAN: kalau Text baris ini menandakan entri otomatis PSAK 73 / Penyusutan KSP
+ * (mis. "By Peny PSAK 73 ..." atau "By Penyusutan KSP ..."), maka Asset & Asset Subnumber
+ * memang tidak punya nomor aset asli -- JANGAN disalin dari baris sebelumnya, isi "-" saja.
  */
 function forward_fill_row_ps(array $row, array &$lastValues) {
     // Index sesuai urutan $TARGET_HEADERS_PENYUSUTAN: 0=cost_center,1=asset,2=asset_subnumber,3=account,4=posting_date,5=amount,6=profit_center,7=text
     $idxIdentitas = [0, 1, 2, 3, 6];
+
+    $text = trim((string)($row[7] ?? ''));
+    $isAutoPsakKsp = (bool) preg_match('/by\s+peny(?:usutan)?\s*psak\s*73/i', $text)
+        || (bool) preg_match('/by\s+penyusutan\s*ksp/i', $text);
+
     foreach ($idxIdentitas as $i) {
+        // Asset (1) & Asset Subnumber (2) untuk baris auto PSAK 73/KSP: isi "-", jangan forward-fill
+        if ($isAutoPsakKsp && ($i === 1 || $i === 2)) {
+            $row[$i] = '-';
+            continue;
+        }
+
         $val = trim((string)($row[$i] ?? ''));
         if ($val === '') {
             $row[$i] = $lastValues[$i] ?? '';
@@ -963,7 +978,7 @@ function saveDatPenyusutanToDatabase($con, $importedData) {
         mysqli_query($con, "ALTER TABLE import_dat_penyusutan ADD COLUMN cabang VARCHAR(100) AFTER profit_center");
     }
     // Migrasi AMAN: kolom sub_number_num (versi angka dari sub_number, dipakai biar JOIN ke
-    // import_penyusutan bisa pakai index -- lihat komentar di dasbor_penyusutan.php).
+    // import_FAGLL bisa pakai index -- lihat komentar di dasbor_penyusutan.php).
     if (!in_array('sub_number_num', $existingColsDat, true)) {
         mysqli_query($con, "ALTER TABLE import_dat_penyusutan ADD COLUMN sub_number_num INT UNSIGNED NULL");
     }
@@ -1035,7 +1050,7 @@ function saveDatPenyusutanToDatabase($con, $importedData) {
             $values = [];
             foreach ($column_names as $col_idx => $col_name) {
                 $value = isset($row[$col_idx]) ? $row[$col_idx] : '';
-                // Trim nomor_asset & sub_number saat insert supaya JOIN ke import_penyusutan bisa
+                // Trim nomor_asset & sub_number saat insert supaya JOIN ke import_FAGLL bisa
                 // pakai perbandingan langsung (index-friendly) tanpa TRIM() di query.
                 if ($col_name === 'nomor_asset' || $col_name === 'sub_number') {
                     $value = trim((string)$value);
@@ -1150,7 +1165,7 @@ function saveDataPenyusutanToDatabase($con, $importedData) {
         return 0;
     }
     
-    $create_table_sql = "CREATE TABLE IF NOT EXISTS import_penyusutan (
+    $create_table_sql = "CREATE TABLE IF NOT EXISTS import_FAGLL (
         id INT AUTO_INCREMENT PRIMARY KEY,
         cost_center VARCHAR(20),
         asset VARCHAR(50),
@@ -1181,36 +1196,36 @@ function saveDataPenyusutanToDatabase($con, $importedData) {
 
     // Migrasi AMAN untuk tabel lama: tambah kolom document_number kalau belum ada.
     $existingColsPs = [];
-    $resColsPs = mysqli_query($con, "SHOW COLUMNS FROM import_penyusutan");
+    $resColsPs = mysqli_query($con, "SHOW COLUMNS FROM import_FAGLL");
     if ($resColsPs) { while ($c = mysqli_fetch_assoc($resColsPs)) { $existingColsPs[] = $c['Field']; } }
     if (!in_array('document_number', $existingColsPs, true)) {
-        mysqli_query($con, "ALTER TABLE import_penyusutan ADD COLUMN document_number VARCHAR(30) AFTER text");
+        mysqli_query($con, "ALTER TABLE import_FAGLL ADD COLUMN document_number VARCHAR(30) AFTER text");
     }
     // Migrasi AMAN: tambah kolom hasil normalisasi (posting_date_norm/amount_norm) + index-nya kalau
     // belum ada, jaga-jaga kalau server ini belum pernah dijalankan migrasi manualnya lewat phpMyAdmin.
     if (!in_array('posting_date_norm', $existingColsPs, true)) {
-        mysqli_query($con, "ALTER TABLE import_penyusutan ADD COLUMN posting_date_norm DATE NULL, ADD COLUMN amount_norm DECIMAL(20,2) NULL");
+        mysqli_query($con, "ALTER TABLE import_FAGLL ADD COLUMN posting_date_norm DATE NULL, ADD COLUMN amount_norm DECIMAL(20,2) NULL");
     }
     // Migrasi AMAN: kolom asset_subnumber_num (versi angka asset_subnumber) buat JOIN cepat ke
-    // import_dat_penyusutan.sub_number_num.
+    // import_dat_FAGLL.sub_number_num.
     if (!in_array('asset_subnumber_num', $existingColsPs, true)) {
-        mysqli_query($con, "ALTER TABLE import_penyusutan ADD COLUMN asset_subnumber_num INT UNSIGNED NULL");
+        mysqli_query($con, "ALTER TABLE import_FAGLL ADD COLUMN asset_subnumber_num INT UNSIGNED NULL");
     }
     $existingIdxPs = [];
-    $resIdxPs = mysqli_query($con, "SHOW INDEX FROM import_penyusutan");
+    $resIdxPs = mysqli_query($con, "SHOW INDEX FROM import_FAGLL");
     if ($resIdxPs) { while ($ix = mysqli_fetch_assoc($resIdxPs)) { $existingIdxPs[] = $ix['Key_name']; } }
     if (!in_array('idx_posting_date_norm', $existingIdxPs, true)) {
-        mysqli_query($con, "ALTER TABLE import_penyusutan ADD INDEX idx_posting_date_norm (posting_date_norm)");
+        mysqli_query($con, "ALTER TABLE import_FAGLL ADD INDEX idx_posting_date_norm (posting_date_norm)");
     }
     if (!in_array('idx_asset_sub', $existingIdxPs, true)) {
-        mysqli_query($con, "ALTER TABLE import_penyusutan ADD INDEX idx_asset_sub (asset, asset_subnumber)");
+        mysqli_query($con, "ALTER TABLE import_FAGLL ADD INDEX idx_asset_sub (asset, asset_subnumber)");
     }
     if (!in_array('idx_asset_sub_num', $existingIdxPs, true)) {
-        mysqli_query($con, "ALTER TABLE import_penyusutan ADD INDEX idx_asset_sub_num (asset, asset_subnumber_num)");
+        mysqli_query($con, "ALTER TABLE import_FAGLL ADD INDEX idx_asset_sub_num (asset, asset_subnumber_num)");
     }
 
     // ── PENTING: hapus UNIQUE KEY lama kalau masih ada ──
-    // Data penyusutan SAP (Fixed Asset FI-AA) bisa punya BEBERAPA baris yang identik
+    // Data FAGLL SAP (Fixed Asset FI-AA) bisa punya BEBERAPA baris yang identik
     // di SEMUA kolom yang kita export (cost_center, asset, account, posting_date,
     // document_number, bahkan amount) -- ini terjadi karena 1 dokumen bisa posting ke
     // beberapa "Depreciation Area" (Buku/Fiskal/Grup) sekaligus, dan kolom Depreciation
@@ -1218,18 +1233,18 @@ function saveDataPenyusutanToDatabase($con, $importedData) {
     // bisa dipakai sebagai "kunci unik" tanpa risiko salah buang baris yang valid.
     // Makanya UNIQUE KEY dihapus total -- deteksi duplikat dilakukan lewat TRUNCATE
     // (replace-all) di bawah, bukan lewat constraint per baris.
-    $idxResPs = mysqli_query($con, "SHOW INDEX FROM import_penyusutan WHERE Key_name = 'uk_penyusutan_row'");
+    $idxResPs = mysqli_query($con, "SHOW INDEX FROM import_FAGLL WHERE Key_name = 'uk_FAGLL_row'");
     if ($idxResPs && mysqli_num_rows($idxResPs) > 0) {
-        mysqli_query($con, "ALTER TABLE import_penyusutan DROP INDEX uk_penyusutan_row");
+        mysqli_query($con, "ALTER TABLE import_FAGLL DROP INDEX uk_FAGLL_row");
     }
 
     // ── Strategi REPLACE-ALL ──
-    // File "Penyusutan sd Bulan X" itu sifatnya KUMULATIF (selalu berisi data dari awal
+    // File "FAGLL sd Bulan X" itu sifatnya KUMULATIF (selalu berisi data dari awal
     // tahun s.d. bulan terbaru), bukan data incremental per bulan. Jadi setiap kali upload
     // baru, cara paling aman & benar adalah KOSONGKAN dulu seluruh tabel, baru masukin
     // ulang semua baris dari file yang baru -- bukan coba "gabung" data lama+baru pakai
     // deteksi duplikat (yang sudah terbukti gak reliable untuk data ini).
-    if (!mysqli_query($con, "TRUNCATE TABLE import_penyusutan")) {
+    if (!mysqli_query($con, "TRUNCATE TABLE import_FAGLL")) {
         throw new Exception("Gagal mengosongkan tabel sebelum import ulang: " . mysqli_error($con));
     }
 
@@ -1257,7 +1272,7 @@ function saveDataPenyusutanToDatabase($con, $importedData) {
             $values = [];
             foreach ($column_names as $col_idx => $col_name) {
                 $value = isset($row[$col_idx]) ? $row[$col_idx] : '';
-                // Trim asset & asset_subnumber saat insert supaya JOIN ke import_dat_penyusutan
+                // Trim asset & asset_subnumber saat insert supaya JOIN ke import_dat_FAGLL
                 // bisa pakai perbandingan langsung (index-friendly) tanpa TRIM() di query.
                 if ($col_name === 'asset' || $col_name === 'asset_subnumber') {
                     $value = trim((string)$value);
@@ -1280,7 +1295,7 @@ function saveDataPenyusutanToDatabase($con, $importedData) {
             $values[] = "'" . mysqli_real_escape_string($con, $nipp) . "'";
 
             $columns = implode(', ', $column_names) . ', posting_date_norm, amount_norm, asset_subnumber_num, imported_by';
-            $insert_sql = "INSERT INTO import_penyusutan (" . $columns . ") VALUES (" . implode(', ', $values) . ")";
+            $insert_sql = "INSERT INTO import_FAGLL (" . $columns . ") VALUES (" . implode(', ', $values) . ")";
             
             if (mysqli_query($con, $insert_sql)) {
                 $saved_count++;
@@ -1297,7 +1312,7 @@ function saveDataPenyusutanToDatabase($con, $importedData) {
     }
     
     if (!empty($failed_rows)) {
-        error_log("Import Penyusutan failed rows: " . implode("; ", array_slice($failed_rows, 0, 5)));
+        error_log("Import FAGLL failed rows: " . implode("; ", array_slice($failed_rows, 0, 5)));
     }
     
     return $saved_count;
@@ -1526,7 +1541,7 @@ function saveDataPenyusutanToDatabase($con, $importedData) {
             $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '" . mysqli_real_escape_string($con, $userNipp) . "' ORDER BY menus.urutan_menu ASC";
             $result_menu = mysqli_query($con, $query) or die(mysqli_error($con));
             $iconMap = [
-                'Dasboard'                       => 'bi bi-grid-fill',
+                'Dasboard'                        => 'bi bi-grid-fill',
                 'Usulan Penghapusan'              => 'bi bi-file-earmark-plus',
                 'Daftar Usulan Penghapusan'       => 'bi bi-collection',
                 'Approval SubReg'                 => 'bi bi-person-check',
@@ -1537,43 +1552,53 @@ function saveDataPenyusutanToDatabase($con, $importedData) {
                 'Daftar Pelaksanaan Penghapusan'  => 'bi bi-archive-fill',
                 'Manajemen Menu'                  => 'bi bi-layout-text-sidebar',
                 'Import DAT'                      => 'bi bi-file-earmark-arrow-up',
-                'Import Data Penyusutan'          => 'bi bi-cloud-upload',
+
+                // Penyusutan
+                'Import Data Penyusutan'          => 'bi bi-upload',
                 'Daftar Data Penyusutan'          => 'bi bi-table',
-                'Selisih Penyusutan'              => 'bi bi-bar-chart-line',
+                'Dasbor Monitoring Beban Penyusutan'  => 'bi-bar-chart-line',
+
+                // Monitoring SAP-DAT
+                'Import Data Monitoring'          => 'bi bi-upload',
+                'Daftar Data Monitoring'          => 'bi bi-table',
+                'Dasbor Monitoring SAP-DAT'       => 'bi bi-speedometer2',
+
                 'Daftar Aset Tetap'               => 'bi bi-boxes',
                 'Manajemen User'                  => 'bi bi-people',
             ];
 
-            // ── Pengelompokan menu jadi 3 grup dropdown: Penghapusan, Penyusutan, Manajemen Admin ──
-            // (menu di luar mapping ini, misal "Dasboard", dirender sebagai item biasa di luar grup)
             $groupMap = [
-                'Usulan Penghapusan'             => 'Penghapusan',
-                'Daftar Usulan Penghapusan'      => 'Penghapusan',
-                'Approval SubReg'                => 'Penghapusan',
-                'Approval Regional'              => 'Penghapusan',
-                'Persetujuan Penghapusan'        => 'Penghapusan',
-                'Daftar Persetujuan Penghapusan' => 'Penghapusan',
-                'Pelaksanaan Penghapusan'        => 'Penghapusan',
-                'Daftar Pelaksanaan Penghapusan' => 'Penghapusan',
+                'Usulan Penghapusan'              => 'Penghapusan',
+                'Daftar Usulan Penghapusan'       => 'Penghapusan',
+                'Approval SubReg'                 => 'Penghapusan',
+                'Approval Regional'               => 'Penghapusan',
+                'Persetujuan Penghapusan'         => 'Penghapusan',
+                'Daftar Persetujuan Penghapusan'  => 'Penghapusan',
+                'Pelaksanaan Penghapusan'         => 'Penghapusan',
+                'Daftar Aset Tetap'               => 'Penghapusan',
+                'Daftar Pelaksanaan Penghapusan'  => 'Penghapusan',
 
-                'Import Data Penyusutan'         => 'Penyusutan',
-                'Daftar Data Penyusutan'         => 'Penyusutan',
-                'Selisih Penyusutan'             => 'Penyusutan',
+                'Import Data Penyusutan'          => 'Penyusutan',
+                'Daftar Data Penyusutan'          => 'Penyusutan',
+                'Dasbor Monitoring Beban Penyusutan'  => 'Penyusutan',
 
-                'Import DAT'                     => 'Manajemen Admin',
-                'Daftar Aset Tetap'              => 'Manajemen Admin',
-                'Manajemen Menu'                 => 'Manajemen Admin',
-                'Manajemen User'                 => 'Manajemen Admin',
+                'Import Data Monitoring'          => 'Monitoring SAP-DAT',
+                'Daftar Data Monitoring'          => 'Monitoring SAP-DAT',
+                'Dasbor Monitoring SAP-DAT'       => 'Monitoring SAP-DAT',
+
+                'Import DAT'                      => 'Manajemen Admin',
+                'Manajemen Menu'                  => 'Manajemen Admin',
+                'Manajemen User'                  => 'Manajemen Admin',
             ];
             $groupIcon = [
-                'Penghapusan'      => 'bi bi-file-earmark-minus',
-                'Penyusutan'       => 'bi bi-graph-down-arrow',
-                'Manajemen Admin'  => 'bi bi-sliders',
+                'Penghapusan'                     => 'bi bi-file-earmark-minus',
+                'Penyusutan'                      => 'bi bi-graph-down-arrow',
+                'Monitoring SAP-DAT'              => 'bi bi-arrow-left-right',
+                'Manajemen Admin'                 => 'bi bi-sliders',               
             ];
-            $groupOrder = ['Penghapusan', 'Penyusutan', 'Manajemen Admin'];
-
+            $groupOrder = ['Penghapusan', 'Penyusutan', 'Monitoring SAP-DAT', 'Manajemen Admin'];
+            
             $currentPage = basename($_SERVER['PHP_SELF']);
-
             $ungrouped = [];
             $grouped   = [];
             while ($row = mysqli_fetch_assoc($result_menu)) {
@@ -1585,7 +1610,6 @@ function saveDataPenyusutanToDatabase($con, $importedData) {
                 }
             }
 
-            // ── Render item di luar grup (mis. Dasboard) di paling atas, seperti sebelumnya ──
             foreach ($ungrouped as $row) {
                 $namaMenu = trim($row['nama_menu']);
                 $icon     = $iconMap[$namaMenu] ?? 'bi bi-circle';
@@ -1593,9 +1617,8 @@ function saveDataPenyusutanToDatabase($con, $importedData) {
                 echo '<li class="nav-item"><a href="../' . $row['menu'] . '/' . $row['menu'] . '.php" class="nav-link ' . $isActive . '"><i class="nav-icon ' . $icon . '"></i><p>' . htmlspecialchars($namaMenu) . '</p></a></li>';
             }
 
-            // ── Render tiap grup sebagai dropdown treeview, isinya cuma menu yang user PUNYA AKSES ──
             foreach ($groupOrder as $groupName) {
-                if (empty($grouped[$groupName])) continue; // user gak punya akses menu apapun di grup ini
+                if (empty($grouped[$groupName])) continue; 
 
                 $itemsGrup = $grouped[$groupName];
                 $adaAktif  = false;
@@ -1659,7 +1682,7 @@ function saveDataPenyusutanToDatabase($con, $importedData) {
                   <div class="card-header"><div class="card-title">Import DAT</div></div>
                   <!--end::Header-->
                   <!--begin::Form-->
-                  <form method="POST" enctype="multipart/form-data">
+                  <form method="POST" enctype="multipart/form-data" id="formImportDat" data-loading-text="Sedang memproses upload data DAT... Mohon tunggu, jangan tutup atau refresh halaman ini.">
                     <!--begin::Body-->
                     <div class="card-body">
                       <?php if (!empty($pesan)): ?>
@@ -1697,10 +1720,10 @@ function saveDataPenyusutanToDatabase($con, $importedData) {
               <div class="col-lg-6">
                 <div class="card card-primary card-outline mb-4 h-100">
                   <!--begin::Header-->
-                  <div class="card-header"><div class="card-title">Import Penyusutan SAP</div></div>
+                  <div class="card-header"><div class="card-title">Import Data FAGLL SAP</div></div>
                   <!--end::Header-->
                   <!--begin::Form-->
-                  <form method="POST" enctype="multipart/form-data">
+                  <form method="POST" enctype="multipart/form-data" id="formImportPenyusutan" data-loading-text="Sedang memproses upload data FAGLL SAP">
                     <!--begin::Body-->
                     <div class="card-body">
                       <?php if (!empty($pesanPenyusutan)): ?>
@@ -1715,7 +1738,7 @@ function saveDataPenyusutanToDatabase($con, $importedData) {
                         <input type="file" class="form-control" id="file_penyusutan" name="file_penyusutan" accept=".xls,.xlsx,.csv" required>
                         <small class="form-text text-muted">
                           Format yang didukung: <strong>CSV / Excel (.xls, .xlsx, .csv)</strong><br>
-                            Pastikan file yang diupload adalah file export dari SAP untuk data penyusutan.
+                            Pastikan file yang diupload adalah file export adalah Rekap FAGLL dari SAP.
                         </small>
                       </div>
                     </div>
@@ -1793,6 +1816,21 @@ function saveDataPenyusutanToDatabase($con, $importedData) {
       });
     </script>
     <!--end::OverlayScrollbars Configure-->
+
+    <!-- Loading Modal saat proses upload/import file (Bootstrap) -->
+    <div class="modal fade" id="uploadLoadingModal" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-body text-center py-4">
+            <div class="spinner-border text-primary mb-3" role="status" style="width:3rem;height:3rem;">
+              <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mb-0 fw-semibold" id="uploadLoadingModalText">Sedang memproses upload...</p>
+            <small class="text-muted">Mohon tunggu, jangan tutup atau refresh halaman ini.</small>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- Confirmation Modal (Bootstrap) -->
     <div class="modal fade" id="confirmModal" tabindex="-1" aria-hidden="true">
@@ -1891,6 +1929,39 @@ function saveDataPenyusutanToDatabase($con, $importedData) {
         // show as modal with only OK
         return showConfirmModal(title, message, { variant: variant, showCancel: false, confirmText: 'OK' });
       }
+
+      // Tampilkan modal loading saat form Import DAT / Import Data Penyusutan di-submit.
+      // Form ini submit biasa (bukan AJAX), jadi modal cukup ditampilkan lalu biarkan
+      // browser lanjut proses upload & reload halaman seperti biasa.
+      (function () {
+        const uploadForms = [
+          document.getElementById('formImportDat'),
+          document.getElementById('formImportPenyusutan'),
+        ];
+
+        uploadForms.forEach(function (form) {
+          if (!form) return;
+          form.addEventListener('submit', function (e) {
+            const fileInput = form.querySelector('input[type="file"]');
+            if (fileInput && fileInput.files.length === 0) {
+              // Biarkan validasi bawaan browser (required) yang menangani, jangan tampilkan modal
+              return;
+            }
+
+            const loadingText = form.dataset.loadingText || 'Sedang memproses upload...';
+            document.getElementById('uploadLoadingModalText').textContent = loadingText;
+
+            const submitBtn = form.querySelector('button[type="submit"]');
+            if (submitBtn) submitBtn.disabled = true;
+
+            const loadingModal = new bootstrap.Modal(document.getElementById('uploadLoadingModal'), {
+              backdrop: 'static',
+              keyboard: false,
+            });
+            loadingModal.show();
+          });
+        });
+      })();
     </script>
     <!--end::Script-->
   </body>

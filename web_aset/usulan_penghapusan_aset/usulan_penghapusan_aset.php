@@ -199,7 +199,7 @@ if ($isSubRegional) {
 }
 
 $query_lengkapi = "SELECT up.*, 
-                   id.keterangan_asset as nama_aset, 
+                   COALESCE(id.keterangan_asset, up.nama_aset) as nama_aset, 
                    id.asset_class_name as kategori_aset,
                    id.subreg,
                    id.profit_center_text,
@@ -271,7 +271,7 @@ if ($isSubRegional) {
 }
 
 $query_upload = "SELECT up.*, 
-                 id.keterangan_asset as nama_aset,
+                 COALESCE(id.keterangan_asset, up.nama_aset) as nama_aset,
                  id.profit_center_text,
                  id.subreg,
                  (SELECT COUNT(*) FROM dokumen_penghapusan dp2 
@@ -1580,12 +1580,12 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
               data-accordion="false"
               id="navigation"
             >
-            <?php  
+             <?php  
             $userNipp = isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : '';
             $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '" . mysqli_real_escape_string($con, $userNipp) . "' ORDER BY menus.urutan_menu ASC";
             $result_menu = mysqli_query($con, $query) or die(mysqli_error($con));
-            $iconMap = [
-                'Dasboard'                       => 'bi bi-grid-fill',
+             $iconMap = [
+                'Dasboard'                        => 'bi bi-grid-fill',
                 'Usulan Penghapusan'              => 'bi bi-file-earmark-plus',
                 'Daftar Usulan Penghapusan'       => 'bi bi-collection',
                 'Approval SubReg'                 => 'bi bi-person-check',
@@ -1596,41 +1596,51 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                 'Daftar Pelaksanaan Penghapusan'  => 'bi bi-archive-fill',
                 'Manajemen Menu'                  => 'bi bi-layout-text-sidebar',
                 'Import DAT'                      => 'bi bi-file-earmark-arrow-up',
-                'Import Data Penyusutan'          => 'bi bi-cloud-upload',
+
+                // Penyusutan
+                'Import Data Penyusutan'          => 'bi bi-upload',
                 'Daftar Data Penyusutan'          => 'bi bi-table',
-                'Selisih Penyusutan'              => 'bi bi-bar-chart-line',
+                'Dasbor Monitoring Beban Penyusutan'  => 'bi-bar-chart-line',
+
+                // Monitoring SAP-DAT
+                'Import Data Monitoring'          => 'bi bi-upload',
+                'Daftar Data Monitoring'          => 'bi bi-table',
+                'Dasbor Monitoring SAP-DAT'       => 'bi bi-speedometer2',
+
                 'Daftar Aset Tetap'               => 'bi bi-boxes',
                 'Manajemen User'                  => 'bi bi-people',
             ];
 
-            // ── Pengelompokan menu jadi 3 grup dropdown: Penghapusan, Penyusutan, Manajemen Admin ──
-            // (menu di luar mapping ini, misal "Dasboard", dirender sebagai item biasa di luar grup)
             $groupMap = [
-                'Usulan Penghapusan'             => 'Penghapusan',
-                'Daftar Usulan Penghapusan'      => 'Penghapusan',
-                'Approval SubReg'                => 'Penghapusan',
-                'Approval Regional'              => 'Penghapusan',
-                'Persetujuan Penghapusan'        => 'Penghapusan',
-                'Daftar Persetujuan Penghapusan' => 'Penghapusan',
-                'Pelaksanaan Penghapusan'        => 'Penghapusan',
-                'Daftar Aset Tetap'              => 'Penghapusan',
-                'Daftar Pelaksanaan Penghapusan' => 'Penghapusan',
+                'Usulan Penghapusan'              => 'Penghapusan',
+                'Daftar Usulan Penghapusan'       => 'Penghapusan',
+                'Approval SubReg'                 => 'Penghapusan',
+                'Approval Regional'               => 'Penghapusan',
+                'Persetujuan Penghapusan'         => 'Penghapusan',
+                'Daftar Persetujuan Penghapusan'  => 'Penghapusan',
+                'Pelaksanaan Penghapusan'         => 'Penghapusan',
+                'Daftar Pelaksanaan Penghapusan'  => 'Penghapusan',
 
-                'Import Data Penyusutan'         => 'Penyusutan',
-                'Daftar Data Penyusutan'         => 'Penyusutan',
-                'Selisih Penyusutan'             => 'Penyusutan',
+                'Import Data Penyusutan'          => 'Penyusutan',
+                'Daftar Data Penyusutan'          => 'Penyusutan',
+                'Dasbor Monitoring Beban Penyusutan'  => 'Penyusutan',
 
-                'Import DAT'                     => 'Manajemen Admin',
-                'Manajemen Menu'                 => 'Manajemen Admin',
-                'Manajemen User'                 => 'Manajemen Admin',
+                'Import Data Monitoring'          => 'Monitoring SAP-DAT',
+                'Daftar Data Monitoring'          => 'Monitoring SAP-DAT',
+                'Dasbor Monitoring SAP-DAT'       => 'Monitoring SAP-DAT',
+
+                'Import DAT'                      => 'Manajemen Admin',
+                'Daftar Aset Tetap'               => 'Manajemen Admin',
+                'Manajemen Menu'                  => 'Manajemen Admin',
+                'Manajemen User'                  => 'Manajemen Admin',
             ];
             $groupIcon = [
-                'Penghapusan'      => 'bi bi-file-earmark-minus',
-                'Penyusutan'       => 'bi bi-graph-down-arrow',
-                'Manajemen Admin'  => 'bi bi-sliders',
+                'Penghapusan'                     => 'bi bi-file-earmark-minus',
+                'Penyusutan'                      => 'bi bi-graph-down-arrow',
+                'Monitoring SAP-DAT'              => 'bi bi-arrow-left-right',
+                'Manajemen Admin'                 => 'bi bi-sliders',               
             ];
-            $groupOrder = ['Penghapusan', 'Penyusutan', 'Manajemen Admin'];
-
+            $groupOrder = ['Penghapusan', 'Penyusutan', 'Monitoring SAP-DAT', 'Manajemen Admin'];
             $currentPage = basename($_SERVER['PHP_SELF']);
 
             $ungrouped = [];
@@ -2642,7 +2652,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
 
                               if ($isSubRegional && !empty($userSubreg)) {
                                   $q_all = $con->prepare("SELECT up.*, 
-                                                          id.keterangan_asset as nama_aset,
+                                                          COALESCE(id.keterangan_asset, up.nama_aset) as nama_aset,
                                                           (SELECT COUNT(*) FROM dokumen_penghapusan dp2 
                                                           WHERE dp2.usulan_id = up.id 
                                                              OR dp2.no_aset LIKE CONCAT('%', up.nomor_asset_utama, '%')
@@ -2654,7 +2664,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                   $q_all->bind_param("s", $userSubreg);
                               } elseif ($isCabang) {
                                   $q_all = $con->prepare("SELECT up.*, 
-                                                          id.keterangan_asset as nama_aset,
+                                                          COALESCE(id.keterangan_asset, up.nama_aset) as nama_aset,
                                                           (SELECT COUNT(*) FROM dokumen_penghapusan dp2 
                                                           WHERE dp2.usulan_id = up.id 
                                                              OR dp2.no_aset LIKE CONCAT('%', up.nomor_asset_utama, '%')
@@ -2666,7 +2676,7 @@ function saveSelectedAssets($con, $selected_data, $is_submit, $created_by, $user
                                   $q_all->bind_param("s", $_SESSION['nipp']);
                               } else {
                                   $q_all = $con->prepare("SELECT up.*, 
-                                                          id.keterangan_asset as nama_aset,
+                                                          COALESCE(id.keterangan_asset, up.nama_aset) as nama_aset,
                                                           (SELECT COUNT(*) FROM dokumen_penghapusan dp2 
                                                           WHERE dp2.usulan_id = up.id 
                                                              OR dp2.no_aset LIKE CONCAT('%', up.nomor_asset_utama, '%')

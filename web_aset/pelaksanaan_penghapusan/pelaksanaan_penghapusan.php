@@ -327,15 +327,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'updat
     $nilai_penjualan     = cleanAngka($_POST['nilai_penjualan']           ?? '');
     $biaya_lainnya       = cleanAngka($_POST['biaya_lainnya']             ?? '');
     $nomor_aset_pengganti = trim($_POST['nomor_aset_pengganti'] ?? '');
+    $catatan_pelaksanaan  = trim($_POST['catatan_pelaksanaan'] ?? '');
+    $catatan_pelaksanaan  = ($catatan_pelaksanaan === '') ? null : $catatan_pelaksanaan;
 
     $stmt = $con->prepare("UPDATE pelaksanaan_penghapusan SET
         status_pelaksanaan = ?, tanggal_appraisal = ?, tanggal_penjualan = ?,
         nilai_buku_bulan_berjalan = ?, nilai_appraisal_pasar = ?, nilai_appraisal_likuidasi = ?,
-        nilai_penjualan = ?, biaya_lainnya = ?, nomor_aset_pengganti = ?,
+        nilai_penjualan = ?, biaya_lainnya = ?, nomor_aset_pengganti = ?, catatan_pelaksanaan = ?,
         nipp = ?, updated_at = NOW() WHERE id = ?");
-    $stmt->bind_param("sssdddddssi", $status_pelaksanaan, $tgl_appraisal, $tgl_penjualan,
+    $stmt->bind_param("sssdddddsssi", $status_pelaksanaan, $tgl_appraisal, $tgl_penjualan,
         $nilai_buku_bb, $nilai_app_pasar, $nilai_app_likuidasi, $nilai_penjualan,
-        $biaya_lainnya, $nomor_aset_pengganti, $userNipp, $id_pel);
+        $biaya_lainnya, $nomor_aset_pengganti, $catatan_pelaksanaan, $userNipp, $id_pel);
 
     if ($stmt->execute()) {
         $_SESSION['success_message'] = "Data pelaksanaan berhasil diperbarui.";
@@ -428,6 +430,7 @@ $cnt_disetujui_ho = (int)($r_ho['c'] ?? 0);
 
 // ── Counter progress status dari tabel pelaksanaan ──
 $cnt_appraisal = $cnt_lelang = $cnt_terjual = $cnt_musnahkan = 0;
+$cnt_tidak_laku = $cnt_ditunda = 0;
 $cnt_jual_lelang_total = $cnt_hapus_admin_total = 0;
 foreach ($data_pelaksanaan as $d) {
     $st  = strtolower($d['status_pelaksanaan'] ?? '');
@@ -435,6 +438,8 @@ foreach ($data_pelaksanaan as $d) {
     if ($st === 'appraisal aset')                                          $cnt_appraisal++;
     elseif ($st === 'proses lelang')                                       $cnt_lelang++;
     elseif ($st === 'terjual')                                             $cnt_terjual++;
+    elseif ($st === 'lelang tidak laku')                                   $cnt_tidak_laku++;
+    elseif ($st === 'ditunda')                                             $cnt_ditunda++;
     elseif ($st === 'hapus administrasi' || $st === 'telah dimusnahkan')   $cnt_musnahkan++;
     if ($mek === 'Jual Lelang')        $cnt_jual_lelang_total++;
     if ($mek === 'Hapus Administrasi') $cnt_hapus_admin_total++;
@@ -509,6 +514,8 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
     .st-appraisal{background:#fef9c3;color:#854d0e;}        /* Kuning — Appraisal */
     .st-lelang   {background:#ede9fe;color:#5b21b6;}        /* Ungu  — Proses Lelang */
     .st-terjual  {background:#bbf7d0;color:#166534;}        /* Hijau — Terjual */
+    .st-tidaklaku{background:#fed7aa;color:#9a3412;}        /* Oranye — Lelang Tidak Laku */
+    .st-ditunda  {background:#e5e7eb;color:#374151;}        /* Abu-abu — Ditunda */
     .st-ditolak  {background:#fee2e2;color:#991b1b;}        /* Merah muda — Ditolak */
     .st-musnahkan{background:#dc2626;color:#fff;}           /* Merah solid — Hapus Administrasi */
     /* Tab styles in modal edit */
@@ -651,12 +658,12 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
     <div class="sidebar-wrapper">
       <nav class="mt-2">
         <ul class="nav sidebar-menu flex-column" data-lte-toggle="treeview" role="navigation" data-accordion="false">
-         <?php  
+        <?php  
             $userNipp = isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : '';
             $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '" . mysqli_real_escape_string($con, $userNipp) . "' ORDER BY menus.urutan_menu ASC";
             $result_menu = mysqli_query($con, $query) or die(mysqli_error($con));
-            $iconMap = [
-                'Dasboard'                       => 'bi bi-grid-fill',
+             $iconMap = [
+                'Dasboard'                        => 'bi bi-grid-fill',
                 'Usulan Penghapusan'              => 'bi bi-file-earmark-plus',
                 'Daftar Usulan Penghapusan'       => 'bi bi-collection',
                 'Approval SubReg'                 => 'bi bi-person-check',
@@ -667,41 +674,51 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                 'Daftar Pelaksanaan Penghapusan'  => 'bi bi-archive-fill',
                 'Manajemen Menu'                  => 'bi bi-layout-text-sidebar',
                 'Import DAT'                      => 'bi bi-file-earmark-arrow-up',
-                'Import Data Penyusutan'          => 'bi bi-cloud-upload',
+
+                // Penyusutan
+                'Import Data Penyusutan'          => 'bi bi-upload',
                 'Daftar Data Penyusutan'          => 'bi bi-table',
-                'Selisih Penyusutan'              => 'bi bi-bar-chart-line',
+                'Dasbor Monitoring Beban Penyusutan'  => 'bi-bar-chart-line',
+
+                // Monitoring SAP-DAT
+                'Import Data Monitoring'          => 'bi bi-upload',
+                'Daftar Data Monitoring'          => 'bi bi-table',
+                'Dasbor Monitoring SAP-DAT'       => 'bi bi-speedometer2',
+
                 'Daftar Aset Tetap'               => 'bi bi-boxes',
                 'Manajemen User'                  => 'bi bi-people',
             ];
 
-            // ── Pengelompokan menu jadi 3 grup dropdown: Penghapusan, Penyusutan, Manajemen Admin ──
-            // (menu di luar mapping ini, misal "Dasboard", dirender sebagai item biasa di luar grup)
             $groupMap = [
-                'Usulan Penghapusan'             => 'Penghapusan',
-                'Daftar Usulan Penghapusan'      => 'Penghapusan',
-                'Approval SubReg'                => 'Penghapusan',
-                'Approval Regional'              => 'Penghapusan',
-                'Persetujuan Penghapusan'        => 'Penghapusan',
-                'Daftar Persetujuan Penghapusan' => 'Penghapusan',
-                'Pelaksanaan Penghapusan'        => 'Penghapusan',
-                'Daftar Aset Tetap'              => 'Penghapusan',
-                'Daftar Pelaksanaan Penghapusan' => 'Penghapusan',
+                'Usulan Penghapusan'              => 'Penghapusan',
+                'Daftar Usulan Penghapusan'       => 'Penghapusan',
+                'Approval SubReg'                 => 'Penghapusan',
+                'Approval Regional'               => 'Penghapusan',
+                'Persetujuan Penghapusan'         => 'Penghapusan',
+                'Daftar Persetujuan Penghapusan'  => 'Penghapusan',
+                'Pelaksanaan Penghapusan'         => 'Penghapusan',
+                'Daftar Pelaksanaan Penghapusan'  => 'Penghapusan',
 
-                'Import Data Penyusutan'         => 'Penyusutan',
-                'Daftar Data Penyusutan'         => 'Penyusutan',
-                'Selisih Penyusutan'             => 'Penyusutan',
+                'Import Data Penyusutan'          => 'Penyusutan',
+                'Daftar Data Penyusutan'          => 'Penyusutan',
+                'Dasbor Monitoring Beban Penyusutan'  => 'Penyusutan',
 
-                'Import DAT'                     => 'Manajemen Admin',
-                'Manajemen Menu'                 => 'Manajemen Admin',
-                'Manajemen User'                 => 'Manajemen Admin',
+                'Import Data Monitoring'          => 'Monitoring SAP-DAT',
+                'Daftar Data Monitoring'          => 'Monitoring SAP-DAT',
+                'Dasbor Monitoring SAP-DAT'       => 'Monitoring SAP-DAT',
+
+                'Import DAT'                      => 'Manajemen Admin',
+                'Daftar Aset Tetap'               => 'Manajemen Admin',
+                'Manajemen Menu'                  => 'Manajemen Admin',
+                'Manajemen User'                  => 'Manajemen Admin',
             ];
             $groupIcon = [
-                'Penghapusan'      => 'bi bi-file-earmark-minus',
-                'Penyusutan'       => 'bi bi-graph-down-arrow',
-                'Manajemen Admin'  => 'bi bi-sliders',
+                'Penghapusan'                     => 'bi bi-file-earmark-minus',
+                'Penyusutan'                      => 'bi bi-graph-down-arrow',
+                'Monitoring SAP-DAT'              => 'bi bi-arrow-left-right',
+                'Manajemen Admin'                 => 'bi bi-sliders',               
             ];
-            $groupOrder = ['Penghapusan', 'Penyusutan', 'Manajemen Admin'];
-
+            $groupOrder = ['Penghapusan', 'Penyusutan', 'Monitoring SAP-DAT', 'Manajemen Admin'];
             $currentPage = basename($_SERVER['PHP_SELF']);
 
             $ungrouped = [];
@@ -782,6 +799,8 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                 <option value="Appraisal Aset" <?= $filterStatus==='Appraisal Aset'?'selected':'' ?>>Appraisal Aset</option>
                 <option value="Proses Lelang"  <?= $filterStatus==='Proses Lelang'?'selected':'' ?>>Proses Lelang</option>
                 <option value="Terjual"        <?= $filterStatus==='Terjual'?'selected':'' ?>>Terjual</option>
+                <option value="Lelang Tidak Laku" <?= $filterStatus==='Lelang Tidak Laku'?'selected':'' ?>>Lelang Tidak Laku</option>
+                <option value="Ditunda"        <?= $filterStatus==='Ditunda'?'selected':'' ?>>Ditunda</option>
               </optgroup>
               <optgroup label="── Hapus Administrasi ──">
                 <option value="Disetujui"           <?= $filterStatus==='Disetujui'?'selected':'' ?>>Disetujui</option>
@@ -847,7 +866,7 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
               <div style="font-size:.75rem;opacity:.8;margin-top:2px;">Total aset mekanisme Jual Lelang</div>
             </div>
             <div style="background:#fff;padding:12px 20px;border-top:1px solid #e0f2fe;">
-              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center;">
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(85px,1fr));gap:8px;text-align:center;">
                 <div style="background:#fef3c7;border-radius:8px;padding:8px 6px;">
                   <div style="font-size:1.4rem;font-weight:800;color:#92400e;"><?= $cnt_appraisal ?></div>
                   <div style="font-size:.72rem;color:#78350f;font-weight:600;"><i class="bi bi-calculator me-1"></i>Appraisal</div>
@@ -859,6 +878,14 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                 <div style="background:#ccfbf1;border-radius:8px;padding:8px 6px;">
                   <div style="font-size:1.4rem;font-weight:800;color:#0f766e;"><?= $cnt_terjual ?></div>
                   <div style="font-size:.72rem;color:#0f766e;font-weight:600;"><i class="bi bi-bag-check me-1"></i>Terjual</div>
+                </div>
+                <div style="background:#fed7aa;border-radius:8px;padding:8px 6px;">
+                  <div style="font-size:1.4rem;font-weight:800;color:#9a3412;"><?= $cnt_tidak_laku ?></div>
+                  <div style="font-size:.72rem;color:#9a3412;font-weight:600;"><i class="bi bi-x-circle me-1"></i>Tidak Laku</div>
+                </div>
+                <div style="background:#e5e7eb;border-radius:8px;padding:8px 6px;">
+                  <div style="font-size:1.4rem;font-weight:800;color:#374151;"><?= $cnt_ditunda ?></div>
+                  <div style="font-size:.72rem;color:#374151;font-weight:600;"><i class="bi bi-pause-circle me-1"></i>Ditunda</div>
                 </div>
               </div>
             </div>
@@ -924,6 +951,8 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                 'Appraisal Aset'      =>['st-appraisal','bi-calculator'],
                 'Proses Lelang'       =>['st-lelang','bi-arrow-repeat'],
                 'Terjual'             =>['st-terjual','bi-bag-check'],
+                'Lelang Tidak Laku'   =>['st-tidaklaku','bi-x-circle'],
+                'Ditunda'             =>['st-ditunda','bi-pause-circle'],
                 'Ditolak'             =>['st-ditolak','bi-x-circle'],
                 'Hapus Administrasi'  =>['st-musnahkan','bi-trash3'],
                 'Telah Dimusnahkan'   =>['st-musnahkan','bi-trash3'],
@@ -996,9 +1025,9 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                             if ($u_bln === null) {
                               echo '<span style="color:#9ca3af;">-</span>';
                             } elseif ($u_bln < 60) {
-                              echo '<div style="font-size:.78rem;font-weight:600;">Di bawah 5 thn</div>';
+                              echo '<div style="font-size:.78rem;font-weight:600;">< 5 thn</div>';
                             } else {
-                              echo '<div style="font-size:.78rem;font-weight:600;">Sampai dengan 5 thn';
+                              echo '<div style="font-size:.78rem;font-weight:600;">s.d 5 thn';
                             }
                           ?></td>
                           <td class="text-end" style="font-family:monospace;font-size:.82rem;"><?php
@@ -1095,9 +1124,9 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                             if ($u_bln === null) {
                               echo '<span style="color:#9ca3af;">-</span>';
                             } elseif ($u_bln < 60) {
-                              echo '<div style="font-size:.78rem;font-weight:600;">Di bawah 5 thn</div>';
+                              echo '<div style="font-size:.78rem;font-weight:600;">< 5 thn</div>';
                             } else {
-                              echo '<div style="font-size:.78rem;font-weight:600;">Sampai dengan 5 thn</div>';
+                              echo '<div style="font-size:.78rem;font-weight:600;">s.d 5 thn</div>';
                             }
                           ?></td>
                           <td class="text-center"><?= $thn_perolehan ?></td>
@@ -1444,10 +1473,12 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
               <!-- Dropdown Jual Lelang -->
               <select name="status_pelaksanaan" id="edit_status_lelang" class="form-select edit-status-select" required
                       style="flex:1;font-weight:600;font-size:.9rem;height:38px;"
-                      onchange="updateStatusBadge(this.value)">
+                      onchange="updateStatusBadge(this.value); toggleCatatanField(this.value);">
                 <option value="Appraisal Aset">Appraisal Aset</option>
                 <option value="Proses Lelang">Proses Lelang</option>
                 <option value="Terjual">Terjual</option>
+                <option value="Lelang Tidak Laku">Lelang Tidak Laku</option>
+                <option value="Ditunda">Ditunda</option>
               </select>
               <!-- Dropdown Hapus Administrasi -->
               <select name="status_pelaksanaan" id="edit_status_hapus" class="form-select edit-status-select" required
@@ -1456,6 +1487,16 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                 <option value="Disetujui">Disetujui</option>
                 <option value="Hapus Administrasi">Hapus Administrasi</option>
               </select>
+            </div>
+            <!-- Catatan: wajib diisi untuk status Lelang Tidak Laku / Ditunda, opsional untuk status lain -->
+            <div id="seksi_catatan_pelaksanaan" style="margin-top:12px;display:none;">
+              <label class="form-label fw-semibold" style="font-size:.8rem;">
+                <i class="bi bi-chat-square-text me-1"></i>Catatan
+              </label>
+              <textarea name="catatan_pelaksanaan" id="edit_catatan_pelaksanaan" class="form-control" rows="3"
+                       placeholder="Contoh: Terlaksana sesuai jadwal / Tertunda karena ... / Tidak Laku, alasan lain silakan isi manual"></textarea>
+              <div class="form-text text-muted mt-1" style="font-size:.75rem;">
+              </div>
             </div>
           </div>
 
@@ -1687,69 +1728,108 @@ $(document).ready(function() {
                     : tableId === 'tblHapusAdmin' ? [0, 12, 13]
                     : [7];
 
-    $('#' + tableId).DataTable({
+    // ── Bangun top bar (Tampilkan entri + Cari) SENDIRI, bukan nyomot dari DataTables ──
+    // (lebih pasti / tidak tergantung struktur HTML internal versi DataTables yang dipakai)
+    var $tableResp = $('#' + tableId).closest('.table-responsive');
+    var $topBar = $(
+      '<div class="dt-top-bar" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:10px 16px;border-bottom:1px solid #e9ecef;width:100%;">' +
+        '<div style="display:flex;align-items:center;gap:6px;font-size:.85rem;color:#374151;white-space:nowrap;">' +
+          '<span>Tampilkan</span>' +
+          '<select class="form-select form-select-sm dt-custom-length" style="width:auto;display:inline-block;">' +
+            '<option value="10">10</option><option value="25">25</option><option value="50">50</option><option value="100">100</option>' +
+          '</select>' +
+          '<span>entri</span>' +
+        '</div>' +
+        '<div style="display:flex;align-items:center;gap:6px;font-size:.85rem;color:#374151;white-space:nowrap;">' +
+          '<span>Cari:</span>' +
+          '<input type="search" class="form-control form-control-sm dt-custom-search" placeholder="kata kunci pencarian" style="width:200px;">' +
+        '</div>' +
+      '</div>'
+    );
+    if ($tableResp.length) { $tableResp.before($topBar); } else { $('#' + tableId).before($topBar); }
+
+    var table = $('#' + tableId).DataTable({
       language: { url: '../../dist/js/i18n/id.json' },
       pageLength: 10,
       lengthMenu: [10, 25, 50, 100],
       columnDefs: [{ orderable: false, targets: noOrderCols }],
       order: tableId === 'tblDokPelaksanaan' ? [[0, 'desc']] : [[1, 'asc']],
       scrollX: true,
-      dom: 'lfrtip',
+      dom: 't', // hanya render tabelnya; kontrol length/search/info/paginate kita bikin sendiri
       rowCallback: function(row, data, index) {
         if (tableId !== 'tblDokPelaksanaan') {
           var info = this.api().page.info();
           $('td:first', row).html(info.start + index + 1);
         }
-      },
-      initComplete: function() {
-        var api = this.api();
-        var dtWrapper = $('#' + tableId + '_wrapper');
-        var $botBar = $('#' + tableId + '_controls');
-
-        // Ambil length dan filter dari DataTables
-        var $len    = dtWrapper.find('.dataTables_length').detach().removeClass('col-sm-12 col-md-6');
-        var $filter = dtWrapper.find('.dataTables_filter').detach().removeClass('col-sm-12 col-md-6');
-
-        // Styling search input
-        $filter.find('input[type=search]')
-          .addClass('form-control form-control-sm')
-          .css({ width: '200px', display: 'inline-block' });
-        $filter.find('label').css({ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: 0 });
-
-        // Buat top bar dan sisipkan SEBELUM table-responsive (bukan sebelum card-body)
-        var $tableResp = $('#' + tableId).closest('.table-responsive');
-        var $topBar = $('<div class="dt-top-bar" style="padding:10px 16px;border-bottom:1px solid #e9ecef;"></div>');
-        var $topLeft = $('<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;"></div>');
-        var $topRight = $('<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;"></div>');
-        $topLeft.append($len);
-        $topRight.append($filter);
-        $topBar.append($topLeft).append($topRight);
-        if ($tableResp.length) {
-          $tableResp.before($topBar);
-        } else {
-          dtWrapper.prepend($topBar);
-        }
-
-        // Bot bar: info KIRI, pagination KANAN
-        var $infoWrap = $('<div style="display:flex;align-items:center;gap:8px;"></div>');
-        var $pagWrap  = $('<div style="display:flex;align-items:center;gap:8px;justify-content:flex-end;margin-left:auto;"></div>');
-
-        $botBar.addClass('dt-bot-bar').css({
-          padding: '10px 0',
-          flexWrap: 'wrap',
-          gap: '8px',
-          minHeight: '42px'
-        });
-        $botBar.append($infoWrap).append($pagWrap);
-
-        function moveBotControls() {
-          dtWrapper.find('.dataTables_info').detach().appendTo($infoWrap);
-          dtWrapper.find('.dataTables_paginate').detach().appendTo($pagWrap);
-        }
-        moveBotControls();
-        api.on('draw', moveBotControls);
       }
     });
+
+    // Sambungkan kontrol length & search custom ke DataTables API
+    $topBar.find('.dt-custom-length').val(10).on('change', function() {
+      table.page.len(parseInt($(this).val(), 10) || 10).draw();
+    });
+    var _dtSearchTimer;
+    $topBar.find('.dt-custom-search').on('input', function() {
+      var val = $(this).val();
+      clearTimeout(_dtSearchTimer);
+      _dtSearchTimer = setTimeout(function() { table.search(val).draw(); }, 250);
+    });
+
+    // ── Bangun bottom bar (info + pagination) SENDIRI juga ──
+    var $botBar = $('#' + tableId + '_controls');
+    $botBar.empty().css({
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      flexWrap: 'wrap', gap: '8px', padding: '10px 0', minHeight: '42px', width: '100%'
+    });
+    var $infoWrap = $('<div style="font-size:.82rem;color:#6b7280;"></div>');
+    var $pagWrap  = $('<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;"></div>');
+    $botBar.append($infoWrap).append($pagWrap);
+
+    function pageBtn(label, page, disabled, active) {
+      var $b = $('<button type="button"></button>').text(label).css({
+        padding: '4px 10px', fontSize: '.8rem', borderRadius: '6px',
+        background: active ? '#0b3a8c' : '#fff',
+        color: active ? '#fff' : (disabled ? '#c0c5cc' : '#0b3a8c'),
+        border: '1px solid ' + (active ? '#0b3a8c' : '#dee2e6'),
+        cursor: (disabled || active) ? 'default' : 'pointer'
+      });
+      if (!disabled && !active) $b.on('click', function() { table.page(page).draw('page'); });
+      return $b;
+    }
+
+    function renderControls() {
+      var info = table.page.info();
+      var awal  = info.recordsDisplay === 0 ? 0 : info.start + 1;
+      var akhir = info.end;
+      $infoWrap.text(
+        'Menampilkan ' + awal + ' sampai ' + akhir + ' dari ' + info.recordsDisplay + ' entri' +
+        (info.recordsDisplay !== info.recordsTotal ? ' (disaring dari ' + info.recordsTotal + ' total entri)' : '')
+      );
+
+      $pagWrap.empty();
+      var totalPages = info.pages || 1;
+      var current    = info.page;
+      $pagWrap.append(pageBtn('Pertama', 0, current === 0));
+      $pagWrap.append(pageBtn('Sebelumnya', current - 1, current === 0));
+
+      var start = Math.max(0, current - 2);
+      var end   = Math.min(totalPages - 1, current + 2);
+      if (start > 0) {
+        $pagWrap.append(pageBtn('1', 0, false));
+        if (start > 1) $pagWrap.append($('<span>...</span>').css({ padding: '0 4px', color: '#9ca3af' }));
+      }
+      for (var i = start; i <= end; i++) {
+        $pagWrap.append(pageBtn(String(i + 1), i, false, i === current));
+      }
+      if (end < totalPages - 1) {
+        if (end < totalPages - 2) $pagWrap.append($('<span>...</span>').css({ padding: '0 4px', color: '#9ca3af' }));
+        $pagWrap.append(pageBtn(String(totalPages), totalPages - 1, false));
+      }
+      $pagWrap.append(pageBtn('Selanjutnya', current + 1, current >= totalPages - 1));
+      $pagWrap.append(pageBtn('Terakhir', totalPages - 1, current >= totalPages - 1));
+    }
+    table.on('draw', renderControls);
+    renderControls();
 
     function refreshSortIcons() {
       $('#' + tableId + ' thead th').each(function() {
@@ -1781,6 +1861,8 @@ const stConfig = {
   'Appraisal Aset':     {cls:'st-appraisal', ic:'bi-calculator'},
   'Proses Lelang':      {cls:'st-lelang',    ic:'bi-arrow-repeat'},
   'Terjual':            {cls:'st-terjual',   ic:'bi-bag-check'},
+  'Lelang Tidak Laku':  {cls:'st-tidaklaku', ic:'bi-x-circle'},
+  'Ditunda':            {cls:'st-ditunda',   ic:'bi-pause-circle'},
   'Hapus Administrasi': {cls:'st-musnahkan', ic:'bi-trash3'},
   'Telah Dimusnahkan':  {cls:'st-musnahkan', ic:'bi-trash3'},
   'Telah dimusnahkan':  {cls:'st-musnahkan', ic:'bi-trash3'},
@@ -1796,6 +1878,9 @@ function normalizeStatus(s) {
     'appraisal aset': 'Appraisal Aset',
     'proses lelang': 'Proses Lelang',
     'terjual': 'Terjual',
+    'lelang tidak laku': 'Lelang Tidak Laku',
+    'tidak laku': 'Lelang Tidak Laku',
+    'ditunda': 'Ditunda',
     'hapus administrasi': 'Hapus Administrasi',
     'telah dimusnahkan': 'Hapus Administrasi',
   };
@@ -1943,9 +2028,9 @@ function openDetail(id) {
     if (!Number.isFinite(months)) return '&mdash;';
     // 0 bulan tetap dianggap di bawah 5 tahun (bukan —)
     if (months < 60) {
-      return `<span style="font-weight:600;">Di bawah 5 thn</span>`;
+      return `<span style="font-weight:600;">< 5 thn</span>`;
     } else {
-      return `<span style="font-weight:600;">Sampai dengan 5 thn</span>`;
+      return `<span style="font-weight:600;">s.d 5 thn</span>`;
     }
   })();
   const mekanismeBadge = p.mekanisme_penghapusan === 'Hapus Administrasi' 
@@ -1997,6 +2082,9 @@ function openDetail(id) {
     </div>
     <div class="detail-section" style="background:#f8faff;"><div class="detail-section-title"><i class="bi bi-arrow-right-circle"></i> Progres Pelaksanaan</div>
       <div class="status-track">${trackHtml}</div>
+      ${p.catatan_pelaksanaan ? `<div style="margin-top:12px;padding:10px 14px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;font-size:.82rem;color:#7c2d12;">
+        <i class="bi bi-chat-square-text me-1"></i><b>Catatan:</b> ${p.catatan_pelaksanaan}
+      </div>` : ''}
     </div>
     <div class="detail-section"><div class="detail-section-title"><i class="bi bi-calendar3"></i> Tanggal</div>
       <div class="detail-grid">
@@ -2056,12 +2144,31 @@ function updateStatusBadge(val) {
     'Appraisal Aset':    'st-appraisal',
     'Proses Lelang':     'st-lelang',
     'Terjual':           'st-terjual',
+    'Lelang Tidak Laku': 'st-tidaklaku',
+    'Ditunda':           'st-ditunda',
     'Hapus Administrasi':'st-musnahkan',
     'Ditolak':           'st-ditolak',
   };
   badge.classList.add(map[normVal] || 'st-disetujui');
   badge.textContent = normVal || val;
 
+}
+
+// ── Tampilkan/sembunyikan field Catatan sesuai status ──────────────────────
+// Wajib untuk "Lelang Tidak Laku" & "Ditunda" (biar alasan/nomor surat kecatat),
+// tapi tetap boleh diisi optional untuk status lain juga (form-nya selalu ada, cuma disembunyikan defaultnya).
+function toggleCatatanField(status) {
+  const wrap = document.getElementById('seksi_catatan_pelaksanaan');
+  const field = document.getElementById('edit_catatan_pelaksanaan');
+  if (!wrap || !field) return;
+  const normVal = normalizeStatus(status);
+  const wajib = (normVal === 'Lelang Tidak Laku' || normVal === 'Ditunda');
+  wrap.style.display = 'block'; // selalu tampil biar tetap bisa diisi manual kapan saja
+  field.required = wajib;
+  const label = wrap.querySelector('label');
+  if (label) {
+    label.innerHTML = '<i class="bi bi-chat-square-text me-1"></i>Catatan / Alasan' + (wajib ? ' <span style="color:#dc2626;">*wajib diisi</span>' : ' <span style="color:#9ca3af;font-weight:400;">(opsional)</span>');
+  }
 }
 
 // ── Apply mekanisme: show/hide fields ─────────────────────────────────────
@@ -2105,6 +2212,7 @@ function openEdit(id) {
   document.getElementById('edit_nilai_jual').value     = toInt(p.nilai_penjualan);
   document.getElementById('edit_biaya').value          = toInt(p.biaya_lainnya);
   document.getElementById('edit_aset_pengganti').value = p.nomor_aset_pengganti || '';
+  document.getElementById('edit_catatan_pelaksanaan').value = p.catatan_pelaksanaan || '';
   document.getElementById('editSubtitle').textContent  = p.nomor_asset_utama + ' \u2014 ' + (p.nama_aset || '');
 
   const nbAset = p.nilai_buku ? parseFloat(p.nilai_buku).toLocaleString('id-ID', {minimumFractionDigits:0}) : '';
@@ -2130,6 +2238,7 @@ function openEdit(id) {
     if (selL) selL.value = curStatus;
   }
   updateStatusBadge(curStatus);
+  toggleCatatanField(curStatus);
 
   const md = bootstrap.Modal.getInstance(document.getElementById('modalDetail'));
   if (md) { md.hide(); setTimeout(() => new bootstrap.Modal(document.getElementById('modalEdit')).show(), 250); }

@@ -16,12 +16,28 @@ if (isset($_GET['ajax_action'])) {
     header('Content-Type: application/json');
     $action = $_GET['ajax_action'];
 
+    try {
+
+    // Konfigurasi per tab: tabel sumber, kolom yang ditampilkan (urutan = urutan kolom di tabel HTML),
+    // dan nama kolom periode (dipakai buat filter Bulan/Tahun).
     if ($action === 'dat') {
-        $table = 'import_dat_penyusutan';
-        $kolomDb = ['profit_center', 'cabang', 'periode_bulan', 'tahun_buku', 'nomor_asset', 'sub_number', 'keterangan_asset', 'tgl_perolehan', 'sisa_manfaat_aset', 'gl_account_exp'];
-    } elseif ($action === 'penyusutan') {
+        $table = 'import_dat_monitoring';
+        $kolomDb = ['profit_center', 'cabang', 'tahun_buku', 'nomor_asset', 'sub_number', 'keterangan_asset', 'tgl_perolehan', 'tgl_mulai_penyusutan', 'nilai_perolehan_sd_tahun_berjalan', 'akumulasi_penyusutan', 'gl_account_exp'];
+        $kolomBulan = null; // tabel ini gak ada dimensi periode_bulan, cuma per tahun_buku
+        $kolomTahun = 'tahun_buku';
+    } elseif ($action === 'ar02') {
+        $table = 'import_ar02_reg3';
+        $kolomDb = ['bal_sh_acct_APC', 'nomor_asset', 'sub_number', 'asset_class', 'keterangan_asset', 'cabang', 'profit_center', 'acquisition', 'retirement', 'transfers', 'gl_akumulasi_penyusutan', 'ckpn', 'gl_beban_penyusutan'];
+        $kolomBulan = 'periode_bulan';
+        $kolomTahun = 'periode_tahun';
+    } elseif ($action === 'fagll') {
+        // "Import Rekap FAGLL" nyimpen datanya ke tabel import_fagll (dedicated, terpisah dari
+        // import_penyusutan). Tabel ini gak punya kolom periode_bulan/periode_tahun langsung,
+        // jadi filter periode diturunkan dari posting_date_norm pakai MONTH()/YEAR().
         $table = 'import_fagll';
-        $kolomDb = ['cost_center', 'asset', 'asset_subnumber', 'account', 'posting_date', 'amount_local_currency', 'profit_center', 'text'];
+        $kolomDb = ['cost_center', 'asset', 'asset_subnumber', 'account', 'posting_date', 'amount_local_currency', 'profit_center', 'cabang', 'text', 'document_number'];
+        $kolomBulan = 'MONTH(posting_date_norm)'; // ekspresi SQL, bukan nama kolom polos
+        $kolomTahun = 'YEAR(posting_date_norm)';  // ekspresi SQL, bukan nama kolom polos
     } else {
         echo json_encode(['error' => 'Aksi tidak dikenal']);
         exit();
@@ -66,21 +82,19 @@ if (isset($_GET['ajax_action'])) {
         $whereParts[] = '(' . implode(' OR ', $likeParts) . ')';
     }
 
-    // Filter Bulan & Tahun Buku (khusus tabel DAT yang punya kolom ini)
-    if ($action === 'dat') {
-        $filterBulan = isset($_GET['periode_bulan']) ? trim($_GET['periode_bulan']) : '';
-        $filterTahun = isset($_GET['tahun_buku']) ? trim($_GET['tahun_buku']) : '';
-        if ($filterBulan !== '' && ctype_digit($filterBulan)) {
-            $whereParts[] = "`periode_bulan` = '" . mysqli_real_escape_string($con, $filterBulan) . "'";
-        }
-        if ($filterTahun !== '' && ctype_digit($filterTahun)) {
-            $whereParts[] = "`tahun_buku` = '" . mysqli_real_escape_string($con, $filterTahun) . "'";
-        }
+    // Filter Bulan & Tahun (semua tab punya kolom periode, cuma beda nama kolom tahunnya)
+    $filterBulan = isset($_GET['filter_bulan']) ? trim($_GET['filter_bulan']) : '';
+    $filterTahun = isset($_GET['filter_tahun']) ? trim($_GET['filter_tahun']) : '';
+    if ($kolomBulan !== null && $filterBulan !== '' && ctype_digit($filterBulan)) {
+        $whereParts[] = "$kolomBulan = '" . mysqli_real_escape_string($con, $filterBulan) . "'";
+    }
+    if ($filterTahun !== '' && ctype_digit($filterTahun)) {
+        $whereParts[] = "$kolomTahun = '" . mysqli_real_escape_string($con, $filterTahun) . "'";
     }
 
     $whereSql = !empty($whereParts) ? ('WHERE ' . implode(' AND ', $whereParts)) : '';
 
-    // Total setelah difilter pencarian
+    // Total setelah difilter
     $resFiltered = mysqli_query($con, "SELECT COUNT(*) AS c FROM `$table` $whereSql");
     $recordsFiltered = $resFiltered ? (int)mysqli_fetch_assoc($resFiltered)['c'] : 0;
 
@@ -92,19 +106,40 @@ if (isset($_GET['ajax_action'])) {
             LIMIT $start, $length";
     $res = mysqli_query($con, $sql);
 
+    // Kalau query gagal (misal struktur tabel di database belum sinkron dengan kolom yang
+    // diminta kode ini), jangan lanjut ke json_encode dengan data kosong diam-diam --
+    // balas error yang jelas biar gampang di-debug, dan JSON tetap valid (gak bikin
+    // "Invalid JSON response" di DataTables).
+    if (!$res) {
+        echo json_encode([
+            'draw' => $draw,
+            'recordsTotal' => 0,
+            'recordsFiltered' => 0,
+            'data' => [],
+            'error' => 'Query gagal di tabel `' . $table . '`: ' . mysqli_error($con) . '. Kemungkinan struktur tabel di database belum sesuai dengan kolom yang diminta kode ini (' . implode(', ', $kolomDb) . '). Cek dengan DESCRIBE ' . $table . ' di database.'
+        ]);
+        exit();
+    }
+
     $data = [];
-    if ($res) {
-        while ($row = mysqli_fetch_assoc($res)) {
-            $rowOut = [];
-            foreach ($kolomDb as $col) {
-                $rowOut[] = htmlspecialchars($row[$col] ?? '', ENT_QUOTES, 'UTF-8');
-            }
-            $data[] = $rowOut;
+    while ($row = mysqli_fetch_assoc($res)) {
+        $rowOut = [];
+        foreach ($kolomDb as $col) {
+            $rowOut[] = htmlspecialchars($row[$col] ?? '', ENT_QUOTES, 'UTF-8');
         }
+        $data[] = $rowOut;
     }
 
     echo json_encode(['draw' => $draw, 'recordsTotal' => $recordsTotal, 'recordsFiltered' => $recordsFiltered, 'data' => $data]);
     exit();
+
+    } catch (\Throwable $e) {
+        // Jaring pengaman terakhir: apapun error-nya (bukan cuma query gagal), tetap
+        // balas JSON valid, bukan HTML/warning polos yang bikin DataTables error
+        // "Invalid JSON response".
+        echo json_encode(['draw' => 0, 'recordsTotal' => 0, 'recordsFiltered' => 0, 'data' => [], 'error' => 'Error: ' . $e->getMessage()]);
+        exit();
+    }
 }
 ?>
 <!doctype html>
@@ -112,7 +147,7 @@ if (isset($_GET['ajax_action'])) {
   <!--begin::Head-->
   <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-    <title>Daftar Data Penyusutan - Web Aset Tetap</title>
+    <title>Daftar Data Aset Tetap - Web Aset Tetap</title>
     <link rel="icon" type="image/png" href="../../dist/assets/img/emblem.png" /> 
     <link rel="shortcut icon" type="image/png" href="../../dist/assets/img/emblem.png" />  
     <!--begin::Accessibility Meta Tags-->
@@ -206,22 +241,26 @@ if (isset($_GET['ajax_action'])) {
       .table-responsive::-webkit-scrollbar-thumb:hover {
         background: #555;
       }
-      #tableDatPenyusutan thead th,
-      #tableDatPenyusutan tbody td,
-      #tablePenyusutan thead th,
-      #tablePenyusutan tbody td {
+      #tableDatAset thead th,
+      #tableDatAset tbody td,
+      #tableAr02 thead th,
+      #tableAr02 tbody td,
+      #tableFagll thead th,
+      #tableFagll tbody td {
         padding: 8px 12px;
         white-space: nowrap;
         min-width: 130px;
       }
-      #tableDatPenyusutan thead th,
-      #tablePenyusutan thead th {
+      #tableDatAset thead th,
+      #tableAr02 thead th,
+      #tableFagll thead th {
         background-color: #f8f9fa;
         font-weight: 600;
         border-bottom: 2px solid #dee2e6;
       }
-      #tableDatPenyusutan tbody td,
-      #tablePenyusutan tbody td {
+      #tableDatAset tbody td,
+      #tableAr02 tbody td,
+      #tableFagll tbody td {
         border-bottom: 1px solid #dee2e6;
       }
       .nav-tabs .nav-link.active {
@@ -333,6 +372,11 @@ if (isset($_GET['ajax_action'])) {
                 'Daftar Data Monitoring'          => 'bi bi-table',
                 'Dasbor Monitoring SAP-DAT'       => 'bi bi-speedometer2',
 
+                // Aset Tetap (rekonsiliasi DAT + AR02 reg3 + REKAP FAGLL)
+                'Import Data Aset Tetap'          => 'bi bi-upload',
+                'Daftar Data Aset Tetap'          => 'bi bi-table',
+                'Dasbor Rekonsiliasi Aset Tetap'  => 'bi bi-clipboard-data',
+
                 'Daftar Aset Tetap'               => 'bi bi-boxes',
                 'Manajemen User'                  => 'bi bi-people',
             ];
@@ -356,6 +400,10 @@ if (isset($_GET['ajax_action'])) {
                 'Daftar Data Monitoring'          => 'Monitoring SAP-DAT',
                 'Dasbor Monitoring SAP-DAT'       => 'Monitoring SAP-DAT',
 
+                'Import Data Aset Tetap'          => 'Aset Tetap',
+                'Daftar Data Aset Tetap'          => 'Aset Tetap',
+                'Dasbor Rekonsiliasi Aset Tetap'  => 'Aset Tetap',
+
                 'Import DAT'                      => 'Manajemen Admin',
                 'Manajemen Menu'                  => 'Manajemen Admin',
                 'Manajemen User'                  => 'Manajemen Admin',
@@ -364,9 +412,10 @@ if (isset($_GET['ajax_action'])) {
                 'Penghapusan'                     => 'bi bi-file-earmark-minus',
                 'Penyusutan'                      => 'bi bi-graph-down-arrow',
                 'Monitoring SAP-DAT'              => 'bi bi-arrow-left-right',
+                'Aset Tetap'                      => 'bi bi-clipboard-data',
                 'Manajemen Admin'                 => 'bi bi-sliders',               
             ];
-            $groupOrder = ['Penghapusan', 'Penyusutan', 'Monitoring SAP-DAT', 'Manajemen Admin'];
+            $groupOrder = ['Penghapusan', 'Penyusutan', 'Monitoring SAP-DAT', 'Aset Tetap', 'Manajemen Admin'];
 
             $currentPage = basename($_SERVER['PHP_SELF']);
 
@@ -425,11 +474,11 @@ if (isset($_GET['ajax_action'])) {
         <div class="app-content-header">
           <div class="container-fluid">
             <div class="row">
-              <div class="col-sm-6"><h3 class="mb-0">Daftar Data Penyusutan</h3></div>
+              <div class="col-sm-6"><h3 class="mb-0">Daftar Data Aset Tetap</h3></div>
               <div class="col-sm-6">
                 <ol class="breadcrumb float-sm-end">
                   <li class="breadcrumb-item"><a href="../dasbor/dasbor.php">Home</a></li>
-                  <li class="breadcrumb-item active">Daftar Data Penyusutan</li>
+                  <li class="breadcrumb-item active">Daftar Data Aset Tetap</li>
                 </ol>
               </div>
             </div>
@@ -447,8 +496,13 @@ if (isset($_GET['ajax_action'])) {
                       </button>
                     </li>
                     <li class="nav-item" role="presentation">
-                      <button class="nav-link" id="tab-penyusutan-btn" data-bs-toggle="tab" data-bs-target="#tab-penyusutan" type="button" role="tab" aria-controls="tab-penyusutan" aria-selected="false">
-                        <i class="bi bi-graph-down-arrow"></i> Rekap FAGLL SAP 
+                      <button class="nav-link" id="tab-ar02-btn" data-bs-toggle="tab" data-bs-target="#tab-ar02" type="button" role="tab" aria-controls="tab-ar02" aria-selected="false">
+                        <i class="bi bi-arrow-left-right"></i> AR02 reg3
+                      </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                      <button class="nav-link" id="tab-fagll-btn" data-bs-toggle="tab" data-bs-target="#tab-fagll" type="button" role="tab" aria-controls="tab-fagll" aria-selected="false">
+                        <i class="bi bi-journal-check"></i> REKAP FAGLL
                       </button>
                     </li>
                   </ul>
@@ -459,49 +513,39 @@ if (isset($_GET['ajax_action'])) {
                     <!--begin::Tab Hasil DAT-->
                     <div class="tab-pane fade show active" id="tab-dat" role="tabpanel" aria-labelledby="tab-dat-btn">
                       <?php
-                      $latestDatQuery = "SELECT COUNT(*) as total_records, MAX(created_at) as last_import FROM import_dat_penyusutan";
-                      $latestDatResult = mysqli_query($con, $latestDatQuery);
-                      $latestDatRow = $latestDatResult ? mysqli_fetch_assoc($latestDatResult) : null;
-                      $totalDatRecords = isset($latestDatRow['total_records']) ? (int)$latestDatRow['total_records'] : 0;
+                      $latestDatRow = null;
+                      $totalDatRecords = 0;
+                      $cekTabelDatAda = mysqli_query($con, "SHOW TABLES LIKE 'import_dat_monitoring'");
+                      if ($cekTabelDatAda && mysqli_num_rows($cekTabelDatAda) > 0) {
+                          $latestDatQuery = "SELECT COUNT(*) as total_records, MAX(created_at) as last_import FROM import_dat_monitoring";
+                          $latestDatResult = mysqli_query($con, $latestDatQuery);
+                          $latestDatRow = $latestDatResult ? mysqli_fetch_assoc($latestDatResult) : null;
+                          $totalDatRecords = isset($latestDatRow['total_records']) ? (int)$latestDatRow['total_records'] : 0;
+                      }
                       ?>
-                      <?php if (!isset($latestDatResult) || !$latestDatResult || $totalDatRecords === 0): ?>
+                      <?php if ($totalDatRecords === 0): ?>
                       <div class="alert alert-info d-flex align-items-center gap-2">
                         <i class="bi bi-info-circle fs-5"></i>
                         <div>
                           <strong>Belum ada data yang diupload ke database.</strong><br>
                           Silakan upload data DAT terlebih dahulu di menu
-                          <a href="../import_penyusutan/import_penyusutan.php">Import DAT</a>.
+                          <a href="../import_monitoring/import_monitoring.php">Import DAT</a>.
                         </div>
                       </div>
                       <?php endif; ?>
                       <?php
-                      // Nama bulan untuk ditampilkan di dropdown (angka periode_bulan diasumsikan 1-12)
-                      $namaBulanMap = [
-                        1 => 'Januari', 2 => 'Februari', 3 => 'Maret', 4 => 'April',
-                        5 => 'Mei', 6 => 'Juni', 7 => 'Juli', 8 => 'Agustus',
-                        9 => 'September', 10 => 'Oktober', 11 => 'November', 12 => 'Desember'
-                      ];
-                      // Ambil daftar bulan & tahun buku yang BENAR-BENAR ada di data (biar dropdown tidak nampilin pilihan kosong)
-                      $daftarBulanDat = [];
+                      // Ambil daftar tahun yang BENAR-BENAR ada di data (biar dropdown tidak nampilin pilihan kosong)
+                      // Catatan: tabel ini gak ada dimensi periode_bulan lagi, jadi cuma dropdown Tahun.
                       $daftarTahunDat = [];
-                      $cekTabelDat = mysqli_query($con, "SHOW TABLES LIKE 'import_dat_penyusutan'");
+                      $cekTabelDat = mysqli_query($con, "SHOW TABLES LIKE 'import_dat_monitoring'");
                       if ($cekTabelDat && mysqli_num_rows($cekTabelDat) > 0) {
-                          $resBulanDat = mysqli_query($con, "SELECT DISTINCT periode_bulan FROM import_dat_penyusutan WHERE periode_bulan IS NOT NULL AND periode_bulan <> '' ORDER BY periode_bulan ASC");
-                          if ($resBulanDat) { while ($r = mysqli_fetch_assoc($resBulanDat)) { $daftarBulanDat[] = $r['periode_bulan']; } }
-                          $resTahunDat = mysqli_query($con, "SELECT DISTINCT tahun_buku FROM import_dat_penyusutan WHERE tahun_buku IS NOT NULL AND tahun_buku <> '' ORDER BY tahun_buku DESC");
+                          $resTahunDat = mysqli_query($con, "SELECT DISTINCT tahun_buku FROM import_dat_monitoring WHERE tahun_buku IS NOT NULL AND tahun_buku <> '' ORDER BY tahun_buku DESC");
                           if ($resTahunDat) { while ($r = mysqli_fetch_assoc($resTahunDat)) { $daftarTahunDat[] = $r['tahun_buku']; } }
                       }
                       ?>
                       <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
                         <div class="d-flex align-items-center gap-2 flex-wrap">
-                          <label for="filterBulanDat" class="mb-0 fw-semibold">Bulan:</label>
-                          <select id="filterBulanDat" class="form-select form-select-sm" style="width:auto;">
-                            <option value="">Semua Bulan</option>
-                            <?php foreach ($daftarBulanDat as $b): $bInt = (int)$b; ?>
-                              <option value="<?= htmlspecialchars($b) ?>"><?= htmlspecialchars($namaBulanMap[$bInt] ?? $b) ?></option>
-                            <?php endforeach; ?>
-                          </select>
-                          <label for="filterTahunDat" class="mb-0 fw-semibold">Tahun Buku:</label>
+                          <label for="filterTahunDat" class="mb-0 fw-semibold">Tahun:</label>
                           <select id="filterTahunDat" class="form-select form-select-sm" style="width:auto;">
                             <option value="">Semua Tahun</option>
                             <?php foreach ($daftarTahunDat as $t): ?>
@@ -518,77 +562,200 @@ if (isset($_GET['ajax_action'])) {
                         ?>
                       </div>
                       <div class="table-responsive">
-                        <table id="tableDatPenyusutan" class="display nowrap table table-striped" style="width:100%; min-width: 900px;">
+                        <table id="tableDatAset" class="display nowrap table table-striped" style="width:100%; min-width: 900px;">
                           <thead>
                             <tr>
                               <th>Profit Center</th>
                               <th>Cabang</th>
-                              <th>Periode/Bulan</th>
                               <th>Tahun Buku</th>
                               <th>Nomor Aset</th>
                               <th>Sub-number</th>
                               <th>Keterangan Aset</th>
                               <th>Tgl. Perolehan</th>
-                              <th>Sisa Manfaat</th>
+                              <th>Tgl. Mulai Penyusutan</th>
+                              <th>Nilai Perolehan s.d Tahun Berjalan</th>
+                              <th>Akumulasi Penyusutan</th>
                               <th>GL Account EXP. Depre.</th>
                             </tr>
                           </thead>
                           <tbody>
-                          <!-- Data diisi lewat AJAX oleh DataTables-->
+                          <!-- Data diisi lewat AJAX oleh DataTables -->
                           </tbody>
                         </table>
                       </div>
                     </div>
                     <!--end::Tab Hasil DAT-->
 
-                    <!--begin::Tab Hasil Data Penyusutan-->
-                    <div class="tab-pane fade" id="tab-penyusutan" role="tabpanel" aria-labelledby="tab-penyusutan-btn">
+                    <!--begin::Tab Hasil AR02 reg3-->
+                    <div class="tab-pane fade" id="tab-ar02" role="tabpanel" aria-labelledby="tab-ar02-btn">
                       <?php
-                      $latestPenyusutanQuery = "SELECT COUNT(*) as total_records, MAX(created_at) as last_import FROM import_fagll";
-                      $latestPenyusutanResult = mysqli_query($con, $latestPenyusutanQuery);
-                      $latestPenyusutanRow = $latestPenyusutanResult ? mysqli_fetch_assoc($latestPenyusutanResult) : null;
-                      $totalPenyusutanRecords = isset($latestPenyusutanRow['total_records']) ? (int)$latestPenyusutanRow['total_records'] : 0;
+                      $latestAr02Row = null;
+                      $totalAr02Records = 0;
+                      $cekTabelAr02Ada = mysqli_query($con, "SHOW TABLES LIKE 'import_ar02_reg3'");
+                      if ($cekTabelAr02Ada && mysqli_num_rows($cekTabelAr02Ada) > 0) {
+                          $latestAr02Query = "SELECT COUNT(*) as total_records, MAX(created_at) as last_import FROM import_ar02_reg3";
+                          $latestAr02Result = mysqli_query($con, $latestAr02Query);
+                          $latestAr02Row = $latestAr02Result ? mysqli_fetch_assoc($latestAr02Result) : null;
+                          $totalAr02Records = isset($latestAr02Row['total_records']) ? (int)$latestAr02Row['total_records'] : 0;
+                      }
                       ?>
-                      <?php if (!isset($latestPenyusutanResult) || !$latestPenyusutanResult || $totalPenyusutanRecords === 0): ?>
+                      <?php if ($totalAr02Records === 0): ?>
                       <div class="alert alert-info d-flex align-items-center gap-2">
                         <i class="bi bi-info-circle fs-5"></i>
                         <div>
                           <strong>Belum ada data yang diupload ke database.</strong><br>
-                          Silakan upload data Penyusutan terlebih dahulu di menu
-                          <a href="../import_penyusutan/import_penyusutan.php">Import Data SAP Penyusutan</a>.
+                          Silakan upload data AR02 reg3 terlebih dahulu di menu
+                          <a href="../import_monitoring/import_monitoring.php">Import AR02 reg3</a>.
                         </div>
                       </div>
                       <?php endif; ?>
-                      <div class="d-flex justify-content-end mb-2">
+                      <?php
+                      $daftarBulanAr02 = [];
+                      $daftarTahunAr02 = [];
+                      $cekTabelAr02 = mysqli_query($con, "SHOW TABLES LIKE 'import_ar02_reg3'");
+                      if ($cekTabelAr02 && mysqli_num_rows($cekTabelAr02) > 0) {
+                          $resBulanAr02 = mysqli_query($con, "SELECT DISTINCT periode_bulan FROM import_ar02_reg3 WHERE periode_bulan IS NOT NULL AND periode_bulan <> '' ORDER BY periode_bulan ASC");
+                          if ($resBulanAr02) { while ($r = mysqli_fetch_assoc($resBulanAr02)) { $daftarBulanAr02[] = $r['periode_bulan']; } }
+                          $resTahunAr02 = mysqli_query($con, "SELECT DISTINCT periode_tahun FROM import_ar02_reg3 WHERE periode_tahun IS NOT NULL AND periode_tahun <> '' ORDER BY periode_tahun DESC");
+                          if ($resTahunAr02) { while ($r = mysqli_fetch_assoc($resTahunAr02)) { $daftarTahunAr02[] = $r['periode_tahun']; } }
+                      }
+                      ?>
+                      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+                        <div class="d-flex align-items-center gap-2 flex-wrap">
+                          <label for="filterBulanAr02" class="mb-0 fw-semibold">Bulan:</label>
+                          <select id="filterBulanAr02" class="form-select form-select-sm" style="width:auto;">
+                            <option value="">Semua Bulan</option>
+                            <?php foreach ($daftarBulanAr02 as $b): $bInt = (int)$b; ?>
+                              <option value="<?= htmlspecialchars($b) ?>"><?= htmlspecialchars($namaBulanMap[$bInt] ?? $b) ?></option>
+                            <?php endforeach; ?>
+                          </select>
+                          <label for="filterTahunAr02" class="mb-0 fw-semibold">Tahun:</label>
+                          <select id="filterTahunAr02" class="form-select form-select-sm" style="width:auto;">
+                            <option value="">Semua Tahun</option>
+                            <?php foreach ($daftarTahunAr02 as $t): ?>
+                              <option value="<?= htmlspecialchars($t) ?>"><?= htmlspecialchars($t) ?></option>
+                            <?php endforeach; ?>
+                          </select>
+                        </div>
                         <?php
-                        $lastPenyusutanDate = $latestPenyusutanRow['last_import'] ?? null;
-                        if ($lastPenyusutanDate) {
-                          $dt2 = new DateTime($lastPenyusutanDate);
-                          echo '<span style="color:#dc3545;font-weight:bold;">Diimport: ' . htmlspecialchars($dt2->format('d M Y H:i:s')) . '</span>';
+                        $lastAr02Date = $latestAr02Row['last_import'] ?? null;
+                        if ($lastAr02Date) {
+                          $dt3 = new DateTime($lastAr02Date);
+                          echo '<span style="color:#dc3545;font-weight:bold;">Diimport: ' . htmlspecialchars($dt3->format('d M Y H:i:s')) . '</span>';
                         }
                         ?>
                       </div>
                       <div class="table-responsive">
-                        <table id="tablePenyusutan" class="display nowrap table table-striped" style="width:100%;">
+                        <table id="tableAr02" class="display nowrap table table-striped" style="width:100%; min-width: 900px;">
                           <thead>
                             <tr>
-                              <th>Cost Center</th>
-                              <th>Asset</th>
-                              <th>Asset Subnumber</th>
-                              <th>Account</th>
-                              <th>Posting Date</th>
-                              <th>Amount in Local Currency</th>
+                              <th>Bal.Sh.Acct APC</th>
+                              <th>Nomor Aset</th>
+                              <th>Sub-number</th>
+                              <th>Asset Class</th>
+                              <th>Keterangan Aset</th>
+                              <th>Cabang</th>
                               <th>Profit Center</th>
-                              <th>Text</th>
+                              <th>Acquisition</th>
+                              <th>Retirement</th>
+                              <th>Transfer</th>
+                              <th>Akumulasi Penyusutan</th>
+                              <th>CKPN</th>
+                              <th>Beban Penyusutan</th>
                             </tr>
                           </thead>
                           <tbody>
                           <!-- Data diisi lewat AJAX oleh DataTables -->
                           </tbody>
-                          </table>
+                        </table>
                       </div>
                     </div>
-                    <!--end::Tab Hasil Data Penyusutan-->
+                    <!--end::Tab Hasil AR02 reg3-->
+
+                    <!--begin::Tab Hasil REKAP FAGLL-->
+                    <div class="tab-pane fade" id="tab-fagll" role="tabpanel" aria-labelledby="tab-fagll-btn">
+                      <?php
+                      $latestFagllRow = null;
+                      $totalFagllRecords = 0;
+                      $cekTabelFagllAda = mysqli_query($con, "SHOW TABLES LIKE 'import_fagll'");
+                      if ($cekTabelFagllAda && mysqli_num_rows($cekTabelFagllAda) > 0) {
+                          $latestFagllQuery = "SELECT COUNT(*) as total_records, MAX(created_at) as last_import FROM import_fagll";
+                          $latestFagllResult = mysqli_query($con, $latestFagllQuery);
+                          $latestFagllRow = $latestFagllResult ? mysqli_fetch_assoc($latestFagllResult) : null;
+                          $totalFagllRecords = isset($latestFagllRow['total_records']) ? (int)$latestFagllRow['total_records'] : 0;
+                      }
+                      ?>
+                      <?php if ($totalFagllRecords === 0): ?>
+                      <div class="alert alert-info d-flex align-items-center gap-2">
+                        <i class="bi bi-info-circle fs-5"></i>
+                        <div>
+                          <strong>Belum ada data yang diupload ke database.</strong><br>
+                          Silakan upload data REKAP FAGLL terlebih dahulu di menu
+                          <a href="../import_monitoring/import_monitoring.php">Import REKAP FAGLL</a>.
+                        </div>
+                      </div>
+                      <?php endif; ?>
+                      <?php
+                      // Ambil daftar Bulan/Tahun dari posting_date_norm (bukan kolom periode_bulan/
+                      // periode_tahun -- tabel import_fagll gak punya kolom itu)
+                      $daftarBulanFagll = [];
+                      $daftarTahunFagll = [];
+                      $cekTabelFagll = mysqli_query($con, "SHOW TABLES LIKE 'import_fagll'");
+                      if ($cekTabelFagll && mysqli_num_rows($cekTabelFagll) > 0) {
+                          $resBulanFagll = mysqli_query($con, "SELECT DISTINCT MONTH(posting_date_norm) AS bln FROM import_fagll WHERE posting_date_norm IS NOT NULL ORDER BY bln ASC");
+                          if ($resBulanFagll) { while ($r = mysqli_fetch_assoc($resBulanFagll)) { if ($r['bln'] !== null) $daftarBulanFagll[] = $r['bln']; } }
+                          $resTahunFagll = mysqli_query($con, "SELECT DISTINCT YEAR(posting_date_norm) AS thn FROM import_fagll WHERE posting_date_norm IS NOT NULL ORDER BY thn DESC");
+                          if ($resTahunFagll) { while ($r = mysqli_fetch_assoc($resTahunFagll)) { if ($r['thn'] !== null) $daftarTahunFagll[] = $r['thn']; } }
+                      }
+                      ?>
+                      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+                        <div class="d-flex align-items-center gap-2 flex-wrap">
+                          <label for="filterBulanFagll" class="mb-0 fw-semibold">Bulan:</label>
+                          <select id="filterBulanFagll" class="form-select form-select-sm" style="width:auto;">
+                            <option value="">Semua Bulan</option>
+                            <?php foreach ($daftarBulanFagll as $b): $bInt = (int)$b; ?>
+                              <option value="<?= htmlspecialchars($b) ?>"><?= htmlspecialchars($namaBulanMap[$bInt] ?? $b) ?></option>
+                            <?php endforeach; ?>
+                          </select>
+                          <label for="filterTahunFagll" class="mb-0 fw-semibold">Tahun:</label>
+                          <select id="filterTahunFagll" class="form-select form-select-sm" style="width:auto;">
+                            <option value="">Semua Tahun</option>
+                            <?php foreach ($daftarTahunFagll as $t): ?>
+                              <option value="<?= htmlspecialchars($t) ?>"><?= htmlspecialchars($t) ?></option>
+                            <?php endforeach; ?>
+                          </select>
+                        </div>
+                        <?php
+                        $lastFagllDate = $latestFagllRow['last_import'] ?? null;
+                        if ($lastFagllDate) {
+                          $dt4 = new DateTime($lastFagllDate);
+                          echo '<span style="color:#dc3545;font-weight:bold;">Diimport: ' . htmlspecialchars($dt4->format('d M Y H:i:s')) . '</span>';
+                        }
+                        ?>
+                      </div>
+                      <div class="table-responsive">
+                        <table id="tableFagll" class="display nowrap table table-striped" style="width:100%; min-width: 900px;">
+                          <thead>
+                            <tr>
+                              <th>Cost Center</th>
+                              <th>Asset</th>
+                              <th>Asset Subnumber</th>
+                              <th>Account (GL)</th>
+                              <th>Posting Date</th>
+                              <th>Amount (Local Currency)</th>
+                              <th>Profit Center</th>
+                              <th>Cabang</th>
+                              <th>Text</th>
+                              <th>Document Number</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                          <!-- Data diisi lewat AJAX oleh DataTables -->
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                    <!--end::Tab Hasil REKAP FAGLL-->
 
                   </div>
                 </div>
@@ -660,11 +827,29 @@ if (isset($_GET['ajax_action'])) {
         }
       };
 
-      let dtDatPenyusutan = null;
-      let dtPenyusutan = null;
+      let dtDatAset = null;
+      let dtAr02 = null;
+      let dtFagll = null;
 
       $(document).ready(function () {
-        dtDatPenyusutan = $('#tableDatPenyusutan').DataTable({
+        // Format angka jadi ribuan pakai titik (mis. 3351791000 -> "3.351.791.000"), biar jelas
+        // itu nilai rupiah bukan cuma angka polos. Dipakai di kolom Nilai Perolehan & Akumulasi
+        // Penyusutan. Aman untuk angka negatif (mis. -3284755180 -> "-3.284.755.180") dan untuk
+        // nilai kosong/bukan angka (dibiarkan apa adanya, mis. "-" atau "").
+        function formatAngkaRibuanDt(data, type) {
+          if (type !== 'display') return data; // filter/sort/type tetap pakai nilai mentah
+          if (data === null || data === undefined || data === '') return data;
+          var str = String(data).trim();
+          if (str === '' || isNaN(str)) return data;
+          var negatif = str.startsWith('-');
+          if (negatif) str = str.substring(1);
+          var parts = str.split('.'); // pisahkan bagian desimal kalau ada
+          parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+          return (negatif ? '-' : '') + parts.join(',');
+        }
+
+        // Tab DAT langsung dimuat karena aktif dari awal
+        dtDatAset = $('#tableDatAset').DataTable({
           responsive: false,
           autoWidth: false,
           scrollX: true,
@@ -678,37 +863,37 @@ if (isset($_GET['ajax_action'])) {
           language: bahasaIndonesiaDataTable,
           serverSide: true,
           ajax: {
-            url: 'daftar_data_penyusutan.php?ajax_action=dat',
+            url: 'daftar_data_monitoring.php?ajax_action=dat',
             type: 'GET',
             data: function (d) {
-              d.periode_bulan = $('#filterBulanDat').val();
-              d.tahun_buku = $('#filterTahunDat').val();
+              d.filter_tahun = $('#filterTahunDat').val();
             }
           },
           columns: [
             { data: 0 }, // Profit Center
             { data: 1 }, // Cabang
-            { data: 2 }, // Periode/Bulan
-            { data: 3 }, // Tahun Buku
-            { data: 4 }, // Nomor Aset
-            { data: 5 }, // Sub-number
-            { data: 6 }, // Keterangan Aset
-            { data: 7 }, // Tgl. Perolehan
-            { data: 8 }, // Sisa Manfaat
-            { data: 9 }  // GL Account EXP. Depre.
+            { data: 2 }, // Tahun Buku
+            { data: 3 }, // Nomor Aset
+            { data: 4 }, // Sub-number
+            { data: 5 }, // Keterangan Aset
+            { data: 6 }, // Tgl. Perolehan
+            { data: 7 }, // Tgl. Mulai Penyusutan
+            { data: 8, className: 'text-end', render: formatAngkaRibuanDt }, // Nilai Perolehan s.d Tahun Berjalan
+            { data: 9, className: 'text-end', render: formatAngkaRibuanDt }, // Akumulasi Penyusutan
+            { data: 10 } // GL Account EXP. Depre.
           ]
         });
 
-        // Saat dropdown Bulan / Tahun Buku diganti, muat ulang tabel dari halaman pertama
-        $('#filterBulanDat, #filterTahunDat').on('change', function () {
-          if (dtDatPenyusutan) {
-            dtDatPenyusutan.ajax.reload(null, true); // true = reset ke halaman pertama
+        $('#filterTahunDat').on('change', function () {
+          if (dtDatAset) {
+            dtDatAset.ajax.reload(null, true); 
           }
         });
 
-        $('#tab-penyusutan-btn').on('shown.bs.tab', function () {
-          if (!dtPenyusutan) {
-            dtPenyusutan = $('#tablePenyusutan').DataTable({
+        // Tab AR02 reg3, di-init pas tab-nya pertama kali ditampilkan (biar kolom lebar kehitung benar)
+        $('#tab-ar02-btn').on('shown.bs.tab', function () {
+          if (!dtAr02) {
+            dtAr02 = $('#tableAr02').DataTable({
               responsive: false,
               autoWidth: false,
               scrollX: true,
@@ -722,28 +907,91 @@ if (isset($_GET['ajax_action'])) {
               language: bahasaIndonesiaDataTable,
               serverSide: true,
               ajax: {
-                url: 'daftar_data_penyusutan.php?ajax_action=penyusutan',
-                type: 'GET'
+                url: 'daftar_data_monitoring.php?ajax_action=ar02',
+                type: 'GET',
+                data: function (d) {
+                  d.filter_bulan = $('#filterBulanAr02').val();
+                  d.filter_tahun = $('#filterTahunAr02').val();
+                }
               },
               columns: [
-                { data: 0 }, // Cost Center
-                { data: 1 }, // Asset
-                { data: 2 }, // Asset Subnumber
-                { data: 3 }, // Account
-                { data: 4 }, // Posting Date
-                { data: 5 }, // Amount in Local Currency
-                { data: 6 }, // Profit Center
-                { data: 7 }  // Text
+                { data: 0 },  // Bal.Sh.Acct APC
+                { data: 1 },  // Nomor Aset
+                { data: 2 },  // Sub-number
+                { data: 3 },  // Asset Class
+                { data: 4 },  // Keterangan Aset
+                { data: 5 },  // Cabang
+                { data: 6 },  // Profit Center
+                { data: 7 },  // Acquisition
+                { data: 8 },  // Retirement
+                { data: 9 },  // Transfer
+                { data: 10 }, // Akumulasi Penyusutan
+                { data: 11 }, // CKPN
+                { data: 12 }  // Beban Penyusutan
               ]
             });
+
+            $('#filterBulanAr02, #filterTahunAr02').on('change', function () {
+              if (dtAr02) {
+                dtAr02.ajax.reload(null, true);
+              }
+            });
           } else {
-            dtPenyusutan.columns.adjust();
+            dtAr02.columns.adjust();
+          }
+        });
+
+        // Tab REKAP FAGLL, di-init pas tab-nya pertama kali ditampilkan
+        $('#tab-fagll-btn').on('shown.bs.tab', function () {
+          if (!dtFagll) {
+            dtFagll = $('#tableFagll').DataTable({
+              responsive: false,
+              autoWidth: false,
+              scrollX: true,
+              scrollCollapse: true,
+              paging: true,
+              pageLength: 10,
+              searching: true,
+              ordering: true,
+              info: true,
+              processing: true,
+              language: bahasaIndonesiaDataTable,
+              serverSide: true,
+              ajax: {
+                url: 'daftar_data_monitoring.php?ajax_action=fagll',
+                type: 'GET',
+                data: function (d) {
+                  d.filter_bulan = $('#filterBulanFagll').val();
+                  d.filter_tahun = $('#filterTahunFagll').val();
+                }
+              },
+              columns: [
+                { data: 0 },  // Cost Center
+                { data: 1 },  // Asset
+                { data: 2 },  // Asset Subnumber
+                { data: 3 },  // Account (GL)
+                { data: 4 },  // Posting Date
+                { data: 5, className: 'text-end', render: formatAngkaRibuanDt },  // Amount (Local Currency)
+                { data: 6 },  // Profit Center
+                { data: 7 },  // Cabang
+                { data: 8 },  // Text
+                { data: 9 }   // Document Number
+              ]
+            });
+
+            $('#filterBulanFagll, #filterTahunFagll').on('change', function () {
+              if (dtFagll) {
+                dtFagll.ajax.reload(null, true);
+              }
+            });
+          } else {
+            dtFagll.columns.adjust();
           }
         });
 
         $('#tab-dat-btn').on('shown.bs.tab', function () {
-          if (dtDatPenyusutan) {
-            dtDatPenyusutan.columns.adjust();
+          if (dtDatAset) {
+            dtDatAset.columns.adjust();
           }
         });
       });

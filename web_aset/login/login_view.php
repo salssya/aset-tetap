@@ -275,10 +275,39 @@ if (mysqli_num_rows($check_user) > 0) {
         object-fit: contain;
         margin-bottom: 20px;
     }
+
+    /* ===== Watermark / credit ===== */
+    .app-watermark {
+        position: fixed;
+        bottom: 14px;
+        left: 0;
+        right: 0;
+        text-align: center;
+        color: rgba(255, 255, 255, 0.75);
+        font-size: 0.6rem;
+        letter-spacing: 0.5px;
+        pointer-events: none;
+        user-select: none;
+        z-index: 5;
+    }
+
+    .app-watermark span {
+        font-weight: 600;
+        color: rgba(255, 255, 255, 0.95);
+    }
+
+    @media (max-width: 480px) {
+        .app-watermark {
+            font-size: 0.7rem;
+            bottom: 10px;
+        }
+    }
 </style>
 </head>
 
 <body>
+    <div class="app-watermark">Created by: <span>Salsabila Tasya Amelia</span></div>
+
     <div class="login-container">
         <div class="login-card">
             <div class="login-header">

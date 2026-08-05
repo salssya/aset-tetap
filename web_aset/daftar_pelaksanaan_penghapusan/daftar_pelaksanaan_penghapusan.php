@@ -5,6 +5,29 @@ $password   = "";
 $dbname     = "asetreg3_db";
 
 $con = mysqli_connect($servername, $username, $password, $dbname);
+
+// ── Handle file serve SEBELUM session_start agar header tidak terlambat ──
+if (isset($_GET['action']) && in_array($_GET['action'], ['view_dok_ho', 'view_dok_usulan'])) {
+    while (ob_get_level()) ob_end_clean();
+    
+    if ($_GET['action'] === 'view_dok_ho' && isset($_GET['id_dok'])) {
+        $id_dok = (int)$_GET['id_dok'];
+        $res = mysqli_query($con, "SELECT lokasi_file, file_name FROM dokumen_pelaksanaan WHERE id_dokumen = $id_dok LIMIT 1");
+        if (!$res || mysqli_num_rows($res) === 0) { http_response_code(404); echo 'Dokumen tidak ditemukan.'; exit(); }
+        $row = mysqli_fetch_assoc($res);
+        serveFileFromDb($row['lokasi_file'], $row['file_name'], isset($_GET['download']));
+    }
+
+    if ($_GET['action'] === 'view_dok_usulan' && isset($_GET['id_dok'])) {
+        $id_dok = (int)$_GET['id_dok'];
+        $res = mysqli_query($con, "SELECT file_path, file_name FROM dokumen_penghapusan WHERE id_dokumen = $id_dok LIMIT 1");
+        if (!$res || mysqli_num_rows($res) === 0) { http_response_code(404); echo 'Dokumen tidak ditemukan.'; exit(); }
+        $row = mysqli_fetch_assoc($res);
+        serveFileFromDb($row['file_path'], $row['file_name'], isset($_GET['download']));
+    }
+    exit();
+}
+
 session_start();
 
 if (!isset($_SESSION["nipp"]) || !isset($_SESSION["name"])) {
@@ -133,6 +156,8 @@ function normalize_foto_path($p) {
 }
 
 if (isset($_GET['action']) && $_GET['action'] === 'view_dok_usulan' && isset($_GET['id_dok'])) {
+    while (ob_get_level()) ob_end_clean();
+    
     $id_dok = (int)$_GET['id_dok'];
     $res = mysqli_query($con, "SELECT file_path, file_name FROM dokumen_penghapusan WHERE id_dokumen = $id_dok LIMIT 1");
     if (!$res || mysqli_num_rows($res) === 0) { http_response_code(404); echo 'Dokumen tidak ditemukan.'; exit(); }
@@ -141,6 +166,9 @@ if (isset($_GET['action']) && $_GET['action'] === 'view_dok_usulan' && isset($_G
 }
 
 if (isset($_GET['action']) && $_GET['action'] === 'view_dok_ho' && isset($_GET['id_dok'])) {
+    // Bersihkan semua output buffer sebelum kirim file
+    while (ob_get_level()) ob_end_clean();
+    
     $id_dok = (int)$_GET['id_dok'];
     $res = mysqli_query($con, "SELECT lokasi_file, file_name FROM dokumen_pelaksanaan WHERE id_dokumen = $id_dok LIMIT 1");
     if (!$res || mysqli_num_rows($res) === 0) { http_response_code(404); echo 'Dokumen tidak ditemukan.'; exit(); }
@@ -151,26 +179,35 @@ if (isset($_GET['action']) && $_GET['action'] === 'view_dok_ho' && isset($_GET['
 // ── AJAX: Detail Aset ────────────────────────────────────────────────────────
 if (isset($_GET['action']) && $_GET['action'] === 'get_detail_aset_pel' && isset($_GET['no_aset'])) {
     header('Content-Type: application/json');
-    $no_aset = trim($_GET['no_aset']);
+    $no_aset   = trim($_GET['no_aset']);
     $aset_list = array_filter(array_map('trim', explode(';', $no_aset)));
-    $rows_da = [];
+    $rows_da   = [];
+    $status_map = ['draft'=>'Draft','lengkapi_dokumen'=>'Lengkapi Data','dokumen_lengkap'=>'Siap Upload',
+        'submitted'=>'Submitted','approved_subreg'=>'Approved SubReg','approved'=>'Approved','rejected'=>'Rejected'];
+
     foreach ($aset_list as $single_aset) {
+        if ($single_aset === '') continue;
+
+        // Query utama langsung dari usulan_penghapusan + pelaksanaan_penghapusan
         $stmt_da = $con->prepare(
-            "SELECT id.nomor_asset_utama, id.keterangan_asset, id.profit_center,
-                id.subreg, id.profit_center_text,
-                up.mekanisme_penghapusan, up.status AS status_penghapusan
-             FROM import_dat id
-             LEFT JOIN usulan_penghapusan up ON id.nomor_asset_utama = up.nomor_asset_utama
-             WHERE id.nomor_asset_utama = ? LIMIT 10"
+            "SELECT up.nomor_asset_utama, up.nama_aset AS keterangan_asset,
+                up.profit_center, up.subreg, up.profit_center_text,
+                up.mekanisme_penghapusan, up.status AS status_penghapusan,
+                pp.status_pelaksanaan
+             FROM usulan_penghapusan up
+             LEFT JOIN pelaksanaan_penghapusan pp ON pp.usulan_id = up.id
+             WHERE up.nomor_asset_utama = ?
+             LIMIT 10"
         );
         $stmt_da->bind_param('s', $single_aset);
         $stmt_da->execute();
         $res_da = $stmt_da->get_result();
-        $status_map = ['draft'=>'Draft','lengkapi_dokumen'=>'Lengkapi Data','dokumen_lengkap'=>'Siap Upload',
-            'submitted'=>'Submitted','approved_subreg'=>'Approved SubReg','approved'=>'Approved','rejected'=>'Rejected'];
         while ($r = $res_da->fetch_assoc()) {
-            $r['status_penghapusan'] = isset($r['status_penghapusan']) && $r['status_penghapusan']
+            $stPel = $r['status_pelaksanaan'] ?? '';
+            $stUsl = isset($r['status_penghapusan']) && $r['status_penghapusan']
                 ? ($status_map[$r['status_penghapusan']] ?? ucfirst($r['status_penghapusan'])) : '';
+            $r['status_penghapusan'] = $stPel ?: $stUsl;
+            unset($r['status_pelaksanaan']);
             $rows_da[] = $r;
         }
         $stmt_da->close();
@@ -179,7 +216,42 @@ if (isset($_GET['action']) && $_GET['action'] === 'get_detail_aset_pel' && isset
     exit();
 }
 
+// ── Upload dokumen → simpan sebagai BLOB ke dokumen_penghapusan ──────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'upload_dok_ho' && $canEdit) {
+    $id_pel_list  = array_filter(array_map('trim', explode(';', $_POST['id_pelaksanaan_list'] ?? '')));
+    $id_pel_first = (int)($id_pel_list[0] ?? 0);
+    $deskripsi    = trim($_POST['deskripsi_dokumen'] ?? 'Dokumen Pelaksanaan');
+    $nomor_aset   = trim($_POST['nomor_aset'] ?? '');
+    $tahun_dok    = (int)($_POST['tahun_filter'] ?? date('Y'));
+    $nipp_upload  = $userNipp;
 
+    if ($id_pel_first > 0 && isset($_FILES['file_dokumen']) && $_FILES['file_dokumen']['error'] === UPLOAD_ERR_OK) {
+        $fileData = file_get_contents($_FILES['file_dokumen']['tmp_name']);
+        $fileName = basename($_FILES['file_dokumen']['name']);
+        $fileSize = strlen($fileData);
+
+        $stmt = $con->prepare("INSERT INTO dokumen_pelaksanaan
+            (id_pelaksanaan, deskripsi_dokumen, nomor_aset, lokasi_file,
+             file_name, file_size, nipp, tahun_dokumen, kategori)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        $lokasi_file = null;
+        $kategori = 'pelaksanaan';
+        $stmt->bind_param("issbsisis",
+          $id_pel_first, $deskripsi, $nomor_aset, $lokasi_file,
+          $fileName, $fileSize, $nipp_upload, $tahun_dok, $kategori);
+        $stmt->send_long_data(3, $fileData);
+        if ($stmt->execute()) {
+            $_SESSION['success_message'] = "Dokumen berhasil diupload untuk " . count($id_pel_list) . " aset.";
+        } else {
+            $_SESSION['warning_message'] = "Gagal upload: " . $stmt->error;
+        }
+        $stmt->close();
+    } else {
+        $_SESSION['warning_message'] = "File tidak valid atau tidak ada aset dipilih.";
+    }
+    $tahunRedirect = isset($_POST['tahun_filter']) ? (int)$_POST['tahun_filter'] : date('Y');
+    header("Location: " . $_SERVER['PHP_SELF'] . "?tahun=$tahunRedirect&tab=upload"); exit();
+}
 // ── Migrate dokumen HO lama (path lokal → BLOB) dipanggil sekali via ?action=migrate_dok ──
 if (isset($_GET['action']) && $_GET['action'] === 'migrate_dok_ho' && $canEdit) {
     $res_m = mysqli_query($con, "SELECT id_dokumen, lokasi_file, file_name FROM dokumen_pelaksanaan WHERE lokasi_file NOT LIKE 'data:%' AND lokasi_file != '' AND lokasi_file IS NOT NULL");
@@ -218,6 +290,19 @@ if (isset($_GET['action']) && $_GET['action'] === 'migrate_dok_ho' && $canEdit) 
     header("Location: " . $_SERVER['PHP_SELF']); exit();
 }
 
+// ── Hapus dokumen pelaksanaan ────────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'hapus_dok_pelaksanaan' && $canEdit) {
+    $id_dok = (int)($_POST['id_dokumen'] ?? 0);
+    $tahunR = (int)($_POST['tahun_filter'] ?? date('Y'));
+    if ($id_dok > 0) {
+        $stmt = $con->prepare("DELETE FROM dokumen_pelaksanaan WHERE id_dokumen = ?");
+        $stmt->bind_param("i", $id_dok);
+        $stmt->execute();
+        $_SESSION['success_message'] = $stmt->affected_rows > 0 ? '✅ Dokumen berhasil dihapus.' : '⚠️ Dokumen tidak ditemukan.';
+        $stmt->close();
+    }
+    header("Location: " . $_SERVER['PHP_SELF'] . "?tahun=$tahunR&tab=upload"); exit();
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'update_pelaksanaan' && $canEdit) {
     function cleanAngka($val) {
@@ -242,15 +327,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'updat
     $nilai_penjualan     = cleanAngka($_POST['nilai_penjualan']           ?? '');
     $biaya_lainnya       = cleanAngka($_POST['biaya_lainnya']             ?? '');
     $nomor_aset_pengganti = trim($_POST['nomor_aset_pengganti'] ?? '');
+    $catatan_pelaksanaan  = trim($_POST['catatan_pelaksanaan'] ?? '');
+    $catatan_pelaksanaan  = ($catatan_pelaksanaan === '') ? null : $catatan_pelaksanaan;
 
     $stmt = $con->prepare("UPDATE pelaksanaan_penghapusan SET
         status_pelaksanaan = ?, tanggal_appraisal = ?, tanggal_penjualan = ?,
         nilai_buku_bulan_berjalan = ?, nilai_appraisal_pasar = ?, nilai_appraisal_likuidasi = ?,
-        nilai_penjualan = ?, biaya_lainnya = ?, nomor_aset_pengganti = ?,
+        nilai_penjualan = ?, biaya_lainnya = ?, nomor_aset_pengganti = ?, catatan_pelaksanaan = ?,
         nipp = ?, updated_at = NOW() WHERE id = ?");
-    $stmt->bind_param("sssdddddssi", $status_pelaksanaan, $tgl_appraisal, $tgl_penjualan,
+    $stmt->bind_param("sssdddddsssi", $status_pelaksanaan, $tgl_appraisal, $tgl_penjualan,
         $nilai_buku_bb, $nilai_app_pasar, $nilai_app_likuidasi, $nilai_penjualan,
-        $biaya_lainnya, $nomor_aset_pengganti, $userNipp, $id_pel);
+        $biaya_lainnya, $nomor_aset_pengganti, $catatan_pelaksanaan, $userNipp, $id_pel);
 
     if ($stmt->execute()) {
         $_SESSION['success_message'] = "Data pelaksanaan berhasil diperbarui.";
@@ -264,7 +351,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'updat
 
 $filterTahun  = isset($_GET['tahun'])  && !empty($_GET['tahun'])  ? (int)$_GET['tahun']  : date('Y');
 $filterStatus = isset($_GET['status']) ? $_GET['status'] : 'all';
-$activeTab   = isset($_GET['tab']) ? trim($_GET['tab']) : 'daftar';
+$activeTab    = isset($_GET['tab']) ? $_GET['tab'] : 'daftar';
 
 $whereStatus = '';
 if ($filterStatus !== 'all') {
@@ -282,13 +369,14 @@ $res_main = mysqli_query($con, "SELECT pp.*,
     up.nilai_perolehan as nilai_perolehan_sd,
     up.nilai_buku as nilai_buku_awal,
     up.tgl_perolehan, up.umur_ekonomis, up.sisa_umur_ekonomis,
-    (SELECT COUNT(*) FROM dokumen_pelaksanaan dp WHERE dp.id_pelaksanaan = pp.id) as jml_dok_ho,
+    (SELECT COUNT(*) FROM dokumen_pelaksanaan dp 
+    WHERE dp.id_pelaksanaan = pp.id 
+      OR FIND_IN_SET(up.nomor_asset_utama, REPLACE(dp.nomor_aset, '; ', ','))) as jml_dok_ho,
     (SELECT COUNT(*) FROM dokumen_penghapusan dp2 WHERE dp2.usulan_id = up.id) as jml_dok_usulan,
-    (SELECT COUNT(*) FROM dokumen_pelaksanaan dp3 WHERE dp3.id_pelaksanaan = pp.id AND COALESCE(dp3.kategori,'ho') = 'pendukung') as has_pendukung
+    (SELECT COUNT(*) FROM dokumen_pelaksanaan dp3 WHERE dp3.id_pelaksanaan = pp.id) as has_pelaksanaan
     FROM pelaksanaan_penghapusan pp
     JOIN usulan_penghapusan up ON pp.usulan_id = up.id
     WHERE up.tahun_usulan = $filterTahun $whereStatus
-    -- AND LOWER(pp.status_pelaksanaan) != 'disetujui'
     ORDER BY pp.created_at DESC");
 
 $data_pelaksanaan = [];
@@ -302,9 +390,24 @@ $daftar_dok_ho = [];
 $res_dho = mysqli_query($con, "SELECT dp.id_dokumen, dp.id_pelaksanaan, dp.deskripsi_dokumen, dp.file_name, dp.tahun_dokumen, pp.usulan_id, COALESCE(dp.kategori,'ho') as kategori FROM dokumen_pelaksanaan dp JOIN pelaksanaan_penghapusan pp ON dp.id_pelaksanaan = pp.id ORDER BY dp.id_dokumen DESC");
 while ($r = mysqli_fetch_assoc($res_dho)) $daftar_dok_ho[] = $r;
 
+// Dokumen pelaksanaan (upload dari tab halaman) — hanya kategori='pelaksanaan'
+$daftar_dok_pelaksanaan = [];
+$res_dpend = mysqli_query($con, "SELECT
+    dp.id_dokumen, dp.id_pelaksanaan, dp.deskripsi_dokumen, dp.file_name,
+    dp.tahun_dokumen, up.tahun_usulan,
+    COALESCE(dp.nomor_aset, up.nomor_asset_utama) as nomor_aset,
+    pp.profit_center, pp.subreg,
+    up.profit_center_text as cabang
+    FROM dokumen_pelaksanaan dp
+    JOIN pelaksanaan_penghapusan pp ON dp.id_pelaksanaan = pp.id
+    JOIN usulan_penghapusan up ON pp.usulan_id = up.id
+    WHERE up.tahun_usulan = $filterTahun
+    ORDER BY dp.id_dokumen DESC");
+while ($r = mysqli_fetch_assoc($res_dpend)) $daftar_dok_pelaksanaan[] = $r;
+
 $daftar_dok_usulan = [];
 $res_du = mysqli_query($con, "SELECT dp.id_dokumen, dp.usulan_id, dp.tipe_dokumen, dp.file_name,
-    YEAR(up.created_at) as tahun_usulan
+    up.tahun_usulan
     FROM dokumen_penghapusan dp
     JOIN usulan_penghapusan up ON dp.usulan_id = up.id
     JOIN pelaksanaan_penghapusan pp ON pp.usulan_id = up.id
@@ -317,14 +420,17 @@ $r_total = mysqli_fetch_assoc(mysqli_query($con,
      WHERE status_approval_regional = 'approved' AND tahun_usulan = $filterTahun"));
 $cnt_total_usulan = (int)($r_total['c'] ?? 0);
 
-// ── Query "Disetujui HO" dari tabel usulan ──
+// ── Query "Disetujui HO" — hitung dari pelaksanaan_penghapusan (sudah pasti approved HO) ──
 $r_ho = mysqli_fetch_assoc(mysqli_query($con,
-    "SELECT COUNT(*) as c FROM usulan_penghapusan
-     WHERE status_approval_ho = 'approved' AND tahun_usulan = $filterTahun"));
+    "SELECT COUNT(DISTINCT pp.id) as c
+     FROM pelaksanaan_penghapusan pp
+     JOIN usulan_penghapusan up ON pp.usulan_id = up.id
+     WHERE up.tahun_usulan = $filterTahun"));
 $cnt_disetujui_ho = (int)($r_ho['c'] ?? 0);
 
 // ── Counter progress status dari tabel pelaksanaan ──
 $cnt_appraisal = $cnt_lelang = $cnt_terjual = $cnt_musnahkan = 0;
+$cnt_tidak_laku = $cnt_ditunda = 0;
 $cnt_jual_lelang_total = $cnt_hapus_admin_total = 0;
 foreach ($data_pelaksanaan as $d) {
     $st  = strtolower($d['status_pelaksanaan'] ?? '');
@@ -332,16 +438,23 @@ foreach ($data_pelaksanaan as $d) {
     if ($st === 'appraisal aset')                                          $cnt_appraisal++;
     elseif ($st === 'proses lelang')                                       $cnt_lelang++;
     elseif ($st === 'terjual')                                             $cnt_terjual++;
+    elseif ($st === 'lelang tidak laku')                                   $cnt_tidak_laku++;
+    elseif ($st === 'ditunda')                                             $cnt_ditunda++;
     elseif ($st === 'hapus administrasi' || $st === 'telah dimusnahkan')   $cnt_musnahkan++;
     if ($mek === 'Jual Lelang')        $cnt_jual_lelang_total++;
     if ($mek === 'Hapus Administrasi') $cnt_hapus_admin_total++;
 }
 $cnt_total_pelaksanaan = count($data_pelaksanaan);
-$cnt_belum_disetujui_ho = $cnt_total_usulan - $cnt_disetujui_ho; 
+$cnt_belum_disetujui_ho = $cnt_total_usulan - $cnt_disetujui_ho;
 $cnt_jual_progress = $cnt_appraisal + $cnt_lelang + $cnt_terjual;
 
 $list_tahun = [];
-$res_thn = mysqli_query($con, "SELECT DISTINCT up.tahun_usulan as t FROM pelaksanaan_penghapusan pp JOIN usulan_penghapusan up ON pp.usulan_id = up.id WHERE up.tahun_usulan IS NOT NULL ORDER BY t DESC");
+// Ambil semua tahun_usulan yang sudah approved HO — bukan hanya yang sudah ada di pelaksanaan
+$res_thn = mysqli_query($con, "SELECT DISTINCT up.tahun_usulan as t
+    FROM usulan_penghapusan up
+    WHERE up.status_approval_ho = 'approved'
+      AND up.tahun_usulan IS NOT NULL AND up.tahun_usulan > 0
+    ORDER BY t DESC");
 while ($r = mysqli_fetch_assoc($res_thn)) if ($r['t']) $list_tahun[] = (int)$r['t'];
 if (!in_array((int)date('Y'), $list_tahun)) array_unshift($list_tahun, (int)date('Y'));
 
@@ -353,7 +466,7 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
 <html lang="en">
 <head>
   <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
-  <title>Daftar Pelaksanaan Penghapusan - Web Aset Tetap</title>
+  <title>Pelaksanaan Penghapusan - Web Aset Tetap</title>
   <link rel="icon" type="image/png" href="../../dist/assets/img/emblem.png"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <link rel="stylesheet" href="../../dist/css/index.css"/>
@@ -379,9 +492,10 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
     .card-table-header h5{margin:0;font-size:.95rem;font-weight:600;color:#1f2937;}
     .card-table-body{padding:16px 20px;}
     .table-responsive{overflow-x:auto;-webkit-overflow-scrolling:touch;}
-    #pelaksanaanTable thead th,#pelaksanaanTable tbody td{padding:9px 13px;white-space:nowrap;vertical-align:middle;}
-    #pelaksanaanTable thead th{background:#f8f9fa;font-weight:600;font-size:.875rem;border-bottom:2px solid #dee2e6;}
-    #pelaksanaanTable tbody tr:hover{background:#f5f8ff;}
+    #tblJualLelang thead th,#tblJualLelang tbody td,
+    #tblHapusAdmin thead th,#tblHapusAdmin tbody td{padding:9px 13px;white-space:nowrap;vertical-align:middle;}
+    #tblJualLelang tbody tr:hover{background:#f0f2f5!important;}
+    #tblHapusAdmin tbody tr:hover{background:#e8f0fe!important;}
     .modal{padding-left:0!important;} body.modal-open{overflow:hidden!important;padding-right:0!important;}
     .detail-section{padding:16px 22px;border-bottom:1px solid #f0f0f0;}
     .detail-section:last-child{border-bottom:none;}
@@ -396,12 +510,14 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
     .detail-item-value{font-size:.88rem;font-weight:600;color:#1f2937;}
     .badge-pill{padding:3px 11px;border-radius:20px;font-size:.8rem;font-weight:600;display:inline-block;}
     /* Status Pelaksanaan badges — warna lebih terang/kontras, tidak overlap dengan Mekanisme */
-    .st-disetujui{background:#d1fae5;color:#065f46;}        /* Hijau — Disetujui/OK */
-    .st-appraisal{background:#fef9c3;color:#854d0e;}        /* Kuning — tahap evaluasi, belum final */
-    .st-lelang{background:#ede9fe;color:#5b21b6;}           /* Ungu — sedang berjalan */
-    .st-terjual{background:#ccfbf1;color:#0f766e;}          /* Teal muda — terjual/selesai */
-    .st-ditolak{background:#fee2e2;color:#991b1b;}          /* Merah muda — ditolak */
-    .st-musnahkan{background:#dc2626;color:#fff;}           /* Merah solid — aksi administratif penting */
+    .st-disetujui{background:#dbeafe;color:#1d4ed8;}        /* Biru  — Disetujui */
+    .st-appraisal{background:#fef9c3;color:#854d0e;}        /* Kuning — Appraisal */
+    .st-lelang   {background:#ede9fe;color:#5b21b6;}        /* Ungu  — Proses Lelang */
+    .st-terjual  {background:#bbf7d0;color:#166534;}        /* Hijau — Terjual */
+    .st-tidaklaku{background:#fed7aa;color:#9a3412;}        /* Oranye — Lelang Tidak Laku */
+    .st-ditunda  {background:#e5e7eb;color:#374151;}        /* Abu-abu — Ditunda */
+    .st-ditolak  {background:#fee2e2;color:#991b1b;}        /* Merah muda — Ditolak */
+    .st-musnahkan{background:#dc2626;color:#fff;}           /* Merah solid — Hapus Administrasi */
     /* Tab styles in modal edit */
     .edit-tab-nav{display:flex;border-bottom:2px solid #e9ecef;background:#f8f9fa;padding:0 22px;}
     .edit-tab-btn{padding:10px 16px;border:none;background:none;font-size:.82rem;font-weight:600;color:#6b7280;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:all .18s;}
@@ -409,6 +525,8 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
     .edit-tab-btn:hover:not(.active){color:#374151;background:#f0f0f0;}
     .edit-tab-pane{display:none;}
     .edit-tab-pane.active{display:block;}
+    .upload-zone{border:2px dashed #d1d5db;border-radius:10px;padding:22px 16px;text-align:center;background:#f9fafb;transition:border-color .2s;}
+    .upload-zone:hover{border-color:#3b82f6;background:#eff6ff;}
     .dok-list-item{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;border:1px solid #e9ecef;border-radius:8px;margin-bottom:7px;background:#fff;}
     .dok-list-item:hover{background:#f8f9fa;}
     .nilai-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:6px;}
@@ -431,6 +549,10 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
     .kajian-box{background:#f8f9fa;border-left:3px solid #0d6efd;border-radius:0 6px 6px 0;padding:9px 13px;font-size:.875rem;color:#374151;white-space:pre-wrap;word-break:break-word;line-height:1.6;}
     .kajian-box.empty{border-left-color:#e5e7eb;color:#9ca3af;font-style:italic;}
     /* Nav tabs page-level */
+    .page-nav-tabs .nav-link{font-weight:500;color:#6b7280;}
+    .page-nav-tabs .nav-link.active{color:#0b3a8c;border-bottom:2px solid #0b3a8c;font-weight:600;}
+    .upload-zone-page{border:2px dashed #d1d5db;border-radius:10px;padding:22px 16px;text-align:center;background:#f9fafb;transition:border-color .2s;cursor:pointer;}
+    .upload-zone-page:hover{border-color:#3b82f6;background:#eff6ff;}
     .selected-aset-bar{background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 16px;margin-bottom:14px;display:none;align-items:center;gap:10px;flex-wrap:wrap;}
     .selected-aset-bar.show{display:flex;}
     .table-responsive::-webkit-scrollbar{height:8px;}
@@ -439,7 +561,20 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
     .app-footer .footer-inner{display:flex;align-items:center;justify-content:space-between;gap:0.75rem;padding:0 1.5rem;max-width:100%;flex-wrap:wrap;}
     .app-footer .footer-inner .footer-text{font-size:.95rem;color:#374151;}
     .app-footer .footer-inner .footer-right{margin-left:auto;}
-    /* Fix DataTables sort icons - prevent numeric/broken chars */
+    /* Controls DataTables di luar scroll area */
+    .dt-outer-controls, .dt-outer-controls-bot { border-radius:0; }
+    .dataTables_paginate { margin:0!important; }
+    .dataTables_paginate .paginate_button { padding:4px 10px!important; border-radius:6px!important; cursor:pointer; }
+    .dataTables_paginate .paginate_button.current { background:#0b3a8c!important; color:#fff!important; border-color:#0b3a8c!important; }
+    .dataTables_paginate .paginate_button:hover:not(.disabled):not(.current) { background:#e8f0fe!important; color:#0b3a8c!important; border-color:#bfdbfe!important; }
+    .dataTables_info { margin:0!important; font-size:.82rem; color:#6b7280; }
+    /* Cegah dataTables_length & dataTables_filter ikut lebar grid Bootstrap (col-sm-12 col-md-6) */
+    .dataTables_length, .dataTables_filter { width:auto!important; flex:0 0 auto!important; margin:0!important; }
+    .dt-top-bar, .dt-bot-bar { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; }
+    .dt-top-bar .dataTables_filter { margin-left:auto!important; justify-content:flex-end!important; }
+    .dt-bot-bar .dataTables_paginate { margin-left:auto!important; justify-content:flex-end!important; }
+    .dt-top-bar .dataTables_filter label,
+    .dt-top-bar .dataTables_length label { display:flex; align-items:center; gap:6px; margin-bottom:0; }
     table.dataTable thead th.sorting,
     table.dataTable thead th.sorting_asc,
     table.dataTable thead th.sorting_desc,
@@ -523,12 +658,12 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
     <div class="sidebar-wrapper">
       <nav class="mt-2">
         <ul class="nav sidebar-menu flex-column" data-lte-toggle="treeview" role="navigation" data-accordion="false">
-          <?php  
+         <?php  
             $userNipp = isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : '';
             $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '" . mysqli_real_escape_string($con, $userNipp) . "' ORDER BY menus.urutan_menu ASC";
             $result_menu = mysqli_query($con, $query) or die(mysqli_error($con));
-            $iconMap = [
-                'Dasboard'                       => 'bi bi-grid-fill',
+             $iconMap = [
+                'Dasboard'                        => 'bi bi-grid-fill',
                 'Usulan Penghapusan'              => 'bi bi-file-earmark-plus',
                 'Daftar Usulan Penghapusan'       => 'bi bi-collection',
                 'Approval SubReg'                 => 'bi bi-person-check',
@@ -539,41 +674,51 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                 'Daftar Pelaksanaan Penghapusan'  => 'bi bi-archive-fill',
                 'Manajemen Menu'                  => 'bi bi-layout-text-sidebar',
                 'Import DAT'                      => 'bi bi-file-earmark-arrow-up',
-                'Import Data Penyusutan'          => 'bi bi-cloud-upload',
+
+                // Penyusutan
+                'Import Data Penyusutan'          => 'bi bi-upload',
                 'Daftar Data Penyusutan'          => 'bi bi-table',
-                'Selisih Penyusutan'              => 'bi bi-bar-chart-line',
+                'Dasbor Monitoring Beban Penyusutan'  => 'bi-bar-chart-line',
+
+                // Monitoring SAP-DAT
+                'Import Data Monitoring'          => 'bi bi-upload',
+                'Daftar Data Monitoring'          => 'bi bi-table',
+                'Dasbor Monitoring SAP-DAT'       => 'bi bi-speedometer2',
+
                 'Daftar Aset Tetap'               => 'bi bi-boxes',
                 'Manajemen User'                  => 'bi bi-people',
             ];
 
-            // ── Pengelompokan menu jadi 3 grup dropdown: Penghapusan, Penyusutan, Manajemen Admin ──
-            // (menu di luar mapping ini, misal "Dasboard", dirender sebagai item biasa di luar grup)
             $groupMap = [
-                'Usulan Penghapusan'             => 'Penghapusan',
-                'Daftar Usulan Penghapusan'      => 'Penghapusan',
-                'Approval SubReg'                => 'Penghapusan',
-                'Approval Regional'              => 'Penghapusan',
-                'Persetujuan Penghapusan'        => 'Penghapusan',
-                'Daftar Persetujuan Penghapusan' => 'Penghapusan',
-                'Pelaksanaan Penghapusan'        => 'Penghapusan',
-                'Daftar Aset Tetap'              => 'Penghapusan',
-                'Daftar Pelaksanaan Penghapusan' => 'Penghapusan',
+                'Usulan Penghapusan'              => 'Penghapusan',
+                'Daftar Usulan Penghapusan'       => 'Penghapusan',
+                'Approval SubReg'                 => 'Penghapusan',
+                'Approval Regional'               => 'Penghapusan',
+                'Persetujuan Penghapusan'         => 'Penghapusan',
+                'Daftar Persetujuan Penghapusan'  => 'Penghapusan',
+                'Pelaksanaan Penghapusan'         => 'Penghapusan',
+                'Daftar Pelaksanaan Penghapusan'  => 'Penghapusan',
 
-                'Import Data Penyusutan'         => 'Penyusutan',
-                'Daftar Data Penyusutan'         => 'Penyusutan',
-                'Selisih Penyusutan'             => 'Penyusutan',
+                'Import Data Penyusutan'          => 'Penyusutan',
+                'Daftar Data Penyusutan'          => 'Penyusutan',
+                'Dasbor Monitoring Beban Penyusutan'  => 'Penyusutan',
 
-                'Import DAT'                     => 'Manajemen Admin',
-                'Manajemen Menu'                 => 'Manajemen Admin',
-                'Manajemen User'                 => 'Manajemen Admin',
+                'Import Data Monitoring'          => 'Monitoring SAP-DAT',
+                'Daftar Data Monitoring'          => 'Monitoring SAP-DAT',
+                'Dasbor Monitoring SAP-DAT'       => 'Monitoring SAP-DAT',
+
+                'Import DAT'                      => 'Manajemen Admin',
+                'Daftar Aset Tetap'               => 'Manajemen Admin',
+                'Manajemen Menu'                  => 'Manajemen Admin',
+                'Manajemen User'                  => 'Manajemen Admin',
             ];
             $groupIcon = [
-                'Penghapusan'      => 'bi bi-file-earmark-minus',
-                'Penyusutan'       => 'bi bi-graph-down-arrow',
-                'Manajemen Admin'  => 'bi bi-sliders',
+                'Penghapusan'                     => 'bi bi-file-earmark-minus',
+                'Penyusutan'                      => 'bi bi-graph-down-arrow',
+                'Monitoring SAP-DAT'              => 'bi bi-arrow-left-right',
+                'Manajemen Admin'                 => 'bi bi-sliders',               
             ];
-            $groupOrder = ['Penghapusan', 'Penyusutan', 'Manajemen Admin'];
-
+            $groupOrder = ['Penghapusan', 'Penyusutan', 'Monitoring SAP-DAT', 'Manajemen Admin'];
             $currentPage = basename($_SERVER['PHP_SELF']);
 
             $ungrouped = [];
@@ -631,7 +776,7 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
     <div class="container-fluid">
       <div class="row">
         <div class="col-sm-6">
-          <h3 class="mb-0">Daftar Pelaksanaan Penghapusan</h3>
+          <h3 class="mb-0">Pelaksanaan Penghapusan</h3>
         </div>
         <div class="col-sm-6 d-flex align-items-center justify-content-end gap-2">
 
@@ -654,6 +799,8 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                 <option value="Appraisal Aset" <?= $filterStatus==='Appraisal Aset'?'selected':'' ?>>Appraisal Aset</option>
                 <option value="Proses Lelang"  <?= $filterStatus==='Proses Lelang'?'selected':'' ?>>Proses Lelang</option>
                 <option value="Terjual"        <?= $filterStatus==='Terjual'?'selected':'' ?>>Terjual</option>
+                <option value="Lelang Tidak Laku" <?= $filterStatus==='Lelang Tidak Laku'?'selected':'' ?>>Lelang Tidak Laku</option>
+                <option value="Ditunda"        <?= $filterStatus==='Ditunda'?'selected':'' ?>>Ditunda</option>
               </optgroup>
               <optgroup label="── Hapus Administrasi ──">
                 <option value="Disetujui"           <?= $filterStatus==='Disetujui'?'selected':'' ?>>Disetujui</option>
@@ -664,7 +811,7 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
 
           <ol class="breadcrumb float-sm-end mb-0">
             <li class="breadcrumb-item"><a href="../dasbor/dasbor.php">Home</a></li>
-            <li class="breadcrumb-item active">Daftar Pelaksanaan Penghapusan</li>
+            <li class="breadcrumb-item active">Pelaksanaan Penghapusan</li>
           </ol>
         </div>
       </div>
@@ -680,7 +827,7 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
       <?php if ($warning_msg): ?>
         <div class="alert alert-warning alert-dismissible fade show"><i class="bi bi-exclamation-triangle me-2"></i><?= htmlspecialchars($warning_msg) ?><button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
       <?php endif; ?>
-      
+
       <!-- ══ SUMMARY 3 GROUP ══ -->
       <div class="row g-3 mb-4">
 
@@ -703,6 +850,7 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                 <span style="font-size:.8rem;color:#6b7280;"><i class="bi bi-clock me-1 text-warning"></i>Belum Disetujui HO</span>
                 <span style="font-size:.9rem;font-weight:700;color:#d97706;"><?= $cnt_belum_disetujui_ho ?></span>
               </div>
+           
             </div>
           </div>
         </div>
@@ -718,7 +866,7 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
               <div style="font-size:.75rem;opacity:.8;margin-top:2px;">Total aset mekanisme Jual Lelang</div>
             </div>
             <div style="background:#fff;padding:12px 20px;border-top:1px solid #e0f2fe;">
-              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center;">
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(85px,1fr));gap:8px;text-align:center;">
                 <div style="background:#fef3c7;border-radius:8px;padding:8px 6px;">
                   <div style="font-size:1.4rem;font-weight:800;color:#92400e;"><?= $cnt_appraisal ?></div>
                   <div style="font-size:.72rem;color:#78350f;font-weight:600;"><i class="bi bi-calculator me-1"></i>Appraisal</div>
@@ -730,6 +878,14 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                 <div style="background:#ccfbf1;border-radius:8px;padding:8px 6px;">
                   <div style="font-size:1.4rem;font-weight:800;color:#0f766e;"><?= $cnt_terjual ?></div>
                   <div style="font-size:.72rem;color:#0f766e;font-weight:600;"><i class="bi bi-bag-check me-1"></i>Terjual</div>
+                </div>
+                <div style="background:#fed7aa;border-radius:8px;padding:8px 6px;">
+                  <div style="font-size:1.4rem;font-weight:800;color:#9a3412;"><?= $cnt_tidak_laku ?></div>
+                  <div style="font-size:.72rem;color:#9a3412;font-weight:600;"><i class="bi bi-x-circle me-1"></i>Tidak Laku</div>
+                </div>
+                <div style="background:#e5e7eb;border-radius:8px;padding:8px 6px;">
+                  <div style="font-size:1.4rem;font-weight:800;color:#374151;"><?= $cnt_ditunda ?></div>
+                  <div style="font-size:.72rem;color:#374151;font-weight:600;"><i class="bi bi-pause-circle me-1"></i>Ditunda</div>
                 </div>
               </div>
             </div>
@@ -759,11 +915,31 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
       </div>
       <!-- END SUMMARY -->
 
-               <!-- Page-level Tabs -->
+      <!-- Page-level Tabs -->
       <div class="card">
         <div class="card-body">
 
-          <!-- Daftar Pelaksanaan (tanpa tab) -->
+          <ul class="nav nav-tabs page-nav-tabs mb-3" role="tablist">
+            <li class="nav-item">
+              <button class="nav-link <?= $activeTab==='daftar'?'active':'' ?>"
+                      data-bs-toggle="tab" data-bs-target="#tab-pel-daftar" type="button"
+                      onclick="updateTabUrl('daftar')">
+                <i class="bi bi-list-ul me-2"></i>Daftar Pelaksanaan
+              </button>
+            </li>
+            <li class="nav-item">
+              <button class="nav-link <?= $activeTab==='upload'?'active':'' ?>"
+                      data-bs-toggle="tab" data-bs-target="#tab-pel-upload" type="button"
+                      onclick="updateTabUrl('upload')">
+                <i class="bi bi-upload me-2"></i>Upload Dokumen Pelaksanaan
+              </button>
+            </li>
+          </ul>
+
+          <div class="tab-content">
+
+            <!-- ══ TAB 1: DAFTAR PELAKSANAAN ══ -->
+            <div class="tab-pane fade <?= $activeTab==='daftar'?'show active':'' ?>" id="tab-pel-daftar">
 
               <?php
               // Split data by mekanisme
@@ -775,6 +951,8 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                 'Appraisal Aset'      =>['st-appraisal','bi-calculator'],
                 'Proses Lelang'       =>['st-lelang','bi-arrow-repeat'],
                 'Terjual'             =>['st-terjual','bi-bag-check'],
+                'Lelang Tidak Laku'   =>['st-tidaklaku','bi-x-circle'],
+                'Ditunda'             =>['st-ditunda','bi-pause-circle'],
                 'Ditolak'             =>['st-ditolak','bi-x-circle'],
                 'Hapus Administrasi'  =>['st-musnahkan','bi-trash3'],
                 'Telah Dimusnahkan'   =>['st-musnahkan','bi-trash3'],
@@ -790,8 +968,8 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
               <?php else: ?>
 
               <!-- ── TABEL 1: JUAL LELANG ── -->
-              <div class="card-table mb-4" style="border:1px solid #dee2e6;border-radius:10px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06);">
-                <div class="card-table-header" style="background:#fff;border-bottom:2px solid #dee2e6;padding:13px 20px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+              <div class="card-table mb-2" style="border:1px solid #dee2e6;border-radius:10px;overflow:visible;box-shadow:0 1px 4px rgba(0,0,0,.06);">
+                <div class="card-table-header" style="background:#fff;border-bottom:2px solid #dee2e6;padding:13px 20px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-radius:10px 10px 0 0;">
                   <i class="bi bi-tag-fill" style="font-size:1rem;color:#374151;"></i>
                   <h5 style="margin:0;font-size:.95rem;font-weight:700;color:#1f2937;flex:1;">Jual / Lelang</h5>
                   <span class="badge bg-secondary" style="font-size:.78rem;"><?= count($data_jual_lelang) ?> Aset</span>
@@ -836,36 +1014,36 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                           $thn_perolehan = ($tgl_perolehan !== '-' && $tgl_perolehan) ? date('Y', strtotime($tgl_perolehan)) : '-';
                         ?>
                         <tr>
-                          <td class="text-center" style="white-space:nowrap;"><?= $i+1 ?></td>
-                          <td style="white-space:nowrap;"><?= htmlspecialchars($p['profit_center_text']??$p['profit_center']??'-') ?></td>
-                          <td style="white-space:nowrap;"><code style="color:#2563eb;font-size:.82rem;"><?= htmlspecialchars($p['nomor_asset_utama']) ?></code></td>
-                          <td style="white-space:nowrap;"><code style="color:#6b7280;font-size:.82rem;"><?= htmlspecialchars($p['nomor_aset_pengganti']??'-') ?></code></td>
-                          <td style="max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="<?= htmlspecialchars($p['nama_aset']??'-') ?>"><?= htmlspecialchars($p['nama_aset']??'-') ?></td>
-                          <td class="text-center" style="white-space:nowrap;"><?= $thn_perolehan ?></td>
+                          <td class="text-center"><?= $i+1 ?></td>
+                          <td><?= htmlspecialchars($p['profit_center_text']??$p['profit_center']??'-') ?></td>
+                          <td><code style="color:#2563eb;font-size:.82rem;"><?= htmlspecialchars($p['nomor_asset_utama']) ?></code></td>
+                          <td><code style="color:#000000;font-size:.82rem;"><?= htmlspecialchars($p['nomor_aset_pengganti']??'-') ?></code></td>
+                          <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;"><?= htmlspecialchars($p['nama_aset']??'-') ?></td>
+                          <td class="text-center"><?= $thn_perolehan ?></td>
                           <td style="white-space:nowrap;"><?php
                             $u_bln = isset($p['umur_ekonomis']) ? (int)$p['umur_ekonomis'] : null;
                             if ($u_bln === null) {
                               echo '<span style="color:#9ca3af;">-</span>';
                             } elseif ($u_bln < 60) {
-                              echo 'Di bawah 5 thn';
+                              echo '<div style="font-size:.78rem;font-weight:600;">< 5 thn</div>';
                             } else {
-                              echo 'Sampai dengan 5 thn';
+                              echo '<div style="font-size:.78rem;font-weight:600;">s.d 5 thn';
                             }
                           ?></td>
-                          <td class="text-end" style="white-space:nowrap;font-family:monospace;font-size:.82rem;"><?php
+                          <td class="text-end" style="font-family:monospace;font-size:.82rem;"><?php
                             $nb = $p['nilai_buku_bulan_berjalan'] ?? $p['nilai_buku_awal'] ?? $p['nilai_buku'] ?? null;
                             echo $nb !== null ? number_format((float)$nb, 0, ',', '.') : '-';
                           ?></td>
-                          <td class="text-end" style="white-space:nowrap;font-family:monospace;font-size:.82rem;"><?php
+                          <td class="text-end" style="font-family:monospace;font-size:.82rem;"><?php
                             $nap = $p['nilai_appraisal_pasar'] ?? null;
                             echo $nap !== null ? number_format((float)$nap, 0, ',', '.') : '-';
                           ?></td>
-                          <td class="text-end" style="white-space:nowrap;font-family:monospace;font-size:.82rem;"><?php
+                          <td class="text-end" style="font-family:monospace;font-size:.82rem;"><?php
                             $npj = $p['nilai_penjualan'] ?? null;
                             echo $npj !== null ? number_format((float)$npj, 0, ',', '.') : '-';
                           ?></td>
-                          <td style="white-space:nowrap;"><span class="badge-pill <?= $stClass ?>"><i class="bi <?= $stIcon ?> me-1"></i><?= $stLabel ?></span></td>
-                          <td class="text-center" style="white-space:nowrap;">
+                          <td><span class="badge-pill <?= $stClass ?>"><i class="bi <?= $stIcon ?> me-1"></i><?= $stLabel ?></span></td>
+                          <td class="text-center">
                             <span class="badge bg-<?= $total_dokumen > 0 ? 'success' : 'secondary' ?>"><?= $total_dokumen ?></span>
                           </td>
                           <td class="text-center" style="white-space:nowrap;">
@@ -882,12 +1060,13 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                   <?php endif; ?>
                 </div>
               </div>
+              <!-- Pagination tblJualLelang: di luar card, tidak ikut scroll -->
+              <div id="tblJualLelang_controls" style="min-height:42px;"></div>
               <!-- END TABEL 1 -->
 
-                <!-- ── TABEL 2: HAPUS ADMINISTRASI ── -->
-                 <!-- ── TABEL 2: HAPUS ADMINISTRASI ── -->
-              <div class="card-table" style="border:1px solid #dee2e6;border-radius:10px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06);">
-                <div class="card-table-header" style="background:#fff;border-bottom:2px solid #dee2e6;padding:13px 20px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+              <!-- ── TABEL 2: HAPUS ADMINISTRASI ── -->
+              <div class="card-table" style="border:1px solid #dee2e6;border-radius:10px;overflow:visible;box-shadow:0 1px 4px rgba(0,0,0,.06);">
+                <div class="card-table-header" style="background:#fff;border-bottom:2px solid #dee2e6;padding:13px 20px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-radius:10px 10px 0 0;">
                   <i class="bi bi-trash3" style="font-size:1rem;color:#374151;"></i>
                   <h5 style="margin:0;font-size:.95rem;font-weight:700;color:#1f2937;flex:1;">Hapus Administrasi</h5>
                   <span class="badge bg-secondary" style="font-size:.78rem;"><?= count($data_hapus_admin) ?> Aset</span>
@@ -934,37 +1113,37 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                           $umur_bln = isset($p['umur_ekonomis']) ? (int)$p['umur_ekonomis'] : null;
                         ?>
                         <tr>
-                          <td class="text-center" style="white-space:nowrap;"><?= $i+1 ?></td>
-                          <td style="white-space:nowrap;"><?= htmlspecialchars($p['subreg']??'-') ?></td>
-                          <td style="white-space:nowrap;"><?= htmlspecialchars($p['profit_center_text']??$p['profit_center']??'-') ?></td>
-                          <td style="white-space:nowrap;"><code style="color:#2563eb;font-size:.82rem;"><?= htmlspecialchars($p['nomor_asset_utama']) ?></code></td>
-                          <td style="max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="<?= htmlspecialchars($p['nama_aset']??'-') ?>"><?= htmlspecialchars($p['nama_aset']??'-') ?></td>
-                          <td class="text-center" style="white-space:nowrap;"><?= htmlspecialchars($p['jumlah_aset']??'1') ?></td>
+                          <td class="text-center"><?= $i+1 ?></td>
+                          <td><?= htmlspecialchars($p['subreg']??'-') ?></td>
+                          <td><?= htmlspecialchars($p['profit_center_text']??$p['profit_center']??'-') ?></td>
+                          <td><code style="color:#2563eb;font-size:.82rem;"><?= htmlspecialchars($p['nomor_asset_utama']) ?></code></td>
+                          <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;"><?= htmlspecialchars($p['nama_aset']??'-') ?></td>
+                          <td class="text-center"><?= htmlspecialchars($p['jumlah_aset']??'1') ?></td>
                           <td style="white-space:nowrap;"><?php
                             $u_bln = isset($p['umur_ekonomis']) ? (int)$p['umur_ekonomis'] : null;
                             if ($u_bln === null) {
                               echo '<span style="color:#9ca3af;">-</span>';
                             } elseif ($u_bln < 60) {
-                              echo 'Di bawah 5 thn';
+                              echo '<div style="font-size:.78rem;font-weight:600;">< 5 thn</div>';
                             } else {
-                              echo 'Sampai dengan 5 thn';
+                              echo '<div style="font-size:.78rem;font-weight:600;">s.d 5 thn</div>';
                             }
                           ?></td>
-                          <td class="text-center" style="white-space:nowrap;"><?= $thn_perolehan ?></td>
-                          <td class="text-end" style="white-space:nowrap;font-family:monospace;font-size:.82rem;"><?php
+                          <td class="text-center"><?= $thn_perolehan ?></td>
+                          <td class="text-end" style="font-family:monospace;font-size:.82rem;"><?php
                             $np = $p['nilai_perolehan_sd'] ?? null;
                             echo $np !== null ? number_format((float)$np, 0, ',', '.') : '-';
                           ?></td>
-                          <td class="text-end" style="white-space:nowrap;font-family:monospace;font-size:.82rem;"><?php
+                          <td class="text-end" style="font-family:monospace;font-size:.82rem;"><?php
                             $nb = $p['nilai_buku_bulan_berjalan'] ?? $p['nilai_buku_awal'] ?? $p['nilai_buku'] ?? null;
                             echo $nb !== null ? number_format((float)$nb, 0, ',', '.') : '-';
                           ?></td>
-                          <td class="text-center" style="white-space:nowrap;"><?php
+                          <td class="text-center"><?php
                             $fis = $p['fisik_aset'] ?? '-';
-                            echo $fis && $fis !== '-' ? htmlspecialchars($fis) : '<span style="color:#9ca3af;">-</span>';
+                            echo $fis && $fis !== '-' ? '<div style="font-size:.78rem;font-size:.82rem;">'.htmlspecialchars($fis).'</div>' : '<span style="color:#9ca3af;">-</span>';
                           ?></td>
-                          <td style="white-space:nowrap;"><span class="badge-pill <?= $stClass ?>"><i class="bi <?= $stIcon ?> me-1"></i><?= $stLabel ?></span></td>
-                          <td class="text-center" style="white-space:nowrap;">
+                          <td><span class="badge-pill <?= $stClass ?>"><i class="bi <?= $stIcon ?> me-1"></i><?= $stLabel ?></span></td>
+                          <td class="text-center">
                             <span class="badge bg-<?= $total_dokumen > 0 ? 'success' : 'secondary' ?>"><?= $total_dokumen ?></span>
                           </td>
                           <td class="text-center" style="white-space:nowrap;">
@@ -981,13 +1160,175 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                   <?php endif; ?>
                 </div>
               </div>
+              <!-- Pagination tblHapusAdmin: di luar card, tidak ikut scroll -->
+              <div id="tblHapusAdmin_controls" style="min-height:42px;"></div>
+              <!-- END TABEL 2 -->
+
               <?php endif; ?>
 
+            </div>
+            <!-- End Tab Daftar -->
 
+            <!-- ══ TAB 2: UPLOAD DOKUMEN HO ══ -->
+            <div class="tab-pane fade <?= $activeTab==='upload'?'show active':'' ?>" id="tab-pel-upload">
 
+              <!-- Form Upload -->
+              <div class="card mb-3" style="border:1px solid #dee2e6;border-radius:8px;">
+                <div class="card-header" style="background:#0b3a8c;color:#fff;border-radius:8px 8px 0 0;">
+                  <strong><i class="bi bi-cloud-upload me-2"></i>Form Upload Dokumen Pelaksanaan</strong>
+                </div>
+                <!-- alert cara upload dihapus -->
+                <div class="card-body">
+                  <?php if (empty($data_pelaksanaan)): ?>
+                    <div class="alert alert-info mb-0">
+                      <i class="bi bi-info-circle me-2"></i>
+                      Belum ada data pelaksanaan. Persetujuan HO harus disetujui terlebih dahulu.
+                    </div>
+                  <?php else: ?>
+                  <form method="POST" enctype="multipart/form-data" id="formUploadHoPel">
+                    <input type="hidden" name="action" value="upload_dok_ho">
+                    <input type="hidden" name="kategori_dok" value="pelaksanaan">
+                    <input type="hidden" name="tahun_filter" value="<?= $filterTahun ?>">
+                    <input type="hidden" name="id_pelaksanaan_list" id="upload_pel_id_pelaksanaan_list">
+                    <input type="hidden" name="id_pelaksanaan" id="upload_pel_id_pelaksanaan">
+                    <input type="hidden" name="nomor_aset" id="upload_pel_nomor_aset">
+
+                    <div class="mb-3">
+                      <label class="form-label">Deskripsi Dokumen <span class="text-danger">*</span></label>
+                      <input type="text" class="form-control" name="deskripsi_dokumen"
+                             placeholder="Contoh: Berita Acara Penghapusan, Risalah Lelang, dst." required>
+                    </div>
+
+                    <div class="mb-3">
+                      <label class="form-label">Aset <span class="text-danger">*</span></label>
+                      <div class="input-group">
+                        <input type="text" class="form-control" id="upload_pel_nomor_aset_display"
+                               placeholder="Klik tombol untuk pilih aset" readonly>
+                        <button type="button" class="btn btn-outline-primary" onclick="openPelAsetPickerModal()">
+                          <i class="bi bi-search me-1"></i>Pilih Aset
+                        </button>
+                      </div>
+                      <div id="upload_pel_selected_list" class="mt-1" style="font-size:.85rem;color:#374151;display:none;"></div>
+                    </div>
+
+                    <div class="mb-3">
+                      <label class="form-label">File PDF <span class="text-danger">*</span></label>
+                      <input type="file" class="form-control" name="file_dokumen" id="upload_pel_file" accept=".pdf" required onchange="checkUploadPelReady()">
+                      <div class="form-text">Format: <strong>.pdf</strong>. Maksimal 50MB.</div>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary" id="btnUploadPel" disabled>
+                      <i class="bi bi-cloud-upload me-1"></i>Upload Dokumen
+                    </button>
+                  </form>
+                  <?php endif; ?>
+                </div>
+              </div>
+
+              <!-- Preview Dokumen Terupload -->
+              <div class="card" style="border:1px solid #28a745;box-shadow:0 1px 3px rgba(40,167,69,.1);">
+                <div class="card-header" style="background:linear-gradient(135deg,#28a745,#20c997);color:#fff;border-radius:4px 4px 0 0;">
+                  <strong><i class="bi bi-file-earmark-pdf me-2"></i>Preview Dokumen Terupload (<?= count($daftar_dok_pelaksanaan) ?>)</strong>
+                </div>
+                <div class="card-body p-0">
+                  <div class="table-responsive">
+                    <table id="tblDokPelaksanaan" class="table table-bordered table-hover mb-0" style="font-size:.9rem;">
+                      <thead style="background:#f8f9fa;">
+                        <tr>
+                          <th style="white-space:nowrap;">ID Dokumen</th>
+                          <th style="white-space:nowrap;">Tahun</th>
+                          <th style="white-space:nowrap;min-width:100px;">Nomor Aset</th>
+                          <th style="white-space:nowrap;">Profit Center</th>
+                          <th style="white-space:nowrap;min-width:140px;">Subreg</th>
+                          <th style="white-space:nowrap;min-width:200px;">Deskripsi Dokumen</th>
+                          <th style="white-space:nowrap;min-width:140px;">Cabang</th>
+                          <th style="white-space:nowrap;">Aksi</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <?php if (empty($daftar_dok_pelaksanaan)): ?>
+                          <tr><td colspan="8" class="text-center text-muted py-3">Belum ada dokumen pelaksanaan yang diupload</td></tr>
+                        <?php else: ?>
+                          <?php foreach ($daftar_dok_pelaksanaan as $d): ?>
+                          <?php $vurl = "?action=view_dok_ho&id_dok={$d['id_dokumen']}"; ?>
+                          <tr>
+                            <td><?= $d['id_dokumen'] ?></td>
+                            <td><?= htmlspecialchars($d['tahun_usulan'] ?? $d['tahun_dokumen'] ?? '-') ?></td>
+                            <td style="min-width:160px;max-width:260px;">
+                              <?php
+                                $nomors = array_filter(array_map('trim', explode(';', $d['nomor_aset'] ?? '')));
+                                $cnt = count($nomors);
+                              ?>
+                              <?php if ($cnt > 1): ?>
+                                <span style="background:#0ea5e9;color:#fff;font-size:.72rem;font-weight:700;padding:2px 8px;border-radius:20px;display:inline-block;margin-bottom:4px;">
+                                  <?= $cnt ?> aset
+                                </span>
+                              <?php endif; ?>
+                              <?php foreach ($nomors as $nm): ?>
+                                <code style="color:#2563eb;font-size:.82rem;display:block;white-space:nowrap;line-height:1.7;"><?= htmlspecialchars($nm) ?></code>
+                              <?php endforeach; ?>
+                            </td>
+                            <td><?= htmlspecialchars($d['profit_center'] ?? '-') ?></td>
+                            <td><?= htmlspecialchars($d['subreg'] ?? '-') ?></td>
+                            <td><?= htmlspecialchars($d['deskripsi_dokumen'] ?? '-') ?></td>
+                            <td><?= htmlspecialchars($d['cabang'] ?? '-') ?></td>
+                            <td style="white-space:nowrap;">
+                              <button type="button" class="btn btn-sm btn-outline-secondary"
+                                      onclick="togglePelPreview('pelp-<?= $d['id_dokumen'] ?>','<?= $vurl ?>')">
+                                <i class="bi bi-eye me-1"></i>Lihat Dokumen
+                              </button>
+                              <button type="button" class="btn btn-sm btn-outline-info ms-1"
+                                      onclick="showDetailAsetPel('<?= htmlspecialchars(addslashes($d['nomor_aset'] ?? '')) ?>')">
+                                <i class="bi bi-table me-1"></i>Detail Aset
+                              </button>
+                              <button type="button" class="btn btn-sm btn-outline-danger"
+                                      onclick="confirmHapusDokPelaksanaan(<?= $d['id_dokumen'] ?>, '<?= htmlspecialchars(addslashes($d['deskripsi_dokumen']??'Dokumen')) ?>')">
+                                <i class="bi bi-trash me-1"></i>Hapus
+                              </button>
+                            </td>
+                          </tr>
+                          <?php endforeach; ?>
+                        <?php endif; ?>
+                      </tbody>
+                    </table>
+                  </div>
+                  <!-- Preview panel full-width -->
+                  <div id="previewPanelPel" style="display:none;border-top:2px solid #28a745;">
+                    <div style="background:#f1f5f9;padding:8px 16px;display:flex;align-items:center;justify-content:space-between;">
+                      <span style="font-size:.82rem;color:#374151;font-weight:600;">
+                        <i class="bi bi-file-earmark-pdf text-danger me-1"></i>
+                        Preview: <span id="previewPanelPelLabel">-</span>
+                      </span>
+                      <div style="display:flex;gap:6px;">
+                        <a id="previewPanelPelBuka" href="#" target="_blank" class="btn btn-sm btn-outline-primary" style="font-size:.76rem;">
+                          <i class="bi bi-box-arrow-up-right me-1"></i>Buka
+                        </a>
+                        <button onclick="tutupPreviewPel()" class="btn btn-sm btn-outline-secondary" style="font-size:.76rem;">
+                          <i class="bi bi-x-lg me-1"></i>Tutup
+                        </button>
+                      </div>
+                    </div>
+                    <iframe id="previewPanelPelFrame" src="" style="width:100%;height:600px;border:none;display:block;"></iframe>
+                  </div>
+                </div>
+              </div>
+              <!-- Controls tblDokPelaksanaan: pagination di luar tabel -->
+              <div id="tblDokPelaksanaan_controls" style="min-height:42px;"></div>
+          </div><!-- end tab-content -->
+        </div>
+      </div><!-- end card -->
+    </div>
+  </main>
+  <footer class="app-footer">
+    <div class="footer-inner">
+      <strong class="footer-text">Copyright &copy; Proyek Aset Tetap Regional 3&nbsp;</strong>
+      <div class="footer-right d-none d-sm-inline">PT Pelabuhan Indonesia (Persero)</div>
+    </div>
+  </footer>
+</div>
 
 <!-- MODAL DETAIL ASET PELAKSANAAN -->
-<div class="modal fade" id="modalDetailAsetPel" tabindex="-1" aria-hidden="true">
+<div class="modal fade" id="modalDetailAsetPel" tabindex="-1" aria-modal="true">
   <div class="modal-dialog modal-xl modal-dialog-centered">
     <div class="modal-content" style="border-radius:6px;overflow:hidden;">
       <div class="modal-header" style="background:#fff;border-bottom:2px solid #0d6efd;padding:14px 20px;">
@@ -1030,13 +1371,38 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
 </div>
 <!-- END MODAL DETAIL ASET PELAKSANAAN -->
 
+<!-- MODAL HAPUS DOKUMEN PENDUKUNG -->
+<div class="modal fade" id="modalHapusDokPelaksanaan" tabindex="-1" aria-modal="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header bg-danger text-white">
+        <h5 class="modal-title"><i class="bi bi-trash me-2"></i>Hapus Dokumen</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <form method="POST">
+        <input type="hidden" name="action" value="hapus_dok_pelaksanaan">
+        <input type="hidden" name="tahun_filter" value="<?= $filterTahun ?>">
+        <input type="hidden" name="id_dokumen" id="hapusDokPelaksanaanId">
+        <div class="modal-body">
+          <p>Anda akan menghapus dokumen:</p>
+          <p class="fw-bold text-danger" id="hapusDokPelaksanaanNama"></p>
+          <p class="text-muted small">Aksi ini tidak dapat dibatalkan.</p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Batal</button>
+          <button type="submit" class="btn btn-danger btn-sm"><i class="bi bi-trash me-1"></i>Ya, Hapus</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
 
 <!-- MODAL DETAIL -->
-<div class="modal fade" id="modalDetail" tabindex="-1" aria-hidden="true">
+<div class="modal fade" id="modalDetail" tabindex="-1" aria-modal="true">
   <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
     <div class="modal-content">
       <div class="modal-header" style="background:linear-gradient(135deg,#0b3a8c,#1d6ed8);color:#fff;">
-        <div><h5 class="modal-title mb-0"><i class="bi bi-clipboard-data me-2"></i>Detail Pelaksanaan Penghapusan</h5><small id="modalSubtitle" style="opacity:.8;font-size:.8rem;"></small></div>
+        <div><h5 class="modal-title mb-0"><i class="bi bi-tools me-2"></i>Detail Pelaksanaan</h5><small id="modalSubtitle" style="opacity:.8;font-size:.8rem;"></small></div>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body p-0" id="modalDetailBody"></div>
@@ -1049,7 +1415,7 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
 </div>
 
 <!-- MODAL EDIT -->
-<div class="modal fade" id="modalEdit" tabindex="-1" aria-hidden="true">
+<div class="modal fade" id="modalEdit" tabindex="-1" aria-modal="true">
   <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
     <div class="modal-content">
       <div class="modal-header" style="background:#0b3a8c;color:#fff;">
@@ -1107,10 +1473,12 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
               <!-- Dropdown Jual Lelang -->
               <select name="status_pelaksanaan" id="edit_status_lelang" class="form-select edit-status-select" required
                       style="flex:1;font-weight:600;font-size:.9rem;height:38px;"
-                      onchange="updateStatusBadge(this.value)">
+                      onchange="updateStatusBadge(this.value); toggleCatatanField(this.value);">
                 <option value="Appraisal Aset">Appraisal Aset</option>
                 <option value="Proses Lelang">Proses Lelang</option>
                 <option value="Terjual">Terjual</option>
+                <option value="Lelang Tidak Laku">Lelang Tidak Laku</option>
+                <option value="Ditunda">Ditunda</option>
               </select>
               <!-- Dropdown Hapus Administrasi -->
               <select name="status_pelaksanaan" id="edit_status_hapus" class="form-select edit-status-select" required
@@ -1119,6 +1487,16 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                 <option value="Disetujui">Disetujui</option>
                 <option value="Hapus Administrasi">Hapus Administrasi</option>
               </select>
+            </div>
+            <!-- Catatan: wajib diisi untuk status Lelang Tidak Laku / Ditunda, opsional untuk status lain -->
+            <div id="seksi_catatan_pelaksanaan" style="margin-top:12px;display:none;">
+              <label class="form-label fw-semibold" style="font-size:.8rem;">
+                <i class="bi bi-chat-square-text me-1"></i>Catatan / Alasan
+              </label>
+              <textarea name="catatan_pelaksanaan" id="edit_catatan_pelaksanaan" class="form-control" rows="3"
+                        placeholder="Contoh: Tidak Laku / Penundaan penghapusan sesuai surat Direktur Keuangan nomor ..., atau alasan lain"></textarea>
+              <div class="form-text text-muted mt-1" style="font-size:.75rem;">
+              </div>
             </div>
           </div>
 
@@ -1224,6 +1602,112 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
   </div>
 </div>
 
+<!-- ══ MODAL: PILIH ASET (Upload Tab) ══ -->
+<div class="modal fade" id="modalPelAsetPicker" tabindex="-1" aria-modal="true">
+  <div class="modal-dialog modal-xl modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header bg-primary text-white">
+        <h5 class="modal-title"><i class="bi bi-search me-2"></i>Pilih Nomor Aset</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-info d-flex align-items-center mb-2">
+          <i class="bi bi-info-circle me-2 flex-shrink-0"></i>
+          <div><strong>Multiple Select:</strong> Centang beberapa aset jika 1 dokumen berlaku untuk beberapa aset sekaligus.</div>
+        </div>
+        <!-- Search bar -->
+        <div class="input-group mb-2">
+          <span class="input-group-text bg-white"><i class="bi bi-search text-muted"></i></span>
+          <input type="text" id="pelPickerSearch" class="form-control"
+                 placeholder="Cari nomor aset, nama aset, profit center, subreg, status..."
+                 autocomplete="off">
+          <button type="button" class="btn btn-outline-secondary" id="btnClearPickerSearch" style="display:none;" title="Hapus pencarian">
+            <i class="bi bi-x-lg"></i>
+          </button>
+        </div>
+        <!-- Info + badge dipilih -->
+        <div class="d-flex align-items-center justify-content-between mb-2" style="min-height:28px;">
+          <span style="font-size:.82rem;color:#6b7280;">
+            Menampilkan <strong id="pelPickerVisibleCount"><?= count($data_pelaksanaan) ?></strong> dari <strong><?= count($data_pelaksanaan) ?></strong> aset
+          </span>
+          <div id="pelPickerSelectedCount" style="display:none;font-size:.82rem;color:#166534;background:#bbf7d0;border-radius:20px;padding:2px 12px;">
+            <i class="bi bi-check-circle me-1"></i><strong><span id="pelPickerCountNum">0</span> dipilih</strong>
+          </div>
+        </div>
+        <div class="table-responsive" style="max-height:420px;overflow-y:auto;">
+          <table class="table table-bordered table-hover table-sm w-100" id="pelAsetPickerTable">
+            <thead class="table-light" style="position:sticky;top:0;z-index:2;">
+              <tr>
+                <th style="width:42px;"><input type="checkbox" id="selectAllPelPicker" class="form-check-input" title="Pilih semua yang tampil"></th>
+                <th style="white-space:nowrap;min-width:120px;">Nomor Aset</th>
+                <th style="white-space:nowrap;min-width:100px;">Nama Aset</th>
+                <th style="white-space:nowrap;min-width:150px;">Mekanisme</th>
+                <th style="white-space:nowrap;min-width:120px;">Profit Center</th>
+                <th style="white-space:nowrap;min-width:100px;">SubReg</th>
+                <th style="white-space:nowrap;min-width:100px;">Status</th>
+              </tr>
+            </thead>
+            <tbody id="pelPickerTbody">
+              <?php
+              $uploaded_nomors = [];
+              foreach ($daftar_dok_pelaksanaan as $dpel) {
+                  $parts = array_map('trim', explode(';', $dpel['nomor_aset'] ?? ''));
+                  foreach ($parts as $part) {
+                      if ($part !== '') $uploaded_nomors[$part] = true;
+                  }
+              }
+              ?>
+              <?php foreach ($data_pelaksanaan as $p):
+                $sdh_pelaksanaan = isset($uploaded_nomors[$p['nomor_asset_utama']]);
+                $stPel   = $p['status_pelaksanaan'] ?? '';
+                $stLower = strtolower($stPel);
+                if ($stLower === 'terjual') {
+                  $stBadgeStyle = 'background:#bbf7d0;color:#166534;';
+                } elseif ($stLower === 'proses lelang') {
+                  $stBadgeStyle = 'background:#ede9fe;color:#5b21b6;';
+                } elseif ($stLower === 'appraisal aset') {
+                  $stBadgeStyle = 'background:#fef9c3;color:#854d0e;';
+                } elseif ($stLower === 'hapus administrasi' || $stLower === 'telah dimusnahkan') {
+                  $stBadgeStyle = 'background:#fee2e2;color:#991b1b;';
+                } else {
+                  $stBadgeStyle = 'background:#dbeafe;color:#1d4ed8;';
+                }
+                $stLabel = ($stLower === 'telah dimusnahkan') ? 'Hapus Administrasi' : ($stPel ?: 'Disetujui');
+              ?>
+              <tr class="picker-row <?= $sdh_pelaksanaan ? 'table-secondary' : '' ?>"
+                  data-search="<?= strtolower(htmlspecialchars(($p['nomor_asset_utama']??'').' '.($p['nama_aset']??'').' '.($p['profit_center_text']??$p['profit_center']??'').' '.($p['subreg']??'').' '.($p['mekanisme_penghapusan']??'').' '.$stLabel, ENT_QUOTES)) ?>">
+                <td class="text-center">
+                  <input type="checkbox" class="form-check-input pel-picker-check"
+                         value="<?= $p['id'] ?>"
+                         data-nomor="<?= htmlspecialchars($p['nomor_asset_utama'], ENT_QUOTES) ?>"
+                         data-nama="<?= htmlspecialchars($p['nama_aset'] ?? '-', ENT_QUOTES) ?>"
+                         <?= $sdh_pelaksanaan ? 'checked disabled' : '' ?>>
+                </td>
+                <td><code style="color:#2563eb;font-size:.82rem;"><?= htmlspecialchars($p['nomor_asset_utama']) ?></code></td>
+                <td><?= htmlspecialchars($p['nama_aset']??'-') ?></td>
+                <td><?= htmlspecialchars($p['mekanisme_penghapusan']??'-') ?></td>
+                <td><?= htmlspecialchars($p['profit_center_text']??$p['profit_center']??'-') ?></td>
+                <td><?= htmlspecialchars($p['subreg']??'-') ?></td>
+                <td><span style="font-size:.75rem;padding:2px 10px;border-radius:20px;font-weight:600;<?= $stBadgeStyle ?>"><?= htmlspecialchars($stLabel) ?></span></td>
+              </tr>
+              <?php endforeach; ?>
+            </tbody>
+          </table>
+          <div id="pelPickerNoResult" style="display:none;text-align:center;padding:24px;color:#9ca3af;font-size:.88rem;">
+            <i class="bi bi-search" style="font-size:1.4rem;display:block;margin-bottom:6px;"></i>
+            Tidak ada aset yang cocok.
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Batal</button>
+        <button type="button" class="btn btn-primary btn-sm" id="btnConfirmPelPicker">
+          <i class="bi bi-check-circle me-1"></i>Konfirmasi Pilihan
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script src="../../dist/js/jquery-3.7.1.min.js"></script>
 <script src="../../dist/js/bootstrap.bundle.min.js"></script>
@@ -1232,23 +1716,121 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
 const dataPelaksanaan = <?= json_encode($data_pelaksanaan) ?>;
 const dataDokHo       = <?= json_encode($daftar_dok_ho) ?>;
 const dataDokUsulan   = <?= json_encode($daftar_dok_usulan) ?>;
+const dataDokPelaksanaan = <?= json_encode($daftar_dok_pelaksanaan) ?>;
 
 $(document).ready(function() {
+  // Helper: init DataTable on a table
   function initDT(tableId) {
     if (!$('#' + tableId + ' tbody tr').length) return;
-    var noOrderCols = tableId === 'tblJualLelang' ? [0, 11, 12] : [0, 12, 13];
-    $('#' + tableId).DataTable({
-      language:{search:"Cari:",lengthMenu:"Tampilkan _MENU_ data",info:"_START_-_END_ dari _TOTAL_ data",
-        paginate:{first:"&laquo;",previous:"&lsaquo;",next:"&rsaquo;",last:"&raquo;"},zeroRecords:"Tidak ada data"},
-      pageLength:10,
-      lengthMenu:[10, 25, 50, 100],
-      columnDefs:[{orderable:false, targets: noOrderCols}],
-      order: [[1, 'asc']],
+    if ($('#' + tableId + ' tbody tr td[colspan]').length) return;
+
+    var noOrderCols = tableId === 'tblJualLelang' ? [0, 11, 12]
+                    : tableId === 'tblHapusAdmin' ? [0, 12, 13]
+                    : [7];
+
+    // ── Bangun top bar (Tampilkan entri + Cari) SENDIRI, bukan nyomot dari DataTables ──
+    // (lebih pasti / tidak tergantung struktur HTML internal versi DataTables yang dipakai)
+    var $tableResp = $('#' + tableId).closest('.table-responsive');
+    var $topBar = $(
+      '<div class="dt-top-bar" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:10px 16px;border-bottom:1px solid #e9ecef;width:100%;">' +
+        '<div style="display:flex;align-items:center;gap:6px;font-size:.85rem;color:#374151;white-space:nowrap;">' +
+          '<span>Tampilkan</span>' +
+          '<select class="form-select form-select-sm dt-custom-length" style="width:auto;display:inline-block;">' +
+            '<option value="10">10</option><option value="25">25</option><option value="50">50</option><option value="100">100</option>' +
+          '</select>' +
+          '<span>entri</span>' +
+        '</div>' +
+        '<div style="display:flex;align-items:center;gap:6px;font-size:.85rem;color:#374151;white-space:nowrap;">' +
+          '<span>Cari:</span>' +
+          '<input type="search" class="form-control form-control-sm dt-custom-search" placeholder="kata kunci pencarian" style="width:200px;">' +
+        '</div>' +
+      '</div>'
+    );
+    if ($tableResp.length) { $tableResp.before($topBar); } else { $('#' + tableId).before($topBar); }
+
+    var table = $('#' + tableId).DataTable({
+      language: { url: '../../dist/js/i18n/id.json' },
+      pageLength: 10,
+      lengthMenu: [10, 25, 50, 100],
+      columnDefs: [{ orderable: false, targets: noOrderCols }],
+      order: tableId === 'tblDokPelaksanaan' ? [[0, 'desc']] : [[1, 'asc']],
+      scrollX: true,
+      dom: 't', // hanya render tabelnya; kontrol length/search/info/paginate kita bikin sendiri
       rowCallback: function(row, data, index) {
-        var info = this.api().page.info();
-        $('td:first', row).html(info.start + index + 1);
+        if (tableId !== 'tblDokPelaksanaan') {
+          var info = this.api().page.info();
+          $('td:first', row).html(info.start + index + 1);
+        }
       }
     });
+
+    // Sambungkan kontrol length & search custom ke DataTables API
+    $topBar.find('.dt-custom-length').val(10).on('change', function() {
+      table.page.len(parseInt($(this).val(), 10) || 10).draw();
+    });
+    var _dtSearchTimer;
+    $topBar.find('.dt-custom-search').on('input', function() {
+      var val = $(this).val();
+      clearTimeout(_dtSearchTimer);
+      _dtSearchTimer = setTimeout(function() { table.search(val).draw(); }, 250);
+    });
+
+    // ── Bangun bottom bar (info + pagination) SENDIRI juga ──
+    var $botBar = $('#' + tableId + '_controls');
+    $botBar.empty().css({
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      flexWrap: 'wrap', gap: '8px', padding: '10px 0', minHeight: '42px', width: '100%'
+    });
+    var $infoWrap = $('<div style="font-size:.82rem;color:#6b7280;"></div>');
+    var $pagWrap  = $('<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;"></div>');
+    $botBar.append($infoWrap).append($pagWrap);
+
+    function pageBtn(label, page, disabled, active) {
+      var $b = $('<button type="button"></button>').text(label).css({
+        padding: '4px 10px', fontSize: '.8rem', borderRadius: '6px',
+        background: active ? '#0b3a8c' : '#fff',
+        color: active ? '#fff' : (disabled ? '#c0c5cc' : '#0b3a8c'),
+        border: '1px solid ' + (active ? '#0b3a8c' : '#dee2e6'),
+        cursor: (disabled || active) ? 'default' : 'pointer'
+      });
+      if (!disabled && !active) $b.on('click', function() { table.page(page).draw('page'); });
+      return $b;
+    }
+
+    function renderControls() {
+      var info = table.page.info();
+      var awal  = info.recordsDisplay === 0 ? 0 : info.start + 1;
+      var akhir = info.end;
+      $infoWrap.text(
+        'Menampilkan ' + awal + ' sampai ' + akhir + ' dari ' + info.recordsDisplay + ' entri' +
+        (info.recordsDisplay !== info.recordsTotal ? ' (disaring dari ' + info.recordsTotal + ' total entri)' : '')
+      );
+
+      $pagWrap.empty();
+      var totalPages = info.pages || 1;
+      var current    = info.page;
+      $pagWrap.append(pageBtn('Pertama', 0, current === 0));
+      $pagWrap.append(pageBtn('Sebelumnya', current - 1, current === 0));
+
+      var start = Math.max(0, current - 2);
+      var end   = Math.min(totalPages - 1, current + 2);
+      if (start > 0) {
+        $pagWrap.append(pageBtn('1', 0, false));
+        if (start > 1) $pagWrap.append($('<span>...</span>').css({ padding: '0 4px', color: '#9ca3af' }));
+      }
+      for (var i = start; i <= end; i++) {
+        $pagWrap.append(pageBtn(String(i + 1), i, false, i === current));
+      }
+      if (end < totalPages - 1) {
+        if (end < totalPages - 2) $pagWrap.append($('<span>...</span>').css({ padding: '0 4px', color: '#9ca3af' }));
+        $pagWrap.append(pageBtn(String(totalPages), totalPages - 1, false));
+      }
+      $pagWrap.append(pageBtn('Selanjutnya', current + 1, current >= totalPages - 1));
+      $pagWrap.append(pageBtn('Terakhir', totalPages - 1, current >= totalPages - 1));
+    }
+    table.on('draw', renderControls);
+    renderControls();
+
     function refreshSortIcons() {
       $('#' + tableId + ' thead th').each(function() {
         $(this).find('.sort-icon').remove();
@@ -1262,10 +1844,11 @@ $(document).ready(function() {
     }
     refreshSortIcons();
     $('#' + tableId).on('order.dt', refreshSortIcons);
-  }
+}
+
   initDT('tblJualLelang');
   initDT('tblHapusAdmin');
-
+  initDT('tblDokPelaksanaan');
 });
 
 
@@ -1278,6 +1861,8 @@ const stConfig = {
   'Appraisal Aset':     {cls:'st-appraisal', ic:'bi-calculator'},
   'Proses Lelang':      {cls:'st-lelang',    ic:'bi-arrow-repeat'},
   'Terjual':            {cls:'st-terjual',   ic:'bi-bag-check'},
+  'Lelang Tidak Laku':  {cls:'st-tidaklaku', ic:'bi-x-circle'},
+  'Ditunda':            {cls:'st-ditunda',   ic:'bi-pause-circle'},
   'Hapus Administrasi': {cls:'st-musnahkan', ic:'bi-trash3'},
   'Telah Dimusnahkan':  {cls:'st-musnahkan', ic:'bi-trash3'},
   'Telah dimusnahkan':  {cls:'st-musnahkan', ic:'bi-trash3'},
@@ -1293,6 +1878,9 @@ function normalizeStatus(s) {
     'appraisal aset': 'Appraisal Aset',
     'proses lelang': 'Proses Lelang',
     'terjual': 'Terjual',
+    'lelang tidak laku': 'Lelang Tidak Laku',
+    'tidak laku': 'Lelang Tidak Laku',
+    'ditunda': 'Ditunda',
     'hapus administrasi': 'Hapus Administrasi',
     'telah dimusnahkan': 'Hapus Administrasi',
   };
@@ -1329,6 +1917,12 @@ function openDetail(id) {
 
   const dokHo  = dataDokHo.filter(d => d.id_pelaksanaan == p.id && (d.kategori === 'ho' || !d.kategori));
   const dokUsl = dataDokUsulan.filter(d => d.usulan_id == p.usulan_id);
+  const dokPelaksanaan = dataDokPelaksanaan.filter(d => {
+    if (d.id_pelaksanaan == p.id) return true;
+    if (!d.nomor_aset || !p.nomor_asset_utama) return false;
+    const nomors = d.nomor_aset.split(';').map(n => n.trim());
+    return nomors.includes(p.nomor_asset_utama.trim());
+});
 
   const makeDokRow = (d, i, urlKey, descKey, isHo) => {
     const url = isHo ? `?action=view_dok_ho&id_dok=${d.id_dokumen}` : `?action=view_dok_usulan&id_dok=${d.id_dokumen}`;
@@ -1380,21 +1974,69 @@ function openDetail(id) {
 
   const dokHoHtml   = dokHo.length   ? dokHo.map((d,i)   => makeDokRow(d,i,null,null,true)).join('')  : '<p class="text-muted small mb-0">Belum ada dokumen HO.</p>';
   const dokUslHtml  = dokUsl.length  ? dokUsl.map((d,i)  => makeDokRow(d,i,null,null,false)).join('') : '<p class="text-muted small mb-0">Belum ada dokumen usulan.</p>';
+  const dokPelaksanaanHtml = dokPelaksanaan.length ? dokPelaksanaan.map((d,i) => {
+    const url = `?action=view_dok_ho&id_dok=${d.id_dokumen}`;
+    const pid = `dp-${d.id_dokumen}`;
+    const label = d.deskripsi_dokumen || 'Dokumen Pelaksanaan';
+    const tahunInfo = `<span style="color:#9ca3af;font-size:.75rem;">Tahun ${d.tahun_usulan || d.tahun_dokumen||'--'}</span>`;
+    return `<div style="padding:10px 0;${i>0?'border-top:1px solid #f3f4f6':''}">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;">
+        <div style="flex:1;">
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;">
+            <span style="font-weight:600;font-size:0.88rem;">${label}</span>
+            ${tahunInfo}
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0;margin-left:12px;">
+          <button onclick="togglePrev('${pid}','${url}')"
+                  class="btn btn-sm btn-outline-info"
+                  style="font-size:0.76rem;padding:2px 9px;"
+                  title="Preview Dokumen">
+            <i class="bi bi-file-text me-1"></i>
+          </button>
+          <a href="${url}" target="_blank"
+             class="btn btn-sm btn-outline-primary"
+             style="font-size:0.76rem;padding:2px 9px;"
+             title="Buka di tab baru">
+            <i class="bi bi-box-arrow-up-right me-1"></i>Buka
+          </a>
+        </div>
+      </div>
+      <div id="${pid}" style="display:none;margin-top:8px;">
+        <div style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;background:#f8fafc;">
+          <div style="padding:6px 12px;background:#f1f5f9;border-bottom:1px solid #e2e8f0;font-size:0.75rem;color:#64748b;display:flex;align-items:center;justify-content:space-between;">
+            <span><i class="bi bi-file-earmark-pdf text-danger me-1"></i>Preview Dokumen</span>
+            <button onclick="togglePrev('${pid}',null)"
+                    class="btn btn-sm" style="padding:0 4px;font-size:0.7rem;color:#94a3b8;line-height:1;">
+              <i class="bi bi-x-lg"></i> Tutup
+            </button>
+          </div>
+          <iframe id="${pid}-frame" src=""
+                  style="width:100%;height:560px;border:none;display:block;"
+                  title="Preview Dokumen PDF">
+          </iframe>
+        </div>
+      </div>
+    </div>`;
+  }).join('') : '<p class="text-muted small mb-0">Belum ada dokumen pelaksanaan.</p>';
 
   const totalDokumen = (parseInt(p.jml_dok_ho || 0, 10) + parseInt(p.jml_dok_usulan || 0, 10));
   const umurAsetBadge = (() => {
     const raw = p.umur_ekonomis;
     if (raw === null || raw === undefined || raw === '') return '&mdash;';
     const months = Number(raw);
-    if (!Number.isFinite(months) || months <= 0) return '&mdash;';
-    const thn = Math.round(months / 12);
+    if (!Number.isFinite(months)) return '&mdash;';
+    // 0 bulan tetap dianggap di bawah 5 tahun (bukan —)
     if (months < 60) {
-      return `<span style="font-weight:600;color:#065f46;">Di bawah 5 tahun</span> <small style="color:#9ca3af;">(${months} bln)</small>`;
+      return `<span style="font-weight:600;">< 5 thn</span>`;
     } else {
-      return `<span style="font-weight:600;color:#92400e;">Sampai dengan ${thn} tahun</span> <small style="color:#9ca3af;">(${months} bln)</small>`;
+      return `<span style="font-weight:600;">s.d 5 thn</span>`;
     }
   })();
-  const mekanismeBadge = p.mekanisme_penghapusan === 'Hapus Administrasi' ? '<span class="badge-pill" style="background:#ffedd5;color:#c2410c;">Hapus Administrasi</span>' : p.mekanisme_penghapusan === 'Jual Lelang' ? '<span class="badge-pill" style="background:#e0f2fe;color:#0369a1;">Jual Lelang</span>' : (p.mekanisme_penghapusan || '&mdash;');
+  const mekanismeBadge = p.mekanisme_penghapusan === 'Hapus Administrasi' 
+  ? '<span class="badge-pill" style="background:#ffedd5;color:#c2410c;">Hapus Administrasi</span>' 
+  : p.mekanisme_penghapusan === 'Jual Lelang' 
+  ? '<span class="badge-pill" style="background:#e0f2fe;color:#0369a1;">Jual Lelang</span>' : (p.mekanisme_penghapusan || '&mdash;');
   const fotoHtml = p.foto_path
     ? `<div class="text-center py-3" style="background:#f8f9fa;border-bottom:1px solid #f0f0f0;">
          <img src="${p.foto_path}" class="foto-aset-img img-fluid"
@@ -1426,7 +2068,7 @@ function openDetail(id) {
         <div class="detail-item"><div class="detail-item-label">Sisa Umur Ekonomis</div><div class="detail-item-value">${p.sisa_umur_ekonomis ? p.sisa_umur_ekonomis + ' bulan' : '&mdash;'}</div></div>
         <div class="detail-item"><div class="detail-item-label">Jumlah Aset</div><div class="detail-item-value">${p.jumlah_aset||'&mdash;'}</div></div>
         <div class="detail-item"><div class="detail-item-label">Mekanisme Penghapusan</div><div class="detail-item-value">${mekanismeBadge}</div></div>
-        <div class="detail-item"><div class="detail-item-label">Fisik Aset</div><div class="detail-item-value">${p.fisik_aset ? `<span class="badge-pill" style="background:${p.fisik_aset==='Ada'?'#d1fae5':'#fee2e2'};color:${p.fisik_aset==='Ada'?'#065f46':'#991b1b'};">${p.fisik_aset}</span>` : '&mdash;'}</div></div>
+       <div class="detail-item"><div class="detail-item-label">Fisik Aset</div><div class="detail-item-value">${p.fisik_aset ? `<div style="font-size:.78rem;font-weight:600;">${p.fisik_aset}</div>` : '&mdash;'}</div></div>
         <div class="detail-item"><div class="detail-item-label">Jumlah Dokumen</div><div class="detail-item-value"><span class="badge-pill" style="background:#0ea5e9;color:#fff;">${totalDokumen} file(s)</span></div></div>
       </div>
     </div>
@@ -1440,6 +2082,9 @@ function openDetail(id) {
     </div>
     <div class="detail-section" style="background:#f8faff;"><div class="detail-section-title"><i class="bi bi-arrow-right-circle"></i> Progres Pelaksanaan</div>
       <div class="status-track">${trackHtml}</div>
+      ${p.catatan_pelaksanaan ? `<div style="margin-top:12px;padding:10px 14px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;font-size:.82rem;color:#7c2d12;">
+        <i class="bi bi-chat-square-text me-1"></i><b>Catatan:</b> ${p.catatan_pelaksanaan}
+      </div>` : ''}
     </div>
     <div class="detail-section"><div class="detail-section-title"><i class="bi bi-calendar3"></i> Tanggal</div>
       <div class="detail-grid">
@@ -1465,7 +2110,7 @@ function openDetail(id) {
     </div>
     <div class="detail-section"><div class="detail-section-title"><i class="bi bi-file-earmark-pdf"></i> Dokumen Usulan</div><div style="padding:0 4px;">${dokUslHtml}</div></div>
     <div class="detail-section"><div class="detail-section-title"><i class="bi bi-patch-check"></i> Dokumen Persetujuan HO</div><div style="padding:0 4px;">${dokHoHtml}</div></div>
-  `;
+    <div class="detail-section"><div class="detail-section-title"><i class="bi bi-file-earmark-check"></i> Dokumen Pelaksanaan</div><div style="padding:0 4px;">${dokPelaksanaanHtml}</div></div>`;
 
   // Simpan id aktif agar tombol Edit di footer modal bisa pakai
   window._currentDetailId = id;
@@ -1485,6 +2130,8 @@ function switchEditTab(tabId, btn) {
   if (btn) btn.classList.add('active');
 }
 
+// ── Upload: file select (modal — no longer used, kept for safety) ──────────
+function handleFileSelect(input) {}
 
 // ── Update status badge ────────────────────────────────────────────────────
 function updateStatusBadge(val) {
@@ -1497,12 +2144,31 @@ function updateStatusBadge(val) {
     'Appraisal Aset':    'st-appraisal',
     'Proses Lelang':     'st-lelang',
     'Terjual':           'st-terjual',
+    'Lelang Tidak Laku': 'st-tidaklaku',
+    'Ditunda':           'st-ditunda',
     'Hapus Administrasi':'st-musnahkan',
     'Ditolak':           'st-ditolak',
   };
   badge.classList.add(map[normVal] || 'st-disetujui');
   badge.textContent = normVal || val;
 
+}
+
+// ── Tampilkan/sembunyikan field Catatan sesuai status ──────────────────────
+// Wajib untuk "Lelang Tidak Laku" & "Ditunda" (biar alasan/nomor surat kecatat),
+// tapi tetap boleh diisi optional untuk status lain juga (form-nya selalu ada, cuma disembunyikan defaultnya).
+function toggleCatatanField(status) {
+  const wrap = document.getElementById('seksi_catatan_pelaksanaan');
+  const field = document.getElementById('edit_catatan_pelaksanaan');
+  if (!wrap || !field) return;
+  const normVal = normalizeStatus(status);
+  const wajib = (normVal === 'Lelang Tidak Laku' || normVal === 'Ditunda');
+  wrap.style.display = 'block'; // selalu tampil biar tetap bisa diisi manual kapan saja
+  field.required = wajib;
+  const label = wrap.querySelector('label');
+  if (label) {
+    label.innerHTML = '<i class="bi bi-chat-square-text me-1"></i>Catatan / Alasan' + (wajib ? ' <span style="color:#dc2626;">*wajib diisi</span>' : ' <span style="color:#9ca3af;font-weight:400;">(opsional)</span>');
+  }
 }
 
 // ── Apply mekanisme: show/hide fields ─────────────────────────────────────
@@ -1521,8 +2187,8 @@ function applyMekanisme(mekanisme) {
 
   if (infoEl) {
     infoEl.innerHTML = isHapus
-      ? '<span class="badge-pill" style="background:#f3e8ff;color:#7c3aed;"><i class="bi bi-trash3 me-1"></i>Hapus Administrasi</span>'
-      : '<span class="badge-pill" style="background:#dbeafe;color:#1d4ed8;"><i class="bi bi-arrow-repeat me-1"></i>Jual Lelang</span>';
+      ? '<span class="badge-pill" style="background:#ffedd5;color:#c2410c;"><i class="bi bi-trash3 me-1"></i>Hapus Administrasi</span>'
+      : '<span class="badge-pill" style="background:#dbeafe;color:#1d4ed8;"><i class="bi bi-hammer me-1"></i>Jual Lelang</span>';
   }
 }
 
@@ -1546,6 +2212,7 @@ function openEdit(id) {
   document.getElementById('edit_nilai_jual').value     = toInt(p.nilai_penjualan);
   document.getElementById('edit_biaya').value          = toInt(p.biaya_lainnya);
   document.getElementById('edit_aset_pengganti').value = p.nomor_aset_pengganti || '';
+  document.getElementById('edit_catatan_pelaksanaan').value = p.catatan_pelaksanaan || '';
   document.getElementById('editSubtitle').textContent  = p.nomor_asset_utama + ' \u2014 ' + (p.nama_aset || '');
 
   const nbAset = p.nilai_buku ? parseFloat(p.nilai_buku).toLocaleString('id-ID', {minimumFractionDigits:0}) : '';
@@ -1571,6 +2238,7 @@ function openEdit(id) {
     if (selL) selL.value = curStatus;
   }
   updateStatusBadge(curStatus);
+  toggleCatatanField(curStatus);
 
   const md = bootstrap.Modal.getInstance(document.getElementById('modalDetail'));
   if (md) { md.hide(); setTimeout(() => new bootstrap.Modal(document.getElementById('modalEdit')).show(), 250); }
@@ -1609,8 +2277,140 @@ function togglePrev(pid, url) {
   }
 }
 
+function updateTabUrl(name) {
+  const url = new URL(window.location);
+  url.searchParams.set('tab', name);
+  history.replaceState({}, '', url);
+}
 
+// ── Upload tab: checkbox multi-select aset ─────────────────────────────────
+function openPelAsetPickerModal() {
+  const s = document.getElementById('pelPickerSearch');
+  if (s && s.value !== '') { s.value = ''; pelPickerDoSearch(''); }
+  new bootstrap.Modal(document.getElementById('modalPelAsetPicker')).show();
+}
 
+function pelPickerDoSearch(q) {
+  const keyword = q.toLowerCase().trim();
+  const rows    = document.querySelectorAll('#pelPickerTbody .picker-row');
+  let visible   = 0;
+  rows.forEach(function(row) {
+    const match = keyword === '' || (row.dataset.search || '').includes(keyword);
+    row.style.display = match ? '' : 'none';
+    if (match) visible++;
+  });
+  const infoEl = document.getElementById('pelPickerVisibleCount');
+  if (infoEl) infoEl.textContent = visible;
+  const noResult = document.getElementById('pelPickerNoResult');
+  if (noResult) noResult.style.display = visible === 0 ? 'block' : 'none';
+  const clearBtn = document.getElementById('btnClearPickerSearch');
+  if (clearBtn) clearBtn.style.display = keyword ? '' : 'none';
+  updatePelPickerCount();
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  document.getElementById('pelPickerSearch')?.addEventListener('input', function() {
+    pelPickerDoSearch(this.value);
+  });
+  document.getElementById('btnClearPickerSearch')?.addEventListener('click', function() {
+    const s = document.getElementById('pelPickerSearch');
+    if (s) { s.value = ''; s.focus(); }
+    pelPickerDoSearch('');
+  });
+
+  document.getElementById('selectAllPelPicker')?.addEventListener('change', function() {
+    const visibleEnabled = [...document.querySelectorAll('#pelPickerTbody .picker-row')]
+      .filter(r => r.style.display !== 'none')
+      .map(r => r.querySelector('.pel-picker-check:not(:disabled)'))
+      .filter(Boolean);
+    visibleEnabled.forEach(c => c.checked = this.checked);
+    updatePelPickerCount();
+  });
+
+  document.querySelectorAll('.pel-picker-check').forEach(c => {
+    c.addEventListener('change', updatePelPickerCount);
+  });
+
+  document.getElementById('btnConfirmPelPicker')?.addEventListener('click', function() {
+    const checked = [...document.querySelectorAll('.pel-picker-check:not(:disabled):checked')];
+    if (!checked.length) { alert('Pilih minimal 1 aset!'); return; }
+
+    const ids    = checked.map(c => c.value);
+    const nomors = checked.map(c => c.dataset.nomor);
+
+    const elIdList  = document.getElementById('upload_pel_id_pelaksanaan_list');
+    const elId      = document.getElementById('upload_pel_id_pelaksanaan');
+    const elNomor   = document.getElementById('upload_pel_nomor_aset');
+    const elDisplay = document.getElementById('upload_pel_nomor_aset_display');
+    const elList    = document.getElementById('upload_pel_selected_list');
+
+    if (elIdList)  elIdList.value  = ids.join('; ');
+    if (elId)      elId.value      = ids[0];
+    if (elNomor)   elNomor.value   = nomors.join('; ');
+    if (elDisplay) elDisplay.value = nomors.length === 1 ? nomors[0] : nomors.length + ' aset dipilih';
+    if (elList) {
+      elList.style.display = 'block';
+      elList.innerHTML = '<strong>Dipilih (' + nomors.length + '):</strong> ' + nomors.join(', ');
+    }
+
+    const modalInst = bootstrap.Modal.getInstance(document.getElementById('modalPelAsetPicker'));
+    if (modalInst) modalInst.hide();
+    checkUploadPelReady();
+  });
+});
+
+function updatePelPickerCount() {
+  const visibleRows    = [...document.querySelectorAll('#pelPickerTbody .picker-row')].filter(r => r.style.display !== 'none');
+  const visibleEnabled = visibleRows.map(r => r.querySelector('.pel-picker-check:not(:disabled)')).filter(Boolean);
+  const visibleChecked = visibleEnabled.filter(c => c.checked);
+  const totalChecked   = document.querySelectorAll('.pel-picker-check:not(:disabled):checked').length;
+  document.getElementById('pelPickerCountNum').textContent = totalChecked;
+  document.getElementById('pelPickerSelectedCount').style.display = totalChecked ? 'inline-block' : 'none';
+  const allEl = document.getElementById('selectAllPelPicker');
+  if (allEl) allEl.checked = visibleEnabled.length > 0 && visibleChecked.length === visibleEnabled.length;
+}
+
+function handlePelFileSelect(input) {
+  const label = document.getElementById('upload_pel_file_label');
+  if (input.files && input.files[0]) {
+    label.textContent = input.files[0].name;
+    label.style.color = '#1d4ed8';
+  } else {
+    label.textContent = 'Maks. 20MB · Format PDF';
+    label.style.color = '#9ca3af';
+  }
+  checkUploadPelReady();
+}
+
+function checkUploadPelReady() {
+  const hasAset = !!document.getElementById('upload_pel_id_pelaksanaan').value;
+  const hasFile = document.getElementById('upload_pel_file').files.length > 0;
+  document.getElementById('btnUploadPel').disabled = !(hasAset && hasFile);
+}
+
+// ── Upload tab: preview dokumen ────────────────────────────────────────────
+let _prevPelActive = null;
+function togglePelPreview(pid, url) {
+  const panel = document.getElementById('previewPanelPel');
+  const frame = document.getElementById('previewPanelPelFrame');
+  const label = document.getElementById('previewPanelPelLabel');
+  const buka  = document.getElementById('previewPanelPelBuka');
+  if (!panel) return;
+  if (_prevPelActive === pid && panel.style.display !== 'none') { tutupPreviewPel(); return; }
+  _prevPelActive = pid;
+  if (frame) frame.src = url;
+  if (label) label.textContent = pid.replace('pelp-','Dokumen #');
+  if (buka)  buka.href = url;
+  panel.style.display = 'block';
+  setTimeout(function() { panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, 150);
+}
+function tutupPreviewPel() {
+  const panel = document.getElementById('previewPanelPel');
+  const frame = document.getElementById('previewPanelPelFrame');
+  if (panel) panel.style.display = 'none';
+  if (frame) frame.src = '';
+  _prevPelActive = null;
+}
 
 
 function showDetailAsetPel(nomorAset) {
@@ -1634,17 +2434,30 @@ function showDetailAsetPel(nomorAset) {
           const mekVal = r.mekanisme_penghapusan || '';
           let mekBadge = '-';
           if (mekVal) {
-            const mekStyle = mekVal === 'Hapus Administrasi' ? 'background:#ffedd5;color:#c2410c;' : mekVal === 'Jual Lelang' ? 'background:#e0f2fe;color:#0369a1;' : 'background:#f3f4f6;color:#6b7280;';
+            const mekStyle = mekVal === 'Hapus Administrasi' ? 'background:#ffedd5;color:#c2410c;' 
+            : mekVal === 'Jual Lelang' ? 'background:#e0f2fe;color:#0369a1;' : 'background:#f3f4f6;color:#6b7280;';
             mekBadge = '<span class="badge" style="' + mekStyle + '">' + mekVal + '</span>';
           }
-          const stVal = r.status_penghapusan || '';
+           const stVal = r.status_penghapusan || '';
           let stBadge = '-';
           if (stVal) {
-            const stStyle = (stVal === 'Approved' || stVal.includes('Approved')) ? 'background:#28a745;color:#fff;'
-              : stVal === 'Submitted' ? 'background:#17a2b8;color:#fff;'
-              : stVal === 'Rejected' ? 'background:#dc3545;color:#fff;'
-              : 'background:#6c757d;color:#fff;';
-            stBadge = '<span class="badge" style="' + stStyle + '">' + stVal + '</span>';
+            const stLower = stVal.toLowerCase();
+            const stStyle = stLower === 'terjual'
+              ? 'background:#bbf7d0;color:#166534;'
+              : stLower === 'proses lelang'
+              ? 'background:#ede9fe;color:#5b21b6;'
+              : stLower === 'appraisal aset'
+              ? 'background:#fef9c3;color:#854d0e;'
+              : (stLower === 'hapus administrasi' || stLower === 'telah dimusnahkan')
+              ? 'background:#fee2e2;color:#991b1b;'
+              : (stLower === 'disetujui' || stLower.includes('approved'))
+              ? 'background:#dbeafe;color:#1d4ed8;'
+              : stLower === 'submitted'
+              ? 'background:#e0f2fe;color:#0369a1;'
+              : stLower === 'rejected' || stLower === 'ditolak'
+              ? 'background:#fee2e2;color:#991b1b;'
+              : 'background:#f3f4f6;color:#374151;';
+            stBadge = '<span style="font-size:.75rem;padding:2px 10px;border-radius:20px;font-weight:600;' + stStyle + '">' + stVal + '</span>';
           }
           const namaLink = '<a href="#" style="color:#0d6efd;text-decoration:none;">' + (r.keterangan_asset || '-') + '</a>';
           tbody.innerHTML += '<tr style="background:' + (i%2===0?'#f8f9fa':'#fff') + '">'
@@ -1660,6 +2473,11 @@ function showDetailAsetPel(nomorAset) {
       }
     })
     .catch(() => { tbody.innerHTML = '<tr><td colspan="5" class="text-center py-3 text-danger">Gagal memuat data.</td></tr>'; });
+}
+function confirmHapusDokPelaksanaan(id, nama) {
+  document.getElementById('hapusDokPelaksanaanId').value   = id;
+  document.getElementById('hapusDokPelaksanaanNama').textContent = nama || 'Dokumen #' + id;
+  new bootstrap.Modal(document.getElementById('modalHapusDokPelaksanaan')).show();
 }
 </script>
 <script src="../../dist/js/overlayscrollbars.browser.es6.min.js"></script>
