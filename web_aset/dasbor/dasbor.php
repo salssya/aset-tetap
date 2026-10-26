@@ -236,62 +236,66 @@ $con = mysqli_connect($servername, $username, $password, $dbname);
             $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '" . mysqli_real_escape_string($con, $userNipp) . "' ORDER BY menus.urutan_menu ASC";
             $result_menu = mysqli_query($con, $query) or die(mysqli_error($con));
              $iconMap = [
-                'Dasboard'                        => 'bi bi-grid-fill',
-                'Usulan Penghapusan'              => 'bi bi-file-earmark-plus',
-                'Daftar Usulan Penghapusan'       => 'bi bi-collection',
-                'Approval SubReg'                 => 'bi bi-person-check',
-                'Approval Regional'               => 'bi bi-building-check',
-                'Persetujuan Penghapusan'         => 'bi bi-shield-check',
-                'Daftar Persetujuan Penghapusan'  => 'bi bi-journal-check',
-                'Pelaksanaan Penghapusan'         => 'bi bi-gear-wide-connected',
-                'Daftar Pelaksanaan Penghapusan'  => 'bi bi-archive-fill',
-                'Manajemen Menu'                  => 'bi bi-layout-text-sidebar',
-                'Import DAT'                      => 'bi bi-file-earmark-arrow-up',
+                'Dasboard'                           => 'bi bi-grid-fill', 
 
-                // Penyusutan
-                'Import Data Penyusutan'          => 'bi bi-upload',
-                'Daftar Data Penyusutan'          => 'bi bi-table',
-                'Dasbor Monitoring Beban Penyusutan'  => 'bi-bar-chart-line',
+                'Usulan Penghapusan'                 => 'bi bi-file-earmark-plus', 
+                'Daftar Usulan Penghapusan'          => 'bi bi-collection',
+                'Approval SubReg'                    => 'bi bi-person-check', 
+                'Approval Regional'                  => 'bi bi-building-check', 
+                'Persetujuan Penghapusan'            => 'bi bi-shield-check',
+                'Pelaksanaan Penghapusan'            => 'bi bi-gear-wide-connected', 
+                'Daftar Pelaksanaan Penghapusan'     => 'bi bi-archive-fill',
+                'Daftar Aset Tetap'                  => 'bi bi-boxes',    
 
-                // Monitoring SAP-DAT
-                'Import Data Monitoring'          => 'bi bi-upload',
-                'Daftar Data Monitoring'          => 'bi bi-table',
-                'Dasbor Monitoring SAP-DAT'       => 'bi bi-speedometer2',
+                'Import Data Penyusutan'             => 'bi bi-upload', 
+                'Daftar Data Penyusutan'             => 'bi bi-table', 
+                'Dasbor Monitoring Beban Penyusutan' => 'bi-bar-chart-line',
 
-                'Daftar Aset Tetap'               => 'bi bi-boxes',
-                'Manajemen User'                  => 'bi bi-people',
+                'Import Data Monitoring'             => 'bi bi-upload', 
+                'Daftar Data Monitoring'             => 'bi bi-table', 
+                'Dasbor Mutasi Aset Tetap'           => 'bi bi-speedometer2',
+                'Dasbor Selisih Percabang'           => 'bi bi-card-checklist', 
+                'Dasbor Mutasi Aset Tak Berwujud'    => 'bi bi-file-earmark-text',
+                'Dasbor Mutasi Properti Investasi'   => 'bi bi-house-fill',
+
+                'Import DAT'                         => 'bi bi-upload',
+                'Manajemen Menu'                     => 'bi bi-layout-text-sidebar', 
+                'Manajemen User'                     => 'bi bi-people',
             ];
-
             $groupMap = [
-                'Usulan Penghapusan'              => 'Penghapusan',
-                'Daftar Usulan Penghapusan'       => 'Penghapusan',
-                'Approval SubReg'                 => 'Penghapusan',
-                'Approval Regional'               => 'Penghapusan',
-                'Persetujuan Penghapusan'         => 'Penghapusan',
-                'Daftar Persetujuan Penghapusan'  => 'Penghapusan',
-                'Pelaksanaan Penghapusan'         => 'Penghapusan',
-                'Daftar Aset Tetap'               => 'Penghapusan',
-                'Daftar Pelaksanaan Penghapusan'  => 'Penghapusan',
+                'Usulan Penghapusan'                 => 'Penghapusan Aset', 
+                'Daftar Usulan Penghapusan'          => 'Penghapusan Aset', 
+                'Approval SubReg'                    => 'Penghapusan Aset',
+                'Approval Regional'                  => 'Penghapusan Aset', 
+                'Persetujuan Penghapusan'            => 'Penghapusan Aset', 
+                'Daftar Persetujuan Penghapusan'     => 'Penghapusan Aset',
+                'Pelaksanaan Penghapusan'            => 'Penghapusan Aset', 
+                'Daftar Aset Tetap'                  => 'Penghapusan Aset', 
+                'Daftar Pelaksanaan Penghapusan'     => 'Penghapusan Aset',
 
-                'Import Data Penyusutan'          => 'Penyusutan',
-                'Daftar Data Penyusutan'          => 'Penyusutan',
-                'Dasbor Monitoring Beban Penyusutan'  => 'Penyusutan',
+                'Import Data Penyusutan'             => 'Penyusutan Aset', 
+                'Daftar Data Penyusutan'             => 'Penyusutan Aset', 
+                'Dasbor Monitoring Beban Penyusutan' => 'Penyusutan Aset',
 
-                'Import Data Monitoring'          => 'Monitoring SAP-DAT',
-                'Daftar Data Monitoring'          => 'Monitoring SAP-DAT',
-                'Dasbor Monitoring SAP-DAT'       => 'Monitoring SAP-DAT',
+                'Import Data Monitoring'             => 'Monitoring Aset tetap', 
+                'Daftar Data Monitoring'             => 'Monitoring Aset tetap', 
+                'Dasbor Mutasi Aset Tetap'           => 'Monitoring Aset tetap',
+                'Dasbor Selisih Percabang'           => 'Monitoring Aset tetap', 
+                'Dasbor Mutasi Aset Tak Berwujud'    => 'Monitoring Aset tetap',
+                'Dasbor Mutasi Properti Investasi'   => 'Monitoring Aset tetap',
 
-                'Import DAT'                      => 'Manajemen Admin',
-                'Manajemen Menu'                  => 'Manajemen Admin',
-                'Manajemen User'                  => 'Manajemen Admin',
+                'Import DAT'                         => 'Administrasi Sistem', 
+                'Manajemen Menu'                     => 'Administrasi Sistem', 
+                'Manajemen User'                     => 'Administrasi Sistem',
             ];
             $groupIcon = [
-                'Penghapusan'                     => 'bi bi-file-earmark-minus',
-                'Penyusutan'                      => 'bi bi-graph-down-arrow',
-                'Monitoring SAP-DAT'              => 'bi bi-arrow-left-right',
-                'Manajemen Admin'                 => 'bi bi-sliders',               
+                'Penghapusan Aset'                   => 'bi bi-file-earmark-minus', 
+                'Penyusutan Aset'                    => 'bi bi-graph-down-arrow',
+                'Monitoring Aset tetap'              => 'bi bi-arrow-left-right', 
+                'Administrasi Sistem'                => 'bi bi-sliders',
             ];
-            $groupOrder = ['Penghapusan', 'Penyusutan', 'Monitoring SAP-DAT', 'Manajemen Admin'];
+            $groupOrder = ['Penghapusan Aset', 'Penyusutan Aset', 'Monitoring Aset tetap', 'Administrasi Sistem'];
+
             $currentPage = basename($_SERVER['PHP_SELF']);
 
             $ungrouped = [];
