@@ -562,15 +562,7 @@ if (isset($_GET['ajax_action']) && $_GET['ajax_action'] === 'data') {
                 'Dasbor Mutasi Aset Tak Berwujud'    => 'bi bi-file-earmark-text',
                 'Dasbor Mutasi Properti Investasi'   => 'bi bi-house-fill',
 
-                'Lahan dan Sertifikasi'              => 'bi bi-geo-alt-fill',
-                'Lahan Kerja Sama Eksternal'         => 'bi bi-people-fill',
-                'Lahan Kerja Sama Internal'          => 'bi bi-people',
-                'Lahan Idle (Komersial)'             => 'bi bi-house-door-fill',
-                'Lahan Bermasalah'                   => 'bi bi-exclamation-triangle-fill',
-                'Lahan untuk Bangunan Internal'      => 'bi bi-building',
-                'Lahan untuk Bangunan Operasional'   => 'bi bi-building-fill',
-                'Lahan untuk Bangunan Komersial'     => 'bi bi-shop',
-                'Lahan untuk Rumah Dinas'            => 'bi bi-house-fill',
+                'Dasbor Penggunaan Lahan'            => 'bi bi-map-fill',
 
                 'Import DAT'                         => 'bi bi-upload',
                 'Manajemen Menu'                     => 'bi bi-layout-text-sidebar', 
@@ -597,17 +589,8 @@ if (isset($_GET['ajax_action']) && $_GET['ajax_action'] === 'data') {
                 'Dasbor Selisih Percabang'           => 'Monitoring Aset Tetap', 
                 'Dasbor Mutasi Aset Tak Berwujud'    => 'Monitoring Aset Tetap',
                 'Dasbor Mutasi Properti Investasi'   => 'Monitoring Aset Tetap',
-
-
-                'Lahan dan Sertifikasi'              => 'Monitoring Penggunaan Lahan',
-                'Lahan Kerja Sama Eksternal'         => 'Monitoring Penggunaan Lahan',
-                'Lahan Kerja Sama Internal'          => 'Monitoring Penggunaan Lahan',
-                'Lahan Idle (Komersial)'             => 'Monitoring Penggunaan Lahan',
-                'Lahan Bermasalah'                   => 'Monitoring Penggunaan Lahan',
-                'Lahan untuk Bangunan Internal'      => 'Monitoring Penggunaan Lahan',
-                'Lahan untuk Bangunan Operasional'   => 'Monitoring Penggunaan Lahan',
-                'Lahan untuk Bangunan Komersial'     => 'Monitoring Penggunaan Lahan',
-                'Lahan untuk Rumah Dinas'            => 'Monitoring Penggunaan Lahan',
+                
+                'Dasbor Penggunaan Lahan'            => 'Monitoring Penggunaan Lahan',
 
                 'Import DAT'                         => 'Administrasi Sistem', 
                 'Manajemen Menu'                     => 'Administrasi Sistem', 
