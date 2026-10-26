@@ -488,6 +488,20 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
     .selected-bar{background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 16px;margin-bottom:14px;display:none;align-items:center;gap:10px;flex-wrap:wrap;}
     .selected-bar.show{display:flex;}
 
+    /* Custom top bar (Tampilkan entri + Cari) & bottom bar (info + pagination) — gaya modif seperti Pelaksanaan */
+    .dt-top-bar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:10px 16px;border-bottom:1px solid #e9ecef;width:100%;background:#fff;}
+    .dt-top-bar .dt-top-left,.dt-top-bar .dt-top-right{display:flex;align-items:center;gap:6px;font-size:.85rem;color:#374151;white-space:nowrap;}
+    .dt-custom-length{width:auto!important;display:inline-block;}
+    .dt-custom-search{width:200px;}
+    .dt-bot-bar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:10px 16px;min-height:42px;width:100%;}
+    .dt-bot-bar .dt-info{font-size:.82rem;color:#6b7280;}
+    .dt-bot-bar .dt-pag{display:flex;align-items:center;gap:4px;flex-wrap:wrap;}
+    .dt-pag button{padding:4px 10px;font-size:.8rem;border-radius:6px;background:#fff;color:#0b3a8c;border:1px solid #dee2e6;cursor:pointer;}
+    .dt-pag button:hover:not(:disabled):not(.active){background:#e8f0fe;color:#0b3a8c;border-color:#bfdbfe;}
+    .dt-pag button.active{background:#0b3a8c;color:#fff;border-color:#0b3a8c;cursor:default;}
+    .dt-pag button:disabled{color:#c0c5cc;cursor:default;}
+    .dt-pag span.dt-pag-dots{padding:0 4px;color:#9ca3af;}
+
     /* Card table wrap */
     .card-table-wrap{border:1px solid #dee2e6;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06);margin-bottom:20px;background:#fff;}
     .card-table-wrap .ctw-header{padding:14px 20px;border-bottom:1px solid #dee2e6;background:#fff;display:flex;align-items:center;gap:8px;}
@@ -860,6 +874,7 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
                       </tbody>
                     </table>
                   </div>
+                  <div id="daftarTable_controls" style="min-height:42px;"></div>
                   <?php endif; ?>
                 </div>
               </div>
@@ -1284,21 +1299,103 @@ const usulanDgkDok  = new Set(<?= json_encode(array_unique(array_map(fn($d) => (
 let   _currentDetailId = null;
 
 $(document).ready(function() {
-  const dtOpts = {
-    language: {
-      search:"Cari:", lengthMenu:"Tampilkan _MENU_ data",
-      info:"_START_-_END_ dari _TOTAL_", infoEmpty:"0-0 dari 0",
-      emptyTable:"Belum ada data",
-      paginate:{first:"«",previous:"‹",next:"›",last:"»"},
-      zeroRecords:"Tidak ada data"
-    },
-    pageLength: 25
-  };
-  // daftarTable: 10 kolom (0=checkbox,1=No,...,9=Aksi) → non-orderable: checkbox & aksi
-  if ($('#daftarTable').length) $('#daftarTable').DataTable({
-    ...dtOpts,
-    columnDefs:[{orderable:false, targets:[0,9]}]
-  });
+  // ── daftarTable: top bar (Tampilkan entri + Cari) & bottom bar (info + pagination) custom,
+  //    gaya modif seperti halaman Pelaksanaan Penghapusan ──────────────────────────────────
+  if ($('#daftarTable').length && $('#daftarTable tbody tr').length && !$('#daftarTable tbody tr td[colspan]').length) {
+    var $tableResp = $('#daftarTable').closest('.table-responsive');
+    var $topBar = $(
+      '<div class="dt-top-bar">' +
+        '<div class="dt-top-left">' +
+          '<span>Tampilkan</span>' +
+          '<select class="form-select form-select-sm dt-custom-length">' +
+            '<option value="10">10</option><option value="25" selected>25</option><option value="50">50</option><option value="100">100</option>' +
+          '</select>' +
+          '<span>data</span>' +
+        '</div>' +
+        '<div class="dt-top-right">' +
+          '<span>Cari:</span>' +
+          '<input type="search" class="form-control form-control-sm dt-custom-search" placeholder="Cari nomor aset, nama aset, profit center, subreg...">' +
+        '</div>' +
+      '</div>'
+    );
+    if ($tableResp.length) { $tableResp.before($topBar); } else { $('#daftarTable').before($topBar); }
+
+    // 10 kolom (0=checkbox,1=No,...,9=Aksi) → non-orderable: checkbox & aksi
+    var daftarTable = $('#daftarTable').DataTable({
+      language: {
+        emptyTable:"Belum ada data",
+        zeroRecords:"Tidak ada data"
+      },
+      pageLength: 25,
+      lengthMenu: [10, 25, 50, 100],
+      columnDefs: [{ orderable:false, targets:[0,9] }],
+      dom: 't' // hanya render tabel; kontrol length/search/info/paginate dibangun sendiri
+    });
+
+    $topBar.find('.dt-custom-length').on('change', function() {
+      daftarTable.page.len(parseInt($(this).val(), 10) || 25).draw();
+    });
+    var _dtSearchTimer;
+    $topBar.find('.dt-custom-search').on('input', function() {
+      var val = $(this).val();
+      clearTimeout(_dtSearchTimer);
+      _dtSearchTimer = setTimeout(function() { daftarTable.search(val).draw(); }, 250);
+    });
+
+    var $botBar   = $('#daftarTable_controls');
+    var $infoWrap = $('<div class="dt-info"></div>');
+    var $pagWrap  = $('<div class="dt-pag"></div>');
+    $botBar.addClass('dt-bot-bar').empty().append($infoWrap).append($pagWrap);
+
+    function pageBtn(label, page, disabled, active) {
+      var $b = $('<button type="button"></button>').text(label);
+      if (active) $b.addClass('active');
+      if (disabled) $b.prop('disabled', true);
+      if (!disabled && !active) $b.on('click', function() { daftarTable.page(page).draw('page'); });
+      return $b;
+    }
+
+    function renderControls() {
+      var info  = daftarTable.page.info();
+      var awal  = info.recordsDisplay === 0 ? 0 : info.start + 1;
+      var akhir = info.end;
+      $infoWrap.text(
+        'Menampilkan ' + awal + ' sampai ' + akhir + ' dari ' + info.recordsDisplay + ' data' +
+        (info.recordsDisplay !== info.recordsTotal ? ' (disaring dari ' + info.recordsTotal + ' total data)' : '')
+      );
+
+      $pagWrap.empty();
+      var totalPages = info.pages || 1;
+      var current    = info.page;
+      $pagWrap.append(pageBtn('Pertama', 0, current === 0));
+      $pagWrap.append(pageBtn('Sebelumnya', current - 1, current === 0));
+
+      var start = Math.max(0, current - 2);
+      var end   = Math.min(totalPages - 1, current + 2);
+      if (start > 0) {
+        $pagWrap.append(pageBtn('1', 0, false));
+        if (start > 1) $pagWrap.append($('<span class="dt-pag-dots">...</span>'));
+      }
+      for (var i = start; i <= end; i++) {
+        $pagWrap.append(pageBtn(String(i + 1), i, false, i === current));
+      }
+      if (end < totalPages - 1) {
+        if (end < totalPages - 2) $pagWrap.append($('<span class="dt-pag-dots">...</span>'));
+        $pagWrap.append(pageBtn(String(totalPages), totalPages - 1, false));
+      }
+      $pagWrap.append(pageBtn('Selanjutnya', current + 1, current >= totalPages - 1));
+      $pagWrap.append(pageBtn('Terakhir', totalPages - 1, current >= totalPages - 1));
+    }
+    daftarTable.on('draw', renderControls);
+    renderControls();
+
+    // Selection (checkAll/row-check) mengandalkan semua baris di DOM; sambungkan ulang
+    // setelah tiap draw supaya baris yang baru tampil (halaman lain) tetap ke-handle.
+    daftarTable.on('draw', function() {
+      $('.row-check').off('change.dtSel').on('change.dtSel', updateSelectedBar);
+      updateSelectedBar();
+    });
+  }
 
   // uploadTable: Tidak pakai DataTables karena ada baris preview iframe (colspan) yang
   // tidak kompatibel dengan DataTables. Pakai search manual sederhana.
