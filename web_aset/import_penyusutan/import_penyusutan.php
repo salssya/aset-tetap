@@ -1,4 +1,8 @@
 <?php
+ini_set('memory_limit', '2048M');
+ini_set('max_execution_time', '600'); // 10 menit
+set_time_limit(600);
+
 $servername = "localhost";
 $username = "root";
 $password = "";
@@ -72,9 +76,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_FILES['file_excel'])) {
         $pesan = "Format file tidak didukung. Gunakan file Excel (.xls atau .xlsx)";
         $tipe_pesan = "danger";
     }
-    // Cek ukuran file (max 20MB)
-    else if ($file_size > 20 * 1024 * 1024) {
-        $pesan = "Ukuran file terlalu besar. Maksimal 20MB";
+    // Cek ukuran file (max 50MB)
+    else if ($file_size > 50 * 1024 * 1024) {
+        $pesan = "Ukuran file terlalu besar. Maksimal 50MB";
         $tipe_pesan = "danger";
     }
     // Cek error upload
@@ -143,9 +147,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_FILES['file_penyusutan'])) {
         $pesanPenyusutan = "Format file tidak didukung. Gunakan file Excel (.xls atau .xlsx)";
         $tipePenyusutan = "danger";
     }
-    // Cek ukuran file (max 20MB)
-    else if ($file_size > 20 * 1024 * 1024) {
-        $pesanPenyusutan = "Ukuran file terlalu besar. Maksimal 20MB";
+    // Cek ukuran file (max 50MB)
+    else if ($file_size > 50 * 1024 * 1024) {
+        $pesanPenyusutan = "Ukuran file terlalu besar. Maksimal 50MB";
         $tipePenyusutan = "danger";
     }
     // Cek error upload
@@ -925,6 +929,95 @@ function readDatPenyusutanXLSByHeader($filePath) {
     throw new Exception("Tidak dapat membaca file XLS. Pastikan file valid atau gunakan format XLSX/CSV.");
 }
 
+/**
+ * Kumpulan kecil untuk INSERT batch secara "streaming": baris ditambahkan satu-satu lewat
+ * tambah_baris(), begitu jumlahnya nyampe $batchSize langsung di-INSERT SAAT ITU JUGA (flush)
+ * dan buffer-nya dikosongkan lagi -- BUKAN nunggu semua baris di file terkumpul dulu baru
+ * insert di akhir. Ini penting untuk file besar: memori yang dipakai untuk sisi insert jadi
+ * cuma sebesar 1 batch (misal 500 baris), bukan sebesar seluruh isi file (bisa ratusan ribu
+ * baris), yang sebelumnya jadi penyebab "Allowed memory size exhausted".
+ *
+ * single_sql per baris juga TIDAK dibikin di depan untuk semua baris (itu justru dobel
+ * penyimpanan) -- hanya dibangun on-demand dari $values kalau memang batch-nya gagal dan
+ * perlu fallback baris-per-baris untuk cari baris yang bermasalah.
+ */
+class BatchInserterPs {
+    private $con;
+    private $tableName;
+    private $columnsStr;
+    private $duplicateMessagePrefix;
+    private $batchSize;
+    private $buffer = []; // tiap elemen: ['tuple' => string, 'values' => array, 'row_index' => int]
+    public $saved_count = 0;
+    public $failed_rows = [];
+
+    public function __construct($con, $tableName, $columnsStr, $duplicateMessagePrefix = null, $batchSize = 500) {
+        $this->con = $con;
+        $this->tableName = $tableName;
+        $this->columnsStr = $columnsStr;
+        $this->duplicateMessagePrefix = $duplicateMessagePrefix;
+        $this->batchSize = $batchSize;
+    }
+
+    public function tambah_baris($values, $row_index) {
+        $this->buffer[] = [
+            'tuple' => '(' . implode(', ', $values) . ')',
+            'values' => $values,
+            'row_index' => $row_index,
+        ];
+        if (count($this->buffer) >= $this->batchSize) {
+            $this->flush();
+        }
+    }
+
+    public function selesai() {
+        $this->flush();
+    }
+
+    private function flush() {
+        if (empty($this->buffer)) { return; }
+        $tuples = array_column($this->buffer, 'tuple');
+        $sql = "INSERT INTO {$this->tableName} ({$this->columnsStr}) VALUES " . implode(', ', $tuples);
+        $ok = false;
+        try {
+            $ok = mysqli_query($this->con, $sql);
+        } catch (\Throwable $eBatch) {
+            $ok = false;
+        }
+        if ($ok) {
+            $this->saved_count += count($this->buffer);
+            $this->buffer = [];
+            return;
+        }
+        // Batch ini gagal (kemungkinan ada 1+ baris bermasalah, mis. duplicate key) -- ulangi
+        // satu-satu KHUSUS untuk batch ini saja, supaya baris yang sehat tetap masuk dan baris
+        // yang error ketahuan persis. single_sql baru dibangun di sini, bukan di depan.
+        foreach ($this->buffer as $item) {
+            $singleSql = "INSERT INTO {$this->tableName} ({$this->columnsStr}) VALUES {$item['tuple']}";
+            try {
+                if (mysqli_query($this->con, $singleSql)) {
+                    $this->saved_count++;
+                } else {
+                    $error = mysqli_error($this->con);
+                    if ($this->duplicateMessagePrefix !== null && strpos($error, 'Duplicate entry') !== false) {
+                        $this->failed_rows[] = "Baris " . ($item['row_index'] + 2) . ": " . $this->duplicateMessagePrefix;
+                    } else {
+                        $this->failed_rows[] = "Baris " . ($item['row_index'] + 2) . ": " . $error;
+                    }
+                }
+            } catch (\Throwable $eRow) {
+                $msgRow = $eRow->getMessage();
+                if ($this->duplicateMessagePrefix !== null && strpos($msgRow, 'Duplicate entry') !== false) {
+                    $this->failed_rows[] = "Baris " . ($item['row_index'] + 2) . ": " . $this->duplicateMessagePrefix;
+                } else {
+                    $this->failed_rows[] = "Baris " . ($item['row_index'] + 2) . ": " . $msgRow;
+                }
+            }
+        }
+        $this->buffer = [];
+    }
+}
+
 function saveDatPenyusutanToDatabase($con, $importedData) {
     if (empty($importedData)) {
         return 0;
@@ -1034,6 +1127,9 @@ function saveDatPenyusutanToDatabase($con, $importedData) {
     $idxNomorAssetCol = array_search('nomor_asset', $column_names);
     $idxSubNumberCol = array_search('sub_number', $column_names);
 
+    $columns = implode(', ', $column_names) . ', sub_number_num, imported_by';
+    $inserter = new BatchInserterPs($con, 'import_dat_penyusutan', $columns, 'Asset sudah ada di database untuk periode ini');
+
     mysqli_begin_transaction($con);
 
     try {
@@ -1062,41 +1158,21 @@ function saveDatPenyusutanToDatabase($con, $importedData) {
             $values[] = $subNumberNum === null ? 'NULL' : $subNumberNum;
 
             $values[] = "'" . mysqli_real_escape_string($con, $nipp) . "'";
-            
-            $columns = implode(', ', $column_names) . ', sub_number_num, imported_by';
-            $insert_sql = "INSERT INTO import_dat_penyusutan (" . $columns . ") VALUES (" . implode(', ', $values) . ")";
-            
-            try {
-                if (mysqli_query($con, $insert_sql)) {
-                    $saved_count++;
-                } else {
-                    $error = mysqli_error($con);
-                    if (strpos($error, 'Duplicate entry') !== false) {
-                        $failed_rows[] = "Baris " . ($row_index + 2) . ": Asset sudah ada di database untuk periode ini";
-                    } else {
-                        $failed_rows[] = "Baris " . ($row_index + 2) . ": " . $error;
-                    }
-                }
-            } catch (\Throwable $eRow) {
-                // Kalau mysqli di-set exception-mode (MYSQLI_REPORT_STRICT), error SQL (termasuk
-                // Duplicate entry) dilempar sebagai exception, bukan return false -- ditangkap di
-                // sini per-baris supaya SATU baris bermasalah tidak membatalkan seluruh import.
-                $msgRow = $eRow->getMessage();
-                if (strpos($msgRow, 'Duplicate entry') !== false) {
-                    $failed_rows[] = "Baris " . ($row_index + 2) . ": Asset sudah ada di database untuk periode ini";
-                } else {
-                    $failed_rows[] = "Baris " . ($row_index + 2) . ": " . $msgRow;
-                }
-            }
+
+            $inserter->tambah_baris($values, $row_index);
         }
-        
+
+        $inserter->selesai();
+        $saved_count = $inserter->saved_count;
+        $failed_rows = $inserter->failed_rows;
+
         mysqli_commit($con);
-        
+
     } catch (Exception $e) {
         mysqli_rollback($con);
         throw new Exception("Gagal menyimpan data: " . $e->getMessage());
     }
-    
+
     if (!empty($failed_rows)) {
         error_log("Import DAT Penyusutan failed rows: " . implode("; ", array_slice($failed_rows, 0, 5)));
     }
@@ -1264,9 +1340,12 @@ function saveDataPenyusutanToDatabase($con, $importedData) {
     
     $saved_count = 0;
     $failed_rows = [];
-    
+
+    $columns = implode(', ', $column_names) . ', posting_date_norm, amount_norm, asset_subnumber_num, imported_by';
+    $inserter = new BatchInserterPs($con, 'import_FAGLL', $columns);
+
     mysqli_begin_transaction($con);
-    
+
     try {
         foreach ($importedData as $row_index => $row) {
             $values = [];
@@ -1294,15 +1373,12 @@ function saveDataPenyusutanToDatabase($con, $importedData) {
 
             $values[] = "'" . mysqli_real_escape_string($con, $nipp) . "'";
 
-            $columns = implode(', ', $column_names) . ', posting_date_norm, amount_norm, asset_subnumber_num, imported_by';
-            $insert_sql = "INSERT INTO import_FAGLL (" . $columns . ") VALUES (" . implode(', ', $values) . ")";
-            
-            if (mysqli_query($con, $insert_sql)) {
-                $saved_count++;
-            } else {
-                $failed_rows[] = "Baris " . ($row_index + 2) . ": " . mysqli_error($con);
-            }
+            $inserter->tambah_baris($values, $row_index);
         }
+
+        $inserter->selesai();
+        $saved_count = $inserter->saved_count;
+        $failed_rows = $inserter->failed_rows;
 
         mysqli_commit($con);
         
@@ -1682,7 +1758,7 @@ function saveDataPenyusutanToDatabase($con, $importedData) {
                   <div class="card-header"><div class="card-title">Import DAT</div></div>
                   <!--end::Header-->
                   <!--begin::Form-->
-                  <form method="POST" enctype="multipart/form-data" id="formImportDat" data-loading-text="Sedang memproses upload data DAT... Mohon tunggu, jangan tutup atau refresh halaman ini.">
+                  <form method="POST" enctype="multipart/form-data" id="formImportDat" data-loading-text="Sedang memproses upload data DAT.">
                     <!--begin::Body-->
                     <div class="card-body">
                       <?php if (!empty($pesan)): ?>
@@ -1720,10 +1796,10 @@ function saveDataPenyusutanToDatabase($con, $importedData) {
               <div class="col-lg-6">
                 <div class="card card-primary card-outline mb-4 h-100">
                   <!--begin::Header-->
-                  <div class="card-header"><div class="card-title">Import Data FAGLL SAP</div></div>
+                  <div class="card-header"><div class="card-title">Import Data FAGLL Nilai Penyusutan</div></div>
                   <!--end::Header-->
                   <!--begin::Form-->
-                  <form method="POST" enctype="multipart/form-data" id="formImportPenyusutan" data-loading-text="Sedang memproses upload data FAGLL SAP">
+                  <form method="POST" enctype="multipart/form-data" id="formImportPenyusutan" data-loading-text="Sedang memproses upload data FAGLL Penyusutan">
                     <!--begin::Body-->
                     <div class="card-body">
                       <?php if (!empty($pesanPenyusutan)): ?>
