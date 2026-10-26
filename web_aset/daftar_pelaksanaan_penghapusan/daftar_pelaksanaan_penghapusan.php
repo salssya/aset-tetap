@@ -607,6 +607,7 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
     table.dataTable thead th.sorting_asc .sort-icon  { opacity:1; color:#0b3a8c; }
     table.dataTable thead th.sorting_desc .sort-icon { opacity:1; color:#0b3a8c; }
   </style>
+ <link rel="stylesheet" href="../sidebar.css" />
 </head>
 <body class="layout-fixed sidebar-expand-lg sidebar-open bg-body-tertiary">
 <div class="app-wrapper">
@@ -662,63 +663,11 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
             $userNipp = isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : '';
             $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '" . mysqli_real_escape_string($con, $userNipp) . "' ORDER BY menus.urutan_menu ASC";
             $result_menu = mysqli_query($con, $query) or die(mysqli_error($con));
-             $iconMap = [
-                'Dasboard'                        => 'bi bi-grid-fill',
-                'Usulan Penghapusan'              => 'bi bi-file-earmark-plus',
-                'Daftar Usulan Penghapusan'       => 'bi bi-collection',
-                'Approval SubReg'                 => 'bi bi-person-check',
-                'Approval Regional'               => 'bi bi-building-check',
-                'Persetujuan Penghapusan'         => 'bi bi-shield-check',
-                'Daftar Persetujuan Penghapusan'  => 'bi bi-journal-check',
-                'Pelaksanaan Penghapusan'         => 'bi bi-gear-wide-connected',
-                'Daftar Pelaksanaan Penghapusan'  => 'bi bi-archive-fill',
-                'Manajemen Menu'                  => 'bi bi-layout-text-sidebar',
-                'Import DAT'                      => 'bi bi-file-earmark-arrow-up',
-
-                // Penyusutan
-                'Import Data Penyusutan'          => 'bi bi-upload',
-                'Daftar Data Penyusutan'          => 'bi bi-table',
-                'Dasbor Monitoring Beban Penyusutan'  => 'bi-bar-chart-line',
-
-                // Monitoring SAP-DAT
-                'Import Data Monitoring'          => 'bi bi-upload',
-                'Daftar Data Monitoring'          => 'bi bi-table',
-                'Dasbor Monitoring SAP-DAT'       => 'bi bi-speedometer2',
-
-                'Daftar Aset Tetap'               => 'bi bi-boxes',
-                'Manajemen User'                  => 'bi bi-people',
-            ];
-
-            $groupMap = [
-                'Usulan Penghapusan'              => 'Penghapusan',
-                'Daftar Usulan Penghapusan'       => 'Penghapusan',
-                'Approval SubReg'                 => 'Penghapusan',
-                'Approval Regional'               => 'Penghapusan',
-                'Persetujuan Penghapusan'         => 'Penghapusan',
-                'Daftar Persetujuan Penghapusan'  => 'Penghapusan',
-                'Pelaksanaan Penghapusan'         => 'Penghapusan',
-                'Daftar Pelaksanaan Penghapusan'  => 'Penghapusan',
-
-                'Import Data Penyusutan'          => 'Penyusutan',
-                'Daftar Data Penyusutan'          => 'Penyusutan',
-                'Dasbor Monitoring Beban Penyusutan'  => 'Penyusutan',
-
-                'Import Data Monitoring'          => 'Monitoring SAP-DAT',
-                'Daftar Data Monitoring'          => 'Monitoring SAP-DAT',
-                'Dasbor Monitoring SAP-DAT'       => 'Monitoring SAP-DAT',
-
-                'Import DAT'                      => 'Manajemen Admin',
-                'Daftar Aset Tetap'               => 'Manajemen Admin',
-                'Manajemen Menu'                  => 'Manajemen Admin',
-                'Manajemen User'                  => 'Manajemen Admin',
-            ];
-            $groupIcon = [
-                'Penghapusan'                     => 'bi bi-file-earmark-minus',
-                'Penyusutan'                      => 'bi bi-graph-down-arrow',
-                'Monitoring SAP-DAT'              => 'bi bi-arrow-left-right',
-                'Manajemen Admin'                 => 'bi bi-sliders',               
-            ];
-            $groupOrder = ['Penghapusan', 'Penyusutan', 'Monitoring SAP-DAT', 'Manajemen Admin'];
+                          $sidebarMenuConfig = require __DIR__ . '/../sidebar_menu_config.php';
+             $iconMap = $sidebarMenuConfig['iconMap'];
+             $groupMap = $sidebarMenuConfig['groupMap'];
+             $groupIcon = $sidebarMenuConfig['groupIcon'];
+             $groupOrder = $sidebarMenuConfig['groupOrder'];
             $currentPage = basename($_SERVER['PHP_SELF']);
 
             $ungrouped = [];

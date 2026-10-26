@@ -3742,6 +3742,46 @@ function saveF01ToDatabase($con, $importedData, $periodeBulan, $periodeTahun) {
       .app-sidebar .nav-link:hover i {
         color: #ffffff !important;
       }
+      .app-sidebar .nav-link p {
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: clip !important;
+        line-height: 1.25;
+        margin: 0;
+        padding-right: 1.5rem;
+      }
+      .app-sidebar .nav-link .nav-arrow {
+        position: absolute;
+        right: .9rem;
+        top: 50%;
+        transform: translateY(-50%);
+        transition: transform .2s ease;
+      }
+      .app-sidebar .menu-open > .nav-link .nav-arrow {
+        transform: translateY(-50%) rotate(90deg);
+      }
+      .app-sidebar .nav-link:hover {
+        background-color: rgba(255,255,255,.12) !important;
+      }
+      .app-sidebar .nav-item.menu-open > .nav-link.active {
+        background-color: rgba(255,255,255,.12) !important;
+      }
+      .app-sidebar .nav-treeview {
+        background-color: rgba(0,0,0,.18);
+        border-radius: .375rem;
+        margin: .15rem 0 .4rem;
+        padding: .25rem 0;
+      }
+      .app-sidebar .nav-treeview > .nav-item > .nav-link {
+        padding-left: 2.6rem;
+        font-size: .9rem;
+      }
+      .app-sidebar .nav-treeview > .nav-item > .nav-link .nav-icon {
+        font-size: .95rem;
+      }
+      .app-sidebar .nav-treeview > .nav-item > .nav-link.active {
+        background-color: #0b5db7 !important;
+      }
       /* Kartu import: tinggi sama per baris, tombol Upload selalu sejajar di dasar kartu, jarak antar kartu seragam */
       .import-row > [class*="col-"] > .card {
         height: 100%;
@@ -3864,66 +3904,11 @@ function saveF01ToDatabase($con, $importedData, $periodeBulan, $periodeTahun) {
             $userNipp = isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : '';
             $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '" . mysqli_real_escape_string($con, $userNipp) . "' ORDER BY menus.urutan_menu ASC";
             $result_menu = mysqli_query($con, $query) or die(mysqli_error($con));
-           $iconMap = [
-                'Dasboard'                           => 'bi bi-grid-fill', 
-
-                'Usulan Penghapusan'                 => 'bi bi-file-earmark-plus', 
-                'Daftar Usulan Penghapusan'          => 'bi bi-collection',
-                'Approval SubReg'                    => 'bi bi-person-check', 
-                'Approval Regional'                  => 'bi bi-building-check', 
-                'Persetujuan Penghapusan'            => 'bi bi-shield-check',
-                'Pelaksanaan Penghapusan'            => 'bi bi-gear-wide-connected', 
-                'Daftar Pelaksanaan Penghapusan'     => 'bi bi-archive-fill',
-                'Daftar Aset Tetap'                  => 'bi bi-boxes',    
-
-                'Import Data Penyusutan'             => 'bi bi-upload', 
-                'Daftar Data Penyusutan'             => 'bi bi-table', 
-                'Dasbor Monitoring Beban Penyusutan' => 'bi-bar-chart-line',
-
-                'Import Data Monitoring'             => 'bi bi-upload', 
-                'Daftar Data Monitoring'             => 'bi bi-table', 
-                'Dasbor Mutasi Aset Tetap'           => 'bi bi-speedometer2',
-                'Dasbor Selisih Percabang'           => 'bi bi-card-checklist', 
-                'Dasbor Mutasi Aset Tak Berwujud'    => 'bi bi-file-earmark-text',
-                'Dasbor Mutasi Properti Investasi'   => 'bi bi-house-fill',
-
-                'Import DAT'                         => 'bi bi-upload',
-                'Manajemen Menu'                     => 'bi bi-layout-text-sidebar', 
-                'Manajemen User'                     => 'bi bi-people',
-            ];
-            $groupMap = [
-                'Usulan Penghapusan'                 => 'Penghapusan Aset', 
-                'Daftar Usulan Penghapusan'          => 'Penghapusan Aset', 
-                'Approval SubReg'                    => 'Penghapusan Aset',
-                'Approval Regional'                  => 'Penghapusan Aset', 
-                'Persetujuan Penghapusan'            => 'Penghapusan Aset', 
-                'Daftar Persetujuan Penghapusan'     => 'Penghapusan Aset',
-                'Pelaksanaan Penghapusan'            => 'Penghapusan Aset', 
-                'Daftar Aset Tetap'                  => 'Penghapusan Aset', 
-                'Daftar Pelaksanaan Penghapusan'     => 'Penghapusan Aset',
-
-                'Import Data Penyusutan'             => 'Penyusutan Aset', 
-                'Daftar Data Penyusutan'             => 'Penyusutan Aset', 
-                'Dasbor Monitoring Beban Penyusutan' => 'Penyusutan Aset',
-
-                'Import Data Monitoring'             => 'Monitoring Aset Tetap', 
-                'Daftar Data Monitoring'             => 'Monitoring Aset Tetap', 
-                'Dasbor Mutasi Aset Tetap'           => 'Monitoring Aset Tetap',
-                'Dasbor Selisih Percabang'           => 'Monitoring Aset Tetap', 
-                'Dasbor Mutasi Aset Tak Berwujud'    => 'Monitoring Aset Tetap',
-                'Dasbor Mutasi Properti Investasi'   => 'Monitoring Aset Tetap',
-
-                'Import DAT'                         => 'Administrasi Sistem', 
-                'Manajemen Menu'                     => 'Administrasi Sistem', 
-                'Manajemen User'                     => 'Administrasi Sistem',
-            ];
-            $groupIcon = [
-                'Penghapusan Aset'                   => 'bi bi-file-earmark-minus', 
-                'Penyusutan Aset'                    => 'bi bi-graph-down-arrow',
-                'Monitoring Aset Tetap'              => 'bi bi-arrow-left-right', 
-                'Administrasi Sistem'                => 'bi bi-sliders',
-            ];
-            $groupOrder = ['Penghapusan Aset', 'Penyusutan Aset', 'Monitoring Aset Tetap', 'Administrasi Sistem'];
+                        $sidebarMenuConfig = require __DIR__ . '/../sidebar_menu_config.php';
+            $iconMap = $sidebarMenuConfig['iconMap'];
+            $groupMap = $sidebarMenuConfig['groupMap'];
+            $groupIcon = $sidebarMenuConfig['groupIcon'];
+            $groupOrder = $sidebarMenuConfig['groupOrder'];
 
             $currentPage = basename($_SERVER['PHP_SELF']);
 

@@ -864,6 +864,7 @@ if (($_GET['export'] ?? '') === 'xls') {
       .tabel-rekon thead th { position: sticky; top: 0; z-index: 3; box-shadow: inset 0 -1px 0 #dee2e6, inset 0 1px 0 #dee2e6; }
     </style>
     <link rel="stylesheet" href="../../dist/css/dataTables.dataTables.min.css" />
+   <link rel="stylesheet" href="../sidebar.css" />
   </head>
   <body class="layout-fixed sidebar-expand-lg sidebar-open bg-body-tertiary">
     <div class="app-wrapper">
@@ -915,66 +916,11 @@ if (($_GET['export'] ?? '') === 'xls') {
             $userNipp = isset($_SESSION['nipp']) ? htmlspecialchars($_SESSION['nipp']) : '';
             $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '" . mysqli_real_escape_string($con, $userNipp) . "' ORDER BY menus.urutan_menu ASC";
             $result_menu = mysqli_query($con, $query) or die(mysqli_error($con));
-            $iconMap = [
-                'Dasboard'                           => 'bi bi-grid-fill', 
-
-                'Usulan Penghapusan'                 => 'bi bi-file-earmark-plus', 
-                'Daftar Usulan Penghapusan'          => 'bi bi-collection',
-                'Approval SubReg'                    => 'bi bi-person-check', 
-                'Approval Regional'                  => 'bi bi-building-check', 
-                'Persetujuan Penghapusan'            => 'bi bi-shield-check',
-                'Pelaksanaan Penghapusan'            => 'bi bi-gear-wide-connected', 
-                'Daftar Pelaksanaan Penghapusan'     => 'bi bi-archive-fill',
-                'Daftar Aset Tetap'                  => 'bi bi-boxes',    
-
-                'Import Data Penyusutan'             => 'bi bi-upload', 
-                'Daftar Data Penyusutan'             => 'bi bi-table', 
-                'Dasbor Monitoring Beban Penyusutan' => 'bi-bar-chart-line',
-
-                'Import Data Monitoring'             => 'bi bi-upload', 
-                'Daftar Data Monitoring'             => 'bi bi-table', 
-                'Dasbor Mutasi Aset Tetap'           => 'bi bi-speedometer2',
-                'Dasbor Selisih Percabang'           => 'bi bi-card-checklist', 
-                'Dasbor Mutasi Aset Tak Berwujud'    => 'bi bi-file-earmark-text',
-                'Dasbor Mutasi Properti Investasi'   => 'bi bi-house-fill',
-
-                'Import DAT'                         => 'bi bi-upload',
-                'Manajemen Menu'                     => 'bi bi-layout-text-sidebar', 
-                'Manajemen User'                     => 'bi bi-people',
-            ];
-            $groupMap = [
-                'Usulan Penghapusan'                 => 'Penghapusan Aset', 
-                'Daftar Usulan Penghapusan'          => 'Penghapusan Aset', 
-                'Approval SubReg'                    => 'Penghapusan Aset',
-                'Approval Regional'                  => 'Penghapusan Aset', 
-                'Persetujuan Penghapusan'            => 'Penghapusan Aset', 
-                'Daftar Persetujuan Penghapusan'     => 'Penghapusan Aset',
-                'Pelaksanaan Penghapusan'            => 'Penghapusan Aset', 
-                'Daftar Aset Tetap'                  => 'Penghapusan Aset', 
-                'Daftar Pelaksanaan Penghapusan'     => 'Penghapusan Aset',
-
-                'Import Data Penyusutan'             => 'Penyusutan Aset', 
-                'Daftar Data Penyusutan'             => 'Penyusutan Aset', 
-                'Dasbor Monitoring Beban Penyusutan' => 'Penyusutan Aset',
-
-                'Import Data Monitoring'             => 'Monitoring Aset Tetap', 
-                'Daftar Data Monitoring'             => 'Monitoring Aset Tetap', 
-                'Dasbor Mutasi Aset Tetap'           => 'Monitoring Aset Tetap',
-                'Dasbor Selisih Percabang'           => 'Monitoring Aset Tetap', 
-                'Dasbor Mutasi Aset Tak Berwujud'    => 'Monitoring Aset Tetap',
-                'Dasbor Mutasi Properti Investasi'   => 'Monitoring Aset Tetap',
-
-                'Import DAT'                         => 'Administrasi Sistem', 
-                'Manajemen Menu'                     => 'Administrasi Sistem', 
-                'Manajemen User'                     => 'Administrasi Sistem',
-            ];
-            $groupIcon = [
-                'Penghapusan Aset'                   => 'bi bi-file-earmark-minus', 
-                'Penyusutan Aset'                    => 'bi bi-graph-down-arrow',
-                'Monitoring Aset Tetap'              => 'bi bi-arrow-left-right', 
-                'Administrasi Sistem'                => 'bi bi-sliders',
-            ];
-            $groupOrder = ['Penghapusan Aset', 'Penyusutan Aset', 'Monitoring Aset Tetap', 'Administrasi Sistem'];
+                        $sidebarMenuConfig = require __DIR__ . '/../sidebar_menu_config.php';
+            $iconMap = $sidebarMenuConfig['iconMap'];
+            $groupMap = $sidebarMenuConfig['groupMap'];
+            $groupIcon = $sidebarMenuConfig['groupIcon'];
+            $groupOrder = $sidebarMenuConfig['groupOrder'];
 
             $currentPage = basename($_SERVER['PHP_SELF']);
             $ungrouped = []; $grouped = [];
