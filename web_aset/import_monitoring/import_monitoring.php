@@ -1,4 +1,7 @@
 <?php
+// File import bisa sampai 50MB: beri ruang memori & waktu eksekusi yang cukup untuk membaca file besar.
+@ini_set('memory_limit', '1024M');
+@set_time_limit(600);
 $servername = "localhost";
 $username = "root";
 $password = "";
@@ -23,6 +26,18 @@ $importedDataPenyusutan = [];
 $pesanPenyusutan = "";
 $tipePenyusutan = "";
 $savedCountPenyusutan = 0;
+
+// Card "Import Nilai Perolehan", "Import Nilai Akumulasi", dan "Import Nilai DEP":
+// format file SAMA dengan Import Data Penyusutan (Cost Center, Asset, Asset Subnumber, Account, Document Number,
+// Posting Date, Amount in Local Currency, Profit Center, Text), tapi tiap jenis disimpan di tabel sendiri
+// dan punya periode (Bulan + Tahun) yang dipilih saat upload. Upload ulang periode yang sama menimpa data lama.
+$NILAI_ASET_JENIS = [
+    'nilai_perolehan' => ['judul' => 'Nilai Perolehan', 'tabel' => 'import_nilai_perolehan'],
+    'nilai_akumulasi' => ['judul' => 'Nilai Akumulasi', 'tabel' => 'import_nilai_akumulasi'],
+    'nilai_dep'       => ['judul' => 'Nilai DEP',       'tabel' => 'import_nilai_dep'],
+];
+$pesanNilai = [];
+$tipeNilai  = [];
 
 $TARGET_HEADERS_PENYUSUTAN = [
     'cost center', 'asset', 'asset subnumber', 'account',
@@ -61,6 +76,7 @@ $WAJIB_ADA_DAT = ['profit center', 'nama cabang/kawasan', 'periode/bulan', 'tahu
 $HEADER_TO_FIELD_DAT_MONITORING = [
     'profit center'                     => 'profit_center',
     'nama cabang/kawasan'               => 'cabang',
+    'periode/bulan'                     => 'periode_bulan',
     'tahun buku'                        => 'tahun_buku',
     'nomor asset'                       => 'nomor_asset',
     'sub-number'                        => 'sub_number',
@@ -70,14 +86,17 @@ $HEADER_TO_FIELD_DAT_MONITORING = [
     'nilai perolehan sd tahun berjalan' => 'nilai_perolehan_sd_tahun_berjalan',
     'akumulasi penyusutan'              => 'akumulasi_penyusutan',
     'gl account exp depre'              => 'gl_account_exp',
+    'gl account aset'                   => 'gl_account_aset', // OPSIONAL (tidak masuk WAJIB_ADA); varian nama header: lihat $ALT_HEADER_GL_ASET_DAT_MON
 ];
+// Varian penulisan header GL Aset yang juga diterima (sudah dinormalisasi: huruf kecil, tanpa titik)
+$ALT_HEADER_GL_ASET_DAT_MON = ['gl account aset', 'gl account asset', 'gl aset', 'gl asset'];
 // Urutan HARUS sama persis dengan $column_names di saveDatMonitoringToDatabase()
 $DB_COLUMNS_DAT_MONITORING_ORDERED = [
-    'profit_center', 'cabang', 'tahun_buku', 'nomor_asset', 'sub_number', 'keterangan_asset',
+    'profit_center', 'cabang', 'periode_bulan', 'tahun_buku', 'nomor_asset', 'sub_number', 'gl_account_aset', 'keterangan_asset',
     'tgl_perolehan', 'tgl_mulai_penyusutan', 'nilai_perolehan_sd_tahun_berjalan', 'akumulasi_penyusutan', 'gl_account_exp',
 ];
 // Kolom yang WAJIB ketemu di header file, kalau tidak ada langsung tolak
-$WAJIB_ADA_DAT_MONITORING = ['profit center', 'nama cabang/kawasan', 'tahun buku', 'nomor asset', 'sub-number', 'keterangan asset', 'gl account exp depre'];
+$WAJIB_ADA_DAT_MONITORING = ['profit center', 'nama cabang/kawasan', 'periode/bulan', 'tahun buku', 'nomor asset', 'sub-number', 'keterangan asset', 'gl account exp depre'];
 
 // Variabel untuk card "Import AR02 reg3"
 $importedDataAr02 = [];
@@ -113,13 +132,14 @@ $HEADER_TO_FIELD_AR02 = [
     'deptransfer'            => 'dep_transfer',
     'cabang'                 => 'cabang',
     'profit center'          => 'profit_center',
+    'cost center'            => 'cost_center',            // kolom X -> 5 digit pertama = kode Profit Center (lookup di Excel)
 ];
 // Urutan HARUS sama persis dengan $column_names di saveAr02ToDatabase()
 $DB_COLUMNS_AR02_ORDERED = [
     'bal_sh_acct_APC', 'nomor_asset', 'sub_number', 'asset_class', 'gl_akumulasi_penyusutan', 'ckpn',
     'gl_beban_penyusutan', 'tgl_kapitalisasi', 'keterangan_asset', 'current_apc', 'nilai_buku',
     'akumulasi_dep_nilai', 'dep_tahun_berjalan', 'write_ups', 'plant', 'acquisition', 'retirement',
-    'transfers', 'dep_fy_start', 'dep_retir', 'dep_transfer', 'cabang', 'profit_center',
+    'transfers', 'dep_fy_start', 'dep_retir', 'dep_transfer', 'cabang', 'profit_center', 'cost_center',
 ];
 // Kolom yang WAJIB ketemu di header file, kalau tidak ada langsung tolak
 $WAJIB_ADA_AR02 = ['asset', 'sub-number', 'balshacct apc', 'acquisition', 'retirement', 'transfer'];
@@ -146,6 +166,31 @@ $DB_COLUMNS_COA_ORDERED = [
     'account_determination', 'akun_akumulasi_penyusutan', 'ckpn', 'akun_beban_penyusutan',
 ];
 $WAJIB_ADA_COA = ['account determination'];
+
+// Variabel untuk card "Import KK Aset"
+$importedDataKka = [];
+$pesanKka = "";
+$tipeKka = "";
+$savedCountKka = 0;
+
+// Card "Import KK Aset" -- data referensi akun GL per Asset Class (Account Determination),
+// dipakai buat lookup mengisi kolom Akumulasi Penyusutan/CKPN/Beban Penyusutan di AR02 reg3.
+// Ini tabel MASTER (bukan per periode) -- upload ulang akan meng-update baris yang sudah ada
+// berdasarkan Account Determination, dan menambah baris baru kalau belum ada (upsert), tanpa
+// menghapus baris lama yang tidak ikut ke-upload.
+$HEADER_TO_FIELD_KKA = [
+    'asset class'                     => 'asset_class',
+    'gl aset'                         => 'gl_aset',                // key (kolom D di sheet KK Aset)
+    'gl akumulasi'                    => 'gl_akumulasi',           // kolom E
+    'gl ckpn'                         => 'gl_ckpn',                // kolom F
+    'gl beban penyusutan'             => 'gl_beban_penyusutan',    // kolom G
+    'deskripsi gl beban penyusutan'   => 'deskripsi_gl_beban',     // kolom H
+];
+// Urutan HARUS sama persis dengan $column_names di saveMasterKkAsetToDatabase()
+$DB_COLUMNS_KKA_ORDERED = [
+    'asset_class', 'gl_aset', 'gl_akumulasi', 'gl_ckpn', 'gl_beban_penyusutan', 'deskripsi_gl_beban',
+];
+$WAJIB_ADA_KKA = []; // tidak ada header wajib: header dicari otomatis di baris mana pun, kalau gak ada dibaca per posisi kolom
 
 
 $importedDataF01 = [];
@@ -190,9 +235,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_FILES['file_excel'])) {
         $pesan = "Format file tidak didukung. Gunakan file Excel (.xls atau .xlsx)";
         $tipe_pesan = "danger";
     }
-    // Cek ukuran file (max 20MB)
-    else if ($file_size > 20 * 1024 * 1024) {
-        $pesan = "Ukuran file terlalu besar. Maksimal 20MB";
+    // Cek ukuran file (max 50MB)
+    else if ($file_size > 50 * 1024 * 1024) {
+        $pesan = "Ukuran file terlalu besar. Maksimal 50MB";
         $tipe_pesan = "danger";
     }
     // Cek error upload
@@ -212,10 +257,22 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_FILES['file_excel'])) {
             } else {
                 // Langsung simpan ke database tanpa preview
                 try {
-                    $saved_count = saveDatMonitoringToDatabase($con, $importedData);
-                    
+                    $hasilSimpanMonitoring = saveDatMonitoringToDatabase($con, $importedData);
+                    $saved_count   = $hasilSimpanMonitoring['saved_count'];
+                    $skipped_count = $hasilSimpanMonitoring['skipped_blank'];
+                    $failed_count  = $hasilSimpanMonitoring['failed_count'];
+
                     if ($saved_count > 0) {
                         $pesan = "✅ Berhasil mengimport dan menyimpan " . $saved_count . " baris data ke database";
+                        // Tampilkan juga rincian baris yang TIDAK ikut tersimpan, biar kalau jumlahnya
+                        // beda jauh dari total baris di file, penyebabnya langsung kelihatan (bukan
+                        // harus nebak / cek error_log server).
+                        $rincianGagal = [];
+                        if ($skipped_count > 0) { $rincianGagal[] = "$skipped_count baris kosong (Nomor Asset kosong) dilewati"; }
+                        if ($failed_count > 0)  { $rincianGagal[] = "$failed_count baris gagal (duplikat Asset+Sub-number+Bulan+Tahun Buku yang sama)"; }
+                        if (!empty($rincianGagal)) {
+                            $pesan .= ". " . implode(', ', $rincianGagal) . ".";
+                        }
                         $tipe_pesan = "success";
                         // Clear imported data
                         $importedData = [];
@@ -223,7 +280,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_FILES['file_excel'])) {
                             unset($_SESSION['importedData']);
                         }
                     } else {
-                        $pesan = "File berhasil dibaca namun tidak ada data yang tersimpan (mungkin duplikat)";
+                        $pesan = "File berhasil dibaca namun tidak ada data yang tersimpan ($skipped_count baris kosong, $failed_count baris duplikat/gagal)";
                         $tipe_pesan = "warning";
                         $importedData = [];
                     }
@@ -262,9 +319,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_FILES['file_penyusutan'])) {
         $pesanPenyusutan = "Format file tidak didukung. Gunakan file Excel (.xls atau .xlsx)";
         $tipePenyusutan = "danger";
     }
-    // Cek ukuran file (max 20MB)
-    else if ($file_size > 20 * 1024 * 1024) {
-        $pesanPenyusutan = "Ukuran file terlalu besar. Maksimal 20MB";
+    // Cek ukuran file (max 50MB)
+    else if ($file_size > 50 * 1024 * 1024) {
+        $pesanPenyusutan = "Ukuran file terlalu besar. Maksimal 50MB";
         $tipePenyusutan = "danger";
     }
     // Cek error upload
@@ -316,10 +373,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_FILES['file_penyusutan'])) {
 // ==========================================================
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_FILES['file_ar02'])) {
     $file = $_FILES['file_ar02'];
-    // Periode diambil otomatis dari tanggal server saat upload (bukan input manual lagi),
-    // karena file AR02 reg3 memang tidak punya kolom periode sendiri.
-    $periodeBulanAr02 = date('n');
-    $periodeTahunAr02 = date('Y');
+    // Periode diisi manual di form (file AR02 reg3 tidak punya kolom periode sendiri, dan datanya
+    // KUMULATIF per bulan -- jadi bulan harus sesuai isi file, bukan tanggal server saat upload).
+    $periodeBulanAr02 = isset($_POST['periode_bulan_ar02']) ? (string)(int)$_POST['periode_bulan_ar02'] : date('n');
+    $periodeTahunAr02 = isset($_POST['periode_tahun_ar02']) ? (string)(int)$_POST['periode_tahun_ar02'] : date('Y');
 
     $allowed_ext = ['xls', 'xlsx', 'csv'];
     $file_ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
@@ -329,8 +386,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_FILES['file_ar02'])) {
         $pesanAr02 = "Format file tidak didukung. Gunakan file Excel (.xls atau .xlsx) atau CSV";
         $tipeAr02 = "danger";
     }
-    else if ($file_size > 20 * 1024 * 1024) {
-        $pesanAr02 = "Ukuran file terlalu besar. Maksimal 20MB";
+    else if ($file_size > 50 * 1024 * 1024) {
+        $pesanAr02 = "Ukuran file terlalu besar. Maksimal 50MB";
         $tipeAr02 = "danger";
     }
     else if ($file['error'] !== UPLOAD_ERR_OK) {
@@ -389,8 +446,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_FILES['file_coa'])) {
         $pesanCoa = "Format file tidak didukung. Gunakan file Excel (.xls atau .xlsx) atau CSV";
         $tipeCoa = "danger";
     }
-    else if ($file_size > 20 * 1024 * 1024) {
-        $pesanCoa = "Ukuran file terlalu besar. Maksimal 20MB";
+    else if ($file_size > 50 * 1024 * 1024) {
+        $pesanCoa = "Ukuran file terlalu besar. Maksimal 50MB";
         $tipeCoa = "danger";
     }
     else if ($file['error'] !== UPLOAD_ERR_OK) {
@@ -436,14 +493,124 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_FILES['file_coa'])) {
 }
 
 // ==========================================================
+// Handle upload file untuk card "Import KK Aset"
+// ==========================================================
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_FILES['file_kka'])) {
+    $file = $_FILES['file_kka'];
+
+    $allowed_ext = ['xls', 'xlsx', 'csv'];
+    $file_ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+    $file_size = $file['size'];
+
+    if (!in_array($file_ext, $allowed_ext)) {
+        $pesanKka = "Format file tidak didukung. Gunakan file Excel (.xls atau .xlsx) atau CSV";
+        $tipeKka = "danger";
+    }
+    else if ($file_size > 50 * 1024 * 1024) {
+        $pesanKka = "Ukuran file terlalu besar. Maksimal 50MB";
+        $tipeKka = "danger";
+    }
+    else if ($file['error'] !== UPLOAD_ERR_OK) {
+        $pesanKka = "Terjadi kesalahan saat upload file";
+        $tipeKka = "danger";
+    }
+    else {
+        try {
+            $importedDataKka = readKkaFileByHeader($file['tmp_name'], $file_ext);
+
+            if (empty($importedDataKka)) {
+                $pesanKka = "File tidak memiliki data untuk diimport";
+                $tipeKka = "warning";
+            } else {
+                try {
+                    $savedCountKka = saveMasterKkAsetToDatabase($con, $importedDataKka);
+
+                    if ($savedCountKka > 0) {
+                        $pesanKka = "✅ Berhasil mengimport dan menyimpan " . $savedCountKka . " baris data KK Aset ke database";
+                        $tipeKka = "success";
+                        $importedDataKka = [];
+                    } else {
+                        $pesanKka = "File berhasil dibaca namun tidak ada data yang tersimpan (mungkin semua baris kosong)";
+                        $tipeKka = "warning";
+                        $importedDataKka = [];
+                    }
+                } catch (Exception $e) {
+                    $pesanKka = "Gagal menyimpan data ke database: " . $e->getMessage();
+                    $tipeKka = "danger";
+                    $importedDataKka = [];
+                }
+            }
+        } catch (Exception $e) {
+            $error_msg = $e->getMessage();
+            if (strpos($error_msg, 'ZipArchive') !== false || strpos($error_msg, 'XLSX') !== false) {
+                $pesanKka = "Format XLSX tidak didukung di server ini. Silakan gunakan format CSV atau XLS.";
+            } else {
+                $pesanKka = "Gagal membaca file: " . $error_msg;
+            }
+            $tipeKka = "danger";
+        }
+    }
+}
+
+// ==========================================================
+// Handle upload untuk card "Import Nilai Perolehan / Nilai Akumulasi / Nilai DEP"
+// ==========================================================
+foreach ($NILAI_ASET_JENIS as $nKey => $nMeta) {
+    $nField = 'file_' . $nKey;
+    if ($_SERVER['REQUEST_METHOD'] != 'POST' || !isset($_FILES[$nField])) { continue; }
+    $file = $_FILES[$nField];
+    $nBulan = (string)max(1, min(12, (int)($_POST['periode_bulan_' . $nKey] ?? date('n'))));
+    $nTahun = (string)(int)($_POST['periode_tahun_' . $nKey] ?? date('Y'));
+    $file_ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+    if (!in_array($file_ext, ['xls', 'xlsx', 'csv'])) {
+        $pesanNilai[$nKey] = "Format file tidak didukung. Gunakan file Excel (.xls atau .xlsx) atau CSV";
+        $tipeNilai[$nKey] = "danger";
+    } elseif ($file['size'] > 50 * 1024 * 1024) {
+        $pesanNilai[$nKey] = "Ukuran file terlalu besar. Maksimal 50MB";
+        $tipeNilai[$nKey] = "danger";
+    } elseif ($file['error'] !== UPLOAD_ERR_OK) {
+        $pesanNilai[$nKey] = "Terjadi kesalahan saat upload file";
+        $tipeNilai[$nKey] = "danger";
+    } else {
+        try {
+            $nRows = readPenyusutanFileByHeader($file['tmp_name'], $file_ext);
+            if (empty($nRows)) {
+                $pesanNilai[$nKey] = "File tidak memiliki data untuk diimport";
+                $tipeNilai[$nKey] = "warning";
+            } else {
+                try {
+                    $nSaved = saveNilaiAsetToDatabase($con, $nMeta['tabel'], $nRows, $nBulan, $nTahun);
+                    if ($nSaved > 0) {
+                        $pesanNilai[$nKey] = "✅ Berhasil mengimport dan menyimpan " . $nSaved . " baris data " . $nMeta['judul'] . " (periode " . $nBulan . "/" . $nTahun . ") ke database";
+                        $tipeNilai[$nKey] = "success";
+                    } else {
+                        $pesanNilai[$nKey] = "File berhasil dibaca namun tidak ada data yang tersimpan";
+                        $tipeNilai[$nKey] = "warning";
+                    }
+                } catch (Exception $e) {
+                    $pesanNilai[$nKey] = "Gagal menyimpan data ke database: " . $e->getMessage();
+                    $tipeNilai[$nKey] = "danger";
+                }
+            }
+        } catch (Exception $e) {
+            $err = $e->getMessage();
+            $pesanNilai[$nKey] = (strpos($err, 'ZipArchive') !== false || strpos($err, 'XLSX') !== false)
+                ? "Format XLSX tidak didukung di server ini. Silakan gunakan format CSV atau XLS."
+                : "Gagal membaca file: " . $err;
+            $tipeNilai[$nKey] = "danger";
+        }
+    }
+}
+
+// ==========================================================
 // Handle upload file untuk card "Import Data F.01"
 // ==========================================================
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_FILES['file_f01'])) {
     $file = $_FILES['file_f01'];
-    // Periode diambil otomatis dari tanggal server saat upload (bukan input manual lagi),
-    // karena file F.01 memang tidak punya kolom periode sendiri.
-    $periodeBulanF01 = date('n');
-    $periodeTahunF01 = date('Y');
+    // Periode dipilih di form (file F.01 tidak punya kolom periode sendiri). Kalau tidak dikirim, pakai tanggal server.
+    // Contoh: untuk kolom "31 Desember 2025" di Mutasi Aset Tetap, upload F.01 dengan Bulan = Desember, Tahun = 2025.
+    $periodeBulanF01 = isset($_POST['periode_bulan_f01']) ? (string)max(1, min(12, (int)$_POST['periode_bulan_f01'])) : date('n');
+    $periodeTahunF01 = isset($_POST['periode_tahun_f01']) ? (string)(int)$_POST['periode_tahun_f01'] : date('Y');
 
     $allowed_ext = ['xls', 'xlsx', 'csv'];
     $file_ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
@@ -453,8 +620,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_FILES['file_f01'])) {
         $pesanF01 = "Format file tidak didukung. Gunakan file Excel (.xls atau .xlsx) atau CSV";
         $tipeF01 = "danger";
     }
-    else if ($file_size > 20 * 1024 * 1024) {
-        $pesanF01 = "Ukuran file terlalu besar. Maksimal 20MB";
+    else if ($file_size > 50 * 1024 * 1024) {
+        $pesanF01 = "Ukuran file terlalu besar. Maksimal 50MB";
         $tipeF01 = "danger";
     }
     else if ($file['error'] !== UPLOAD_ERR_OK) {
@@ -533,8 +700,37 @@ function readExcelFile($filePath, $ext, $numCols = 47) {
     } catch (Exception $e) {
         throw new Exception($e->getMessage());
     }
-    
+
+    // ── Perbaikan notasi ilmiah (mis. "1.20401E+11") jadi angka desimal utuh (mis. "120401000000") ──
+    // Berlaku untuk SEMUA jalur baca (XLSX langsung, fallback LibreOffice/Gnumeric, maupun CSV),
+    // karena ketiganya bisa menghasilkan teks notasi ilmiah untuk angka besar/"bulat" (nomor asset,
+    // kode akun, dst) -- tanpa perbaikan ini, banyak nomor beda ke-"gepeng" jadi teks yang sama.
+    foreach ($rows as &$rowFix) {
+        foreach ($rowFix as &$cellFix) {
+            $cellFix = perbaiki_notasi_ilmiah_ps($cellFix);
+        }
+        unset($cellFix);
+    }
+    unset($rowFix);
+
     return $rows;
+}
+
+// Deteksi teks notasi ilmiah (mis. "1.20401E+11", "1.2E+11") lalu kembalikan ke bentuk desimal
+// utuh TANPA kehilangan digit -- dipakai untuk kolom yang isinya nomor "id" seperti nomor asset,
+// account, dst yang gak boleh ada bagian desimalnya. Nilai yang bukan notasi ilmiah dibiarkan
+// apa adanya (tidak disentuh sama sekali), jadi aman dipakai ke semua kolom termasuk yang
+// memang berisi angka desimal asli (mis. Amount).
+function perbaiki_notasi_ilmiah_ps($value) {
+    if (!is_string($value)) { return $value; }
+    $trimmed = trim($value);
+    if ($trimmed === '' || !preg_match('/^-?\d+(\.\d+)?[eE][+-]?\d+$/', $trimmed)) {
+        return $value; // bukan notasi ilmiah, biarkan apa adanya
+    }
+    // sprintf %.0f membulatkan ke integer terdekat -- aman dipakai di sini karena kolom id/nomor
+    // seperti ini memang gak punya pecahan; kalaupun aslinya "bulat" (misal .000000), hasilnya tetap
+    // representasi desimal penuh yang persis sama nilainya.
+    return sprintf('%.0f', (float)$trimmed);
 }
 
 function readXLSXFile($filePath, $numCols = 47) {
@@ -1450,7 +1646,12 @@ function extract_row_by_header_dat_monitoring($dataRow, $indexMap) {
     foreach ($DB_COLUMNS_DAT_MONITORING_ORDERED as $field) {
         $normHeader = $fieldToHeader[$field] ?? null;
         $idx = ($normHeader !== null) ? ($indexMap[$normHeader] ?? null) : null;
+        if ($field === 'gl_account_aset' && $idx === null) {
+            global $ALT_HEADER_GL_ASET_DAT_MON;
+            foreach ($ALT_HEADER_GL_ASET_DAT_MON as $altH) { if (isset($indexMap[$altH])) { $idx = $indexMap[$altH]; break; } }
+        }
         $val = ($idx !== null && isset($dataRow[$idx])) ? $dataRow[$idx] : '';
+        if ($field === 'gl_account_aset') { $val = trim((string)$val); }
         if ($field === 'tgl_perolehan' || $field === 'tgl_mulai_penyusutan') {
             $val = excel_serial_ke_tanggal_dat($val);
         }
@@ -1631,15 +1832,19 @@ function saveDatMonitoringToDatabase($con, $importedData) {
         return 0;
     }
 
-    // Tabel TERPISAH dari import_dat_penyusutan -- gak ada dimensi periode_bulan (bukan snapshot
-    // bulanan), cuma per tahun_buku. UNIQUE KEY-nya (nomor_asset, sub_number, tahun_buku).
+    // Tabel TERPISAH dari import_dat_penyusutan -- ikutan punya dimensi periode_bulan (data DAT
+    // Tahun Sebelumnya ternyata juga snapshot BULANAN, bukan cuma 1x per tahun -- makanya sebelum
+    // ini banyak baris "bulan lain" ke-tolak sebagai duplikat karena UNIQUE KEY lama cuma
+    // (nomor_asset, sub_number, tahun_buku), tanpa bulan). UNIQUE KEY sekarang ikut periode_bulan.
     $create_table_sql = "CREATE TABLE IF NOT EXISTS import_dat_monitoring (
         id INT AUTO_INCREMENT PRIMARY KEY,
         profit_center VARCHAR(20),
         cabang VARCHAR(100),
+        periode_bulan VARCHAR(20),
         tahun_buku VARCHAR(4),
         nomor_asset VARCHAR(50),
         sub_number VARCHAR(50),
+        gl_account_aset VARCHAR(25),
         keterangan_asset TEXT,
         tgl_perolehan VARCHAR(20),
         tgl_mulai_penyusutan VARCHAR(20),
@@ -1650,12 +1855,33 @@ function saveDatMonitoringToDatabase($con, $importedData) {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         imported_by VARCHAR(20),
-        UNIQUE KEY uk_asset_sub_tahun (nomor_asset, sub_number, tahun_buku),
+        UNIQUE KEY uk_asset_sub_periode_tahun (nomor_asset, sub_number, periode_bulan, tahun_buku),
         KEY idx_nomor_asset_sub_num (nomor_asset, sub_number_num)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
 
     if (!mysqli_query($con, $create_table_sql)) {
         throw new Exception("Gagal membuat tabel: " . mysqli_error($con));
+    }
+
+    // ── Migrasi AMAN untuk tabel yang sudah ada sebelumnya (dibuat sebelum kolom periode_bulan
+    // ada) -- tambah kolom kalau belum ada, lalu ganti UNIQUE KEY lama ke yang ikut periode_bulan.
+    // TIDAK PERNAH drop/hapus data yang sudah tersimpan. ──
+    $existingColsMon = [];
+    $resColsMon = mysqli_query($con, "SHOW COLUMNS FROM import_dat_monitoring");
+    if ($resColsMon) { while ($c = mysqli_fetch_assoc($resColsMon)) { $existingColsMon[] = $c['Field']; } }
+    if (!in_array('periode_bulan', $existingColsMon, true)) {
+        mysqli_query($con, "ALTER TABLE import_dat_monitoring ADD COLUMN periode_bulan VARCHAR(20) AFTER cabang");
+    }
+    // Kolom GL Aset (dari kolom "GL Account Aset" di file DAT) -- tabel lama belum punya, tambahkan setelah sub_number.
+    if (!in_array('gl_account_aset', $existingColsMon, true)) {
+        if (!mysqli_query($con, "ALTER TABLE import_dat_monitoring ADD COLUMN gl_account_aset VARCHAR(25) NULL AFTER sub_number")) {
+            throw new Exception("Gagal menambah kolom gl_account_aset: " . mysqli_error($con));
+        }
+    }
+    $idxMonRes = mysqli_query($con, "SHOW INDEX FROM import_dat_monitoring WHERE Key_name = 'uk_asset_sub_tahun'");
+    if ($idxMonRes && mysqli_num_rows($idxMonRes) > 0) {
+        mysqli_query($con, "ALTER TABLE import_dat_monitoring DROP INDEX uk_asset_sub_tahun");
+        mysqli_query($con, "ALTER TABLE import_dat_monitoring ADD UNIQUE KEY uk_asset_sub_periode_tahun (nomor_asset, sub_number, periode_bulan, tahun_buku)");
     }
 
     // Cari posisi kolom tahun_buku secara dinamis (bukan hardcode index), biar tidak rusak kalau
@@ -1720,7 +1946,7 @@ function saveDatMonitoringToDatabase($con, $importedData) {
                 } else {
                     $error = mysqli_error($con);
                     if (strpos($error, 'Duplicate entry') !== false) {
-                        $failed_rows[] = "Baris " . ($row_index + 2) . ": Asset $nomorAssetVal sudah ada di database untuk tahun buku ini";
+                        $failed_rows[] = "Baris " . ($row_index + 2) . ": Asset $nomorAssetVal sudah ada di database untuk bulan & tahun buku ini";
                     } else {
                         $failed_rows[] = "Baris " . ($row_index + 2) . ": $error";
                     }
@@ -1728,7 +1954,7 @@ function saveDatMonitoringToDatabase($con, $importedData) {
             } catch (\Throwable $eRow) {
                 $msgRow = $eRow->getMessage();
                 if (strpos($msgRow, 'Duplicate entry') !== false) {
-                    $failed_rows[] = "Baris " . ($row_index + 2) . ": Asset $nomorAssetVal sudah ada di database untuk tahun buku ini";
+                    $failed_rows[] = "Baris " . ($row_index + 2) . ": Asset $nomorAssetVal sudah ada di database untuk bulan & tahun buku ini";
                 } else {
                     $failed_rows[] = "Baris " . ($row_index + 2) . ": " . $msgRow;
                 }
@@ -1749,7 +1975,12 @@ function saveDatMonitoringToDatabase($con, $importedData) {
         error_log("Import DAT Monitoring: $skipped_blank baris kosong dilewati.");
     }
 
-    return $saved_count;
+    return [
+        'saved_count'    => $saved_count,
+        'skipped_blank'  => $skipped_blank,
+        'failed_count'   => count($failed_rows),
+        'failed_samples' => array_slice($failed_rows, 0, 5),
+    ];
 }
 
 // ── Normalisasi posting_date & amount SEKALI di sini, saat data masuk ──
@@ -1961,6 +2192,80 @@ function saveDataPenyusutanToDatabase($con, $importedData) {
     }
     
     return $saved_count;
+}
+
+// ==========================================================
+// Simpan "Nilai Perolehan / Nilai Akumulasi / Nilai DEP" -- 3 tabel kembar (struktur sama), beda tabel saja.
+// Baris dari readPenyusutanFileByHeader() urutannya: cost_center, asset, asset_subnumber, account,
+// posting_date, amount_local_currency, profit_center, text, document_number.
+// ==========================================================
+function saveNilaiAsetToDatabase($con, $tabel, $importedData, $periodeBulan, $periodeTahun) {
+    if (empty($importedData)) { return 0; }
+    // Whitelist nama tabel (nama tabel tidak bisa di-escape pakai parameter)
+    if (!in_array($tabel, ['import_nilai_perolehan', 'import_nilai_akumulasi', 'import_nilai_dep'], true)) {
+        throw new Exception("Nama tabel tidak valid");
+    }
+    $create = "CREATE TABLE IF NOT EXISTS $tabel (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        cost_center VARCHAR(20),
+        asset VARCHAR(50),
+        asset_subnumber VARCHAR(50),
+        account VARCHAR(20),
+        document_number VARCHAR(30),
+        posting_date VARCHAR(20),
+        amount_local_currency VARCHAR(50),
+        profit_center VARCHAR(20),
+        text VARCHAR(255),
+        posting_date_norm DATE NULL,
+        amount_norm DECIMAL(20,2) NULL,
+        asset_subnumber_num INT UNSIGNED NULL,
+        periode_bulan VARCHAR(20) NOT NULL,
+        periode_tahun VARCHAR(4) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        imported_by VARCHAR(20),
+        KEY idx_periode (periode_tahun, periode_bulan),
+        KEY idx_account (account),
+        KEY idx_asset_sub (asset, asset_subnumber),
+        KEY idx_posting_date_norm (posting_date_norm)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
+    if (!mysqli_query($con, $create)) { throw new Exception("Gagal membuat tabel: " . mysqli_error($con)); }
+
+    $pb = mysqli_real_escape_string($con, (string)$periodeBulan);
+    $pt = mysqli_real_escape_string($con, (string)$periodeTahun);
+    $nipp = isset($_SESSION['nipp']) ? $_SESSION['nipp'] : 'unknown';
+    $saved = 0; $failed = [];
+
+    mysqli_begin_transaction($con);
+    try {
+        // Periode yang sama di-replace; periode lain tidak disentuh
+        if (!mysqli_query($con, "DELETE FROM $tabel WHERE periode_bulan = '$pb' AND periode_tahun = '$pt'")) {
+            throw new Exception("Gagal menghapus data periode lama: " . mysqli_error($con));
+        }
+        $esc = function ($v) use ($con) { return "'" . mysqli_real_escape_string($con, trim((string)$v)) . "'"; };
+        foreach ($importedData as $i => $r) {
+            $dateNorm = normalisasi_posting_date_ps($r[4] ?? '');
+            $amtNorm  = normalisasi_amount_ps($r[5] ?? '');
+            $subNum   = normalisasi_subnumber_num_ps($r[2] ?? '');
+            $sql = "INSERT INTO $tabel (cost_center, asset, asset_subnumber, account, document_number, posting_date, amount_local_currency,
+                        profit_center, text, posting_date_norm, amount_norm, asset_subnumber_num, periode_bulan, periode_tahun, imported_by)
+                    VALUES (" . implode(', ', [
+                        $esc($r[0] ?? ''), $esc($r[1] ?? ''), $esc($r[2] ?? ''), $esc($r[3] ?? ''), $esc($r[8] ?? ''),
+                        $esc($r[4] ?? ''), $esc($r[5] ?? ''), $esc($r[6] ?? ''), $esc($r[7] ?? ''),
+                        $dateNorm === null ? 'NULL' : "'" . mysqli_real_escape_string($con, $dateNorm) . "'",
+                        $amtNorm === null ? 'NULL' : $amtNorm,
+                        $subNum === null ? 'NULL' : $subNum,
+                        "'$pb'", "'$pt'", $esc($nipp),
+                    ]) . ")";
+            if (mysqli_query($con, $sql)) { $saved++; } else { $failed[] = "Baris " . ($i + 2) . ": " . mysqli_error($con); }
+        }
+        mysqli_commit($con);
+    } catch (Exception $e) {
+        mysqli_rollback($con);
+        throw new Exception("Gagal menyimpan data: " . $e->getMessage());
+    }
+    if (!empty($failed)) { error_log("Import $tabel failed rows: " . implode("; ", array_slice($failed, 0, 5))); }
+    return $saved;
 }
 
 // ==========================================================
@@ -2225,6 +2530,7 @@ function saveAr02ToDatabase($con, $importedData, $periodeBulan, $periodeTahun) {
         dep_transfer VARCHAR(30),
         cabang VARCHAR(100),
         profit_center VARCHAR(20),
+        cost_center VARCHAR(30),
         periode_bulan VARCHAR(20) NOT NULL,
         periode_tahun VARCHAR(4) NOT NULL,
         sub_number_num INT UNSIGNED NULL,
@@ -2240,14 +2546,18 @@ function saveAr02ToDatabase($con, $importedData, $periodeBulan, $periodeTahun) {
         throw new Exception("Gagal membuat tabel: " . mysqli_error($con));
     }
 
+    // Migrasi aman untuk tabel lama yang belum punya kolom cost_center.
+    $rcCc = mysqli_query($con, "SHOW COLUMNS FROM import_ar02_reg3 LIKE 'cost_center'");
+    if ($rcCc && mysqli_num_rows($rcCc) === 0) {
+        if (!mysqli_query($con, "ALTER TABLE import_ar02_reg3 ADD COLUMN cost_center VARCHAR(30) NULL AFTER profit_center")) {
+            throw new Exception("Gagal menambah kolom cost_center: " . mysqli_error($con));
+        }
+    }
+
     // Hapus dulu data periode yang sama sebelum insert ulang, biar upload ulang untuk periode
     // yang sama TIDAK numpuk jadi data ganda (pola sama seperti saveDatPenyusutanToDatabase).
     $pbEsc = mysqli_real_escape_string($con, $periodeBulan);
     $tbEsc = mysqli_real_escape_string($con, $periodeTahun);
-    if (!mysqli_query($con, "DELETE FROM import_ar02_reg3 WHERE periode_bulan = '$pbEsc' AND periode_tahun = '$tbEsc'")) {
-        throw new Exception("Gagal menghapus data lama periode $periodeBulan/$periodeTahun: " . mysqli_error($con));
-    }
-
     $nipp = isset($_SESSION['nipp']) ? $_SESSION['nipp'] : 'unknown';
 
     global $DB_COLUMNS_AR02_ORDERED;
@@ -2262,6 +2572,11 @@ function saveAr02ToDatabase($con, $importedData, $periodeBulan, $periodeTahun) {
     mysqli_begin_transaction($con);
 
     try {
+        // DELETE periode lama ada DI DALAM transaksi: kalau insert gagal, data lama ikut ter-rollback.
+        if (!mysqli_query($con, "DELETE FROM import_ar02_reg3 WHERE periode_bulan = '$pbEsc' AND periode_tahun = '$tbEsc'")) {
+            throw new Exception("Gagal menghapus data lama periode $periodeBulan/$periodeTahun: " . mysqli_error($con));
+        }
+
         foreach ($importedData as $row_index => $row) {
             $nomorAssetVal = trim((string)($row[$idxNomorAssetCol] ?? ''));
             if ($nomorAssetVal === '') {
@@ -2309,6 +2624,46 @@ function saveAr02ToDatabase($con, $importedData, $periodeBulan, $periodeTahun) {
                     $failed_rows[] = "Baris " . ($row_index + 2) . ": " . $msgRow;
                 }
             }
+        }
+
+        // Isi akun Akumulasi/CKPN/Beban dari master_coa lewat Asset Class (setara XLOOKUP di Excel),
+        // hanya untuk periode ini dan hanya kolom yang masih kosong.
+        $adaMc = mysqli_query($con, "SHOW TABLES LIKE 'master_coa'");
+        if ($adaMc && mysqli_num_rows($adaMc) > 0) {
+            $sqlLookup = "UPDATE import_ar02_reg3 a
+                JOIN master_coa m ON TRIM(a.asset_class) = TRIM(m.account_determination)
+                SET a.gl_akumulasi_penyusutan = IF(IFNULL(TRIM(a.gl_akumulasi_penyusutan),'') = '', m.akun_akumulasi_penyusutan, a.gl_akumulasi_penyusutan),
+                    a.ckpn                    = IF(IFNULL(TRIM(a.ckpn),'') = '', m.ckpn, a.ckpn),
+                    a.gl_beban_penyusutan     = IF(IFNULL(TRIM(a.gl_beban_penyusutan),'') = '', m.akun_beban_penyusutan, a.gl_beban_penyusutan)
+                WHERE a.periode_bulan = '$pbEsc' AND a.periode_tahun = '$tbEsc'";
+            if (!mysqli_query($con, $sqlLookup)) {
+                throw new Exception("Gagal mengisi akun dari master_coa: " . mysqli_error($con));
+            }
+        }
+
+        // Isi Cabang dari master_plant lewat kolom Plant. Plant Regional 3 memakai nama_cabang,
+        // plant lain memakai deskripsi. Hanya untuk periode ini dan hanya kalau cabang masih kosong.
+        $adaMp = mysqli_query($con, "SHOW TABLES LIKE 'master_plant'");
+        if ($adaMp && mysqli_num_rows($adaMp) > 0) {
+            $sqlPlant = "UPDATE import_ar02_reg3 a
+                JOIN master_plant p ON TRIM(a.plant) = p.kode_plant
+                SET a.cabang = COALESCE(NULLIF(TRIM(p.nama_cabang),''), p.deskripsi)
+                WHERE a.periode_bulan = '$pbEsc' AND a.periode_tahun = '$tbEsc'
+                  AND IFNULL(TRIM(a.cabang),'') = ''";
+            if (!mysqli_query($con, $sqlPlant)) {
+                throw new Exception("Gagal mengisi cabang dari master_plant: " . mysqli_error($con));
+            }
+        }
+
+        // Profit Center = 5 digit pertama Cost Center (setara XLOOKUP(VALUE(LEFT(cost center,5)), DAT...) di Excel).
+        // Hanya untuk periode ini, hanya kalau profit_center masih kosong dan 5 digit pertama berupa angka.
+        $sqlPc = "UPDATE import_ar02_reg3
+            SET profit_center = LEFT(TRIM(cost_center), 5)
+            WHERE periode_bulan = '$pbEsc' AND periode_tahun = '$tbEsc'
+              AND IFNULL(TRIM(profit_center),'') = ''
+              AND LEFT(TRIM(cost_center), 5) REGEXP '^[0-9]{5}$'";
+        if (!mysqli_query($con, $sqlPc)) {
+            throw new Exception("Gagal mengisi profit center dari cost center: " . mysqli_error($con));
         }
 
         mysqli_commit($con);
@@ -2627,6 +2982,337 @@ function saveMasterCoaToDatabase($con, $importedData) {
     }
     if ($skipped_blank > 0) {
         error_log("Import Master COA: $skipped_blank baris kosong dilewati.");
+    }
+
+    return $saved_count;
+}
+
+// ==========================================================
+// Fungsi-fungsi untuk card "Import KK Aset"
+// (pola sama persis dengan fungsi *_ar02 di atas, tapi tabelnya MASTER: upsert
+// berdasarkan Account Determination, bukan per periode_bulan/periode_tahun)
+// ==========================================================
+function normalize_header_kka($h) {
+    $h = strtolower(trim((string)$h));
+    $h = str_replace('.', '', $h);
+    $h = preg_replace('/\s+/', ' ', $h);
+    return trim($h);
+}
+
+function build_header_map_kka($headerRow) {
+    $map = [];
+    foreach ($headerRow as $idx => $h) {
+        $norm = normalize_header_kka($h);
+        if ($norm !== '' && !isset($map[$norm])) {
+            $map[$norm] = $idx;
+        }
+    }
+    return $map;
+}
+
+function cek_kolom_wajib_kka($indexMap) {
+    global $WAJIB_ADA_KKA;
+    $hilang = [];
+    foreach ($WAJIB_ADA_KKA as $h) {
+        if (!isset($indexMap[$h])) $hilang[] = $h;
+    }
+    return $hilang;
+}
+
+function extract_row_by_header_kka($dataRow, $indexMap) {
+    global $HEADER_TO_FIELD_KKA, $DB_COLUMNS_KKA_ORDERED;
+    static $fieldToHeader = null;
+    if ($fieldToHeader === null) {
+        $fieldToHeader = array_flip($HEADER_TO_FIELD_KKA);
+    }
+    $out = [];
+    foreach ($DB_COLUMNS_KKA_ORDERED as $field) {
+        $normHeader = $fieldToHeader[$field] ?? null;
+        $idx = ($normHeader !== null) ? ($indexMap[$normHeader] ?? null) : null;
+        $val = ($idx !== null && isset($dataRow[$idx])) ? $dataRow[$idx] : '';
+        $out[] = $val;
+    }
+    return $out;
+}
+
+function readKkaFileByHeader($filePath, $ext) {
+    $raw = [];
+    if ($ext === 'csv') {
+        $raw = readKkaCSVByHeader($filePath);
+    } elseif ($ext === 'xlsx') {
+        $raw = readKkaXLSXByHeader($filePath);
+    } elseif ($ext === 'xls') {
+        $raw = readKkaXLSByHeader($filePath);
+    }
+    return kka_proses_baris($raw);
+}
+
+// Cari baris header (mengandung "GL Aset") di 40 baris pertama; kalau tidak ada, tebak posisi kolom dari baris data pertama
+// (kolom pertama yang berisi kode 10 digit = GL Aset, lalu Akumulasi, CKPN, Beban, Deskripsi berurutan di kanannya).
+// Hanya baris yang GL Aset-nya berupa kode angka (>= 6 digit) yang dipakai, jadi baris kosong, judul, dan baris nomor kolom otomatis terlewat.
+function kka_proses_baris($raw) {
+    $map = null; $hdrIdx = -1;
+    $limit = min(count($raw), 40);
+    for ($i = 0; $i < $limit; $i++) {
+        $m = build_header_map_kka($raw[$i]);
+        if (isset($m['gl aset'])) { $map = $m; $hdrIdx = $i; break; }
+    }
+    if ($map === null) {
+        $g = null;
+        foreach ($raw as $r) {
+            foreach ($r as $ci => $cell) {
+                if (preg_match('/^\d{10}$/', trim((string)perbaiki_notasi_ilmiah_ps($cell)))) { $g = $ci; break 2; }
+            }
+        }
+        if ($g === null) {
+            throw new Exception("Kolom GL Aset tidak ditemukan. Pastikan ada kolom berisi kode akun (mis. 1205010100) atau header \"GL Aset\".");
+        }
+        $map = ['asset class' => $g - 1, 'gl aset' => $g, 'gl akumulasi' => $g + 1, 'gl ckpn' => $g + 2,
+                'gl beban penyusutan' => $g + 3, 'deskripsi gl beban penyusutan' => $g + 4];
+    }
+    $out = [];
+    $idxGl = array_search('gl_aset', $GLOBALS['DB_COLUMNS_KKA_ORDERED']);
+    foreach ($raw as $i => $r) {
+        if ($i <= $hdrIdx) continue;
+        foreach ($r as $ci => $cell) { $r[$ci] = perbaiki_notasi_ilmiah_ps($cell); }
+        $row = extract_row_by_header_kka($r, $map);
+        foreach ($row as $ci => $v) {
+            $v = trim((string)$v);
+            if ($ci !== 0 && $ci !== 5) { $v = preg_replace('/\.0+$/', '', $v); } // kode akun: buang ".0" sisa Excel
+            $row[$ci] = $v;
+        }
+        if (!preg_match('/^\d{6,}$/', $row[$idxGl])) continue;
+        $out[] = $row;
+    }
+    return $out;
+}
+
+function readKkaCSVByHeader($filePath) {
+    // Baca SEMUA baris apa adanya (header bisa ada di baris mana pun / ada baris nomor kolom); disaring di kka_proses_baris()
+    $rows = [];
+    if (($handle = fopen($filePath, 'r')) !== false) {
+        $first_line = fgets($handle);
+        $delimiter = (strpos($first_line, "\t") !== false) ? "\t" : ((strpos($first_line, ';') !== false) ? ';' : ',');
+        rewind($handle);
+        while (($row = fgetcsv($handle, 0, $delimiter)) !== false) {
+            $rows[] = $row;
+        }
+        fclose($handle);
+    }
+    return $rows;
+}
+
+function readKkaXLSXByHeader($filePath) {
+    $rows = [];
+    if (!class_exists('ZipArchive')) return convertXLSXtoCSVAndParseKkaByHeader($filePath);
+    $zip = new ZipArchive();
+    if ($zip->open($filePath) !== true) return convertXLSXtoCSVAndParseKkaByHeader($filePath);
+
+    try {
+        $sharedStrings = [];
+        if (($xmlContent = $zip->getFromName('xl/sharedStrings.xml')) !== false) {
+            $xml = simplexml_load_string($xmlContent);
+            foreach ($xml->si as $si) {
+                $text = '';
+                if (isset($si->t)) { $text = (string)$si->t; }
+                elseif (isset($si->r)) { foreach ($si->r as $r) { if (isset($r->t)) $text .= (string)$r->t; } }
+                $sharedStrings[] = $text;
+            }
+        }
+
+        $xmlContent = $zip->getFromName('xl/workbook.xml');
+        $xml = simplexml_load_string($xmlContent);
+
+        $sheetIds = [];
+        foreach ($xml->sheets->sheet as $sheet) {
+            $sheetIds[] = (string)$sheet->attributes('r', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships');
+        }
+        if (empty($sheetIds)) throw new Exception("Tidak ada worksheet ditemukan");
+
+        $relsContent = $zip->getFromName('xl/_rels/workbook.xml.rels');
+        $relsXml = simplexml_load_string($relsContent);
+        $relMap = [];
+        foreach ($relsXml->Relationship as $rel) {
+            $relMap[(string)$rel->attributes()['Id']] = 'xl/' . (string)$rel->attributes()['Target'];
+        }
+
+        $adaKolomWajibHilang = null;
+        foreach ($sheetIds as $sheetId) {
+            $worksheetPath = $relMap[$sheetId] ?? '';
+            if (empty($worksheetPath) || !$zip->locateName($worksheetPath)) continue;
+
+            $sheetXmlContent = $zip->getFromName($worksheetPath);
+            $sheetXml = simplexml_load_string($sheetXmlContent);
+            if (!$sheetXml || !isset($sheetXml->sheetData)) continue;
+
+            foreach ($sheetXml->sheetData->row as $row) {
+                $sparse = [];
+                foreach ($row->c as $cell) {
+                    $ref = (string)($cell->attributes()['r'] ?? '');
+                    $colIdx = $ref !== '' ? excel_col_to_index_ps($ref) : count($sparse);
+                    $value = ''; $type = (string)($cell->attributes()['t'] ?? 'n');
+                    if (isset($cell->v)) {
+                        $value = (string)$cell->v;
+                        if ($type === 's') { $value = $sharedStrings[(int)$value] ?? ''; }
+                    }
+                    $sparse[$colIdx] = $value;
+                }
+                if (empty($sparse)) continue;
+                $maxIdx = max(array_keys($sparse));
+                $cellData = [];
+                for ($i = 0; $i <= $maxIdx; $i++) { $cellData[] = $sparse[$i] ?? ''; }
+
+                $rows[] = $cellData;
+            }
+        }
+        $zip->close();
+
+        if (empty($rows) && $adaKolomWajibHilang !== null) {
+            throw new Exception("Kolom berikut tidak ditemukan di header KK Aset: " . implode(', ', $adaKolomWajibHilang) . ". Pastikan baris pertama sheet berisi nama kolom yang sesuai.");
+        }
+        return $rows;
+    } catch (Exception $e) {
+        $zip->close();
+        if (strpos($e->getMessage(), 'Kolom berikut tidak ditemukan') !== false) {
+            throw $e;
+        }
+        return convertXLSXtoCSVAndParseKkaByHeader($filePath);
+    }
+}
+
+function convertXLSXtoCSVAndParseKkaByHeader($filePath) {
+    $temp_csv = tempnam(sys_get_temp_dir(), 'xlsxkka_') . '.csv';
+
+    $command = "libreoffice --headless --convert-to csv:Text --outdir " .
+               escapeshellarg(dirname($temp_csv)) . " " . escapeshellarg($filePath) . " 2>/dev/null";
+    @shell_exec($command);
+
+    $base_name = pathinfo($filePath, PATHINFO_FILENAME);
+    $expected_csv = dirname($temp_csv) . '/' . $base_name . '.csv';
+
+    if (!file_exists($expected_csv) && !file_exists($temp_csv)) {
+        $command = "ssconvert " . escapeshellarg($filePath) . " " . escapeshellarg($temp_csv) . " 2>/dev/null";
+        @shell_exec($command);
+    } elseif (file_exists($expected_csv)) {
+        $temp_csv = $expected_csv;
+    }
+
+    if (file_exists($temp_csv)) {
+        $rows = readKkaCSVByHeader($temp_csv);
+        @unlink($temp_csv);
+        if (!empty($rows)) return $rows;
+    }
+
+    throw new Exception("Tidak dapat membaca file XLSX. Pastikan LibreOffice/Gnumeric terinstall, atau gunakan format CSV/XLS.");
+}
+
+function readKkaXLSByHeader($filePath) {
+    $temp_csv = tempnam(sys_get_temp_dir(), 'xlskka_') . '.csv';
+    $command = "ssconvert " . escapeshellarg($filePath) . " " . escapeshellarg($temp_csv) . " 2>/dev/null";
+    @shell_exec($command);
+
+    if (file_exists($temp_csv)) {
+        $rows = readKkaCSVByHeader($temp_csv);
+        @unlink($temp_csv);
+        if (!empty($rows)) return $rows;
+    }
+
+    throw new Exception("Tidak dapat membaca file XLS. Pastikan file valid atau gunakan format XLSX/CSV.");
+}
+
+function saveMasterKkAsetToDatabase($con, $importedData) {
+    if (empty($importedData)) {
+        return 0;
+    }
+
+    $create_table_sql = "CREATE TABLE IF NOT EXISTS master_kk_aset (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        asset_class VARCHAR(150),
+        gl_aset VARCHAR(20) NOT NULL,
+        gl_akumulasi VARCHAR(20),
+        gl_ckpn VARCHAR(20),
+        gl_beban_penyusutan VARCHAR(20),
+        deskripsi_gl_beban VARCHAR(200),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        imported_by VARCHAR(20),
+        UNIQUE KEY uk_kka_gl_aset (gl_aset)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
+
+    if (!mysqli_query($con, $create_table_sql)) {
+        throw new Exception("Gagal membuat tabel: " . mysqli_error($con));
+    }
+
+    // Tabel dari versi awal belum punya kolom ini -> tambahkan kalau belum ada
+    $kkaCols = [];
+    $rcK = mysqli_query($con, "SHOW COLUMNS FROM master_kk_aset");
+    if ($rcK) { while ($rwK = mysqli_fetch_assoc($rcK)) { $kkaCols[] = $rwK['Field']; } }
+    if (!in_array('asset_class', $kkaCols, true))        { mysqli_query($con, "ALTER TABLE master_kk_aset ADD COLUMN asset_class VARCHAR(150) NULL AFTER id"); }
+    if (!in_array('deskripsi_gl_beban', $kkaCols, true)) { mysqli_query($con, "ALTER TABLE master_kk_aset ADD COLUMN deskripsi_gl_beban VARCHAR(200) NULL AFTER gl_beban_penyusutan"); }
+
+    $nipp = isset($_SESSION['nipp']) ? $_SESSION['nipp'] : 'unknown';
+
+    global $DB_COLUMNS_KKA_ORDERED;
+    $column_names = $DB_COLUMNS_KKA_ORDERED;
+
+    $saved_count = 0;
+    $failed_rows = [];
+    $skipped_blank = 0;
+    $idxGlAsetCol = array_search('gl_aset', $column_names);
+
+    mysqli_begin_transaction($con);
+
+    try {
+        foreach ($importedData as $row_index => $row) {
+            $accountDeterminationVal = trim((string)($row[$idxGlAsetCol] ?? ''));
+            if ($accountDeterminationVal === '') {
+                $skipped_blank++;
+                continue;
+            }
+
+            $values = [];
+            foreach ($column_names as $col_idx => $col_name) {
+                $value = isset($row[$col_idx]) ? $row[$col_idx] : '';
+                $value = trim((string)$value);
+                $values[] = "'" . mysqli_real_escape_string($con, $value) . "'";
+            }
+            $values[] = "'" . mysqli_real_escape_string($con, $nipp) . "'";
+
+            $columns = implode(', ', $column_names) . ', imported_by';
+            $updateParts = [];
+            foreach ($column_names as $col_name) {
+                if ($col_name === 'gl_aset') continue; // key, jangan di-update
+                $updateParts[] = "$col_name = VALUES($col_name)";
+            }
+            $updateParts[] = "imported_by = VALUES(imported_by)";
+            $updateParts[] = "updated_at = CURRENT_TIMESTAMP";
+
+            $insert_sql = "INSERT INTO master_kk_aset (" . $columns . ") VALUES (" . implode(', ', $values) . ")
+                ON DUPLICATE KEY UPDATE " . implode(', ', $updateParts);
+
+            try {
+                if (mysqli_query($con, $insert_sql)) {
+                    $saved_count++;
+                } else {
+                    $failed_rows[] = "Baris " . ($row_index + 2) . ": " . mysqli_error($con);
+                }
+            } catch (\Throwable $eRow) {
+                $failed_rows[] = "Baris " . ($row_index + 2) . ": " . $eRow->getMessage();
+            }
+        }
+
+        mysqli_commit($con);
+
+    } catch (Exception $e) {
+        mysqli_rollback($con);
+        throw new Exception("Gagal menyimpan data: " . $e->getMessage());
+    }
+
+    if (!empty($failed_rows)) {
+        error_log("Import KK Aset failed rows: " . implode("; ", array_slice($failed_rows, 0, 5)));
+    }
+    if ($skipped_blank > 0) {
+        error_log("Import KK Aset: $skipped_blank baris kosong dilewati.");
     }
 
     return $saved_count;
@@ -3056,6 +3742,20 @@ function saveF01ToDatabase($con, $importedData, $periodeBulan, $periodeTahun) {
       .app-sidebar .nav-link:hover i {
         color: #ffffff !important;
       }
+      /* Kartu import: tinggi sama per baris, tombol Upload selalu sejajar di dasar kartu, jarak antar kartu seragam */
+      .import-row > [class*="col-"] > .card {
+        height: 100%;
+        margin-bottom: 0 !important;
+        display: flex;
+        flex-direction: column;
+      }
+      .import-row .card > form {
+        display: flex;
+        flex-direction: column;
+        flex: 1 1 auto;
+      }
+      .import-row .card > form > .card-body { flex: 1 1 auto; }
+      .import-row .card > form > .card-footer { margin-top: auto; }
     </style>
     <!-- apexcharts -->
     <link
@@ -3165,62 +3865,66 @@ function saveF01ToDatabase($con, $importedData, $periodeBulan, $periodeTahun) {
             $query = "SELECT menus.menu, menus.nama_menu, menus.urutan_menu FROM user_access INNER JOIN menus ON user_access.id_menu = menus.id_menu WHERE user_access.NIPP = '" . mysqli_real_escape_string($con, $userNipp) . "' ORDER BY menus.urutan_menu ASC";
             $result_menu = mysqli_query($con, $query) or die(mysqli_error($con));
            $iconMap = [
-                'Dasboard'                        => 'bi bi-grid-fill',
-                'Usulan Penghapusan'              => 'bi bi-file-earmark-plus',
-                'Daftar Usulan Penghapusan'       => 'bi bi-collection',
-                'Approval SubReg'                 => 'bi bi-person-check',
-                'Approval Regional'               => 'bi bi-building-check',
-                'Persetujuan Penghapusan'         => 'bi bi-shield-check',
-                'Daftar Persetujuan Penghapusan'  => 'bi bi-journal-check',
-                'Pelaksanaan Penghapusan'         => 'bi bi-gear-wide-connected',
-                'Daftar Pelaksanaan Penghapusan'  => 'bi bi-archive-fill',
-                'Manajemen Menu'                  => 'bi bi-layout-text-sidebar',
-                'Import DAT'                      => 'bi bi-file-earmark-arrow-up',
+                'Dasboard'                           => 'bi bi-grid-fill', 
 
-                // Penyusutan
-                'Import Data Penyusutan'          => 'bi bi-upload',
-                'Daftar Data Penyusutan'          => 'bi bi-table',
-                'Dasbor Monitoring Beban Penyusutan'  => 'bi-bar-chart-line',
+                'Usulan Penghapusan'                 => 'bi bi-file-earmark-plus', 
+                'Daftar Usulan Penghapusan'          => 'bi bi-collection',
+                'Approval SubReg'                    => 'bi bi-person-check', 
+                'Approval Regional'                  => 'bi bi-building-check', 
+                'Persetujuan Penghapusan'            => 'bi bi-shield-check',
+                'Pelaksanaan Penghapusan'            => 'bi bi-gear-wide-connected', 
+                'Daftar Pelaksanaan Penghapusan'     => 'bi bi-archive-fill',
+                'Daftar Aset Tetap'                  => 'bi bi-boxes',    
 
-                // Monitoring SAP-DAT
-                'Import Data Monitoring'          => 'bi bi-upload',
-                'Daftar Data Monitoring'          => 'bi bi-table',
-                'Dasbor Monitoring SAP-DAT'       => 'bi bi-speedometer2',
+                'Import Data Penyusutan'             => 'bi bi-upload', 
+                'Daftar Data Penyusutan'             => 'bi bi-table', 
+                'Dasbor Monitoring Beban Penyusutan' => 'bi-bar-chart-line',
 
-                'Daftar Aset Tetap'               => 'bi bi-boxes',
-                'Manajemen User'                  => 'bi bi-people',
+                'Import Data Monitoring'             => 'bi bi-upload', 
+                'Daftar Data Monitoring'             => 'bi bi-table', 
+                'Dasbor Mutasi Aset Tetap'           => 'bi bi-speedometer2',
+                'Dasbor Selisih Percabang'           => 'bi bi-card-checklist', 
+                'Dasbor Mutasi Aset Tak Berwujud'    => 'bi bi-file-earmark-text',
+                'Dasbor Mutasi Properti Investasi'   => 'bi bi-house-fill',
+
+                'Import DAT'                         => 'bi bi-upload',
+                'Manajemen Menu'                     => 'bi bi-layout-text-sidebar', 
+                'Manajemen User'                     => 'bi bi-people',
             ];
-
             $groupMap = [
-                'Usulan Penghapusan'              => 'Penghapusan',
-                'Daftar Usulan Penghapusan'       => 'Penghapusan',
-                'Approval SubReg'                 => 'Penghapusan',
-                'Approval Regional'               => 'Penghapusan',
-                'Persetujuan Penghapusan'         => 'Penghapusan',
-                'Daftar Persetujuan Penghapusan'  => 'Penghapusan',
-                'Pelaksanaan Penghapusan'         => 'Penghapusan',
-                'Daftar Aset Tetap'               => 'Penghapusan',
-                'Daftar Pelaksanaan Penghapusan'  => 'Penghapusan',
+                'Usulan Penghapusan'                 => 'Penghapusan Aset', 
+                'Daftar Usulan Penghapusan'          => 'Penghapusan Aset', 
+                'Approval SubReg'                    => 'Penghapusan Aset',
+                'Approval Regional'                  => 'Penghapusan Aset', 
+                'Persetujuan Penghapusan'            => 'Penghapusan Aset', 
+                'Daftar Persetujuan Penghapusan'     => 'Penghapusan Aset',
+                'Pelaksanaan Penghapusan'            => 'Penghapusan Aset', 
+                'Daftar Aset Tetap'                  => 'Penghapusan Aset', 
+                'Daftar Pelaksanaan Penghapusan'     => 'Penghapusan Aset',
 
-                'Import Data Penyusutan'          => 'Penyusutan',
-                'Daftar Data Penyusutan'          => 'Penyusutan',
-                'Dasbor Monitoring Beban Penyusutan'  => 'Penyusutan',
+                'Import Data Penyusutan'             => 'Penyusutan Aset', 
+                'Daftar Data Penyusutan'             => 'Penyusutan Aset', 
+                'Dasbor Monitoring Beban Penyusutan' => 'Penyusutan Aset',
 
-                'Import Data Monitoring'          => 'Monitoring SAP-DAT',
-                'Daftar Data Monitoring'          => 'Monitoring SAP-DAT',
-                'Dasbor Monitoring SAP-DAT'       => 'Monitoring SAP-DAT',
+                'Import Data Monitoring'             => 'Monitoring Aset Tetap', 
+                'Daftar Data Monitoring'             => 'Monitoring Aset Tetap', 
+                'Dasbor Mutasi Aset Tetap'           => 'Monitoring Aset Tetap',
+                'Dasbor Selisih Percabang'           => 'Monitoring Aset Tetap', 
+                'Dasbor Mutasi Aset Tak Berwujud'    => 'Monitoring Aset Tetap',
+                'Dasbor Mutasi Properti Investasi'   => 'Monitoring Aset Tetap',
 
-                'Import DAT'                      => 'Manajemen Admin',
-                'Manajemen Menu'                  => 'Manajemen Admin',
-                'Manajemen User'                  => 'Manajemen Admin',
+                'Import DAT'                         => 'Administrasi Sistem', 
+                'Manajemen Menu'                     => 'Administrasi Sistem', 
+                'Manajemen User'                     => 'Administrasi Sistem',
             ];
             $groupIcon = [
-                'Penghapusan'                     => 'bi bi-file-earmark-minus',
-                'Penyusutan'                      => 'bi bi-graph-down-arrow',
-                'Monitoring SAP-DAT'              => 'bi bi-arrow-left-right',
-                'Manajemen Admin'                 => 'bi bi-sliders',               
+                'Penghapusan Aset'                   => 'bi bi-file-earmark-minus', 
+                'Penyusutan Aset'                    => 'bi bi-graph-down-arrow',
+                'Monitoring Aset Tetap'              => 'bi bi-arrow-left-right', 
+                'Administrasi Sistem'                => 'bi bi-sliders',
             ];
-            $groupOrder = ['Penghapusan', 'Penyusutan', 'Monitoring SAP-DAT', 'Manajemen Admin'];
+            $groupOrder = ['Penghapusan Aset', 'Penyusutan Aset', 'Monitoring Aset Tetap', 'Administrasi Sistem'];
+
             $currentPage = basename($_SERVER['PHP_SELF']);
 
             $ungrouped = [];
@@ -3298,17 +4002,191 @@ function saveF01ToDatabase($con, $importedData, $periodeBulan, $periodeTahun) {
         <div class="app-content">
           <!--begin::Container-->
           <div class="container-fluid">
-            <!--begin::Row-->
-            <div class="row">
+            <?php
+            // Tab yang aktif: tab kartu yang barusan di-upload (supaya pesan sukses/gagal langsung kelihatan), default Mutasi Aset.
+            $tabAktif = 'mutasi';
+            if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+                foreach (['file_ar02' => 'mutasi', 'file_f01' => 'mutasi', 'file_kka' => 'mutasi', 'file_excel' => 'mutasi',
+                          'file_nilai_perolehan' => 'selisih', 'file_nilai_akumulasi' => 'selisih', 'file_nilai_dep' => 'selisih',
+                          'file_coa' => 'master'] as $fldTab => $keyTab) {
+                    if (isset($_FILES[$fldTab])) { $tabAktif = $keyTab; break; }
+                }
+            }
+            ?>
+            <!--begin::Tabs Import-->
+            <ul class="nav nav-tabs mb-3" id="importTabs" role="tablist">
+              <li class="nav-item" role="presentation">
+                <button class="nav-link<?php echo $tabAktif === 'mutasi' ? ' active' : ''; ?>" id="tab-mutasi" data-bs-toggle="tab" data-bs-target="#pane-mutasi" type="button" role="tab" aria-controls="pane-mutasi" aria-selected="<?php echo $tabAktif === 'mutasi' ? 'true' : 'false'; ?>">Mutasi Aset</button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link<?php echo $tabAktif === 'selisih' ? ' active' : ''; ?>" id="tab-selisih" data-bs-toggle="tab" data-bs-target="#pane-selisih" type="button" role="tab" aria-controls="pane-selisih" aria-selected="<?php echo $tabAktif === 'selisih' ? 'true' : 'false'; ?>">Selisih per Cabang</button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link<?php echo $tabAktif === 'master' ? ' active' : ''; ?>" id="tab-master" data-bs-toggle="tab" data-bs-target="#pane-master" type="button" role="tab" aria-controls="pane-master" aria-selected="<?php echo $tabAktif === 'master' ? 'true' : 'false'; ?>">Master COA</button>
+              </li>
+            </ul>
 
+            <div class="tab-content" id="importTabContent">
+              <div class="tab-pane fade<?php echo $tabAktif === 'mutasi' ? ' show active' : ''; ?>" id="pane-mutasi" role="tabpanel" aria-labelledby="tab-mutasi" tabindex="0">
+                <p class="text-muted small mb-3">Sumber data laporan Mutasi Aset Tetap, Aset Tak Berwujud, dan Properti Investasi.</p>
+                <div class="row g-4 mb-4 import-row">
+              <!--begin::Card Import AR02 reg3-->
+              <div class="col-lg-6">
+                <div class="card card-primary card-outline mb-4 h-100">
+                  <!--begin::Header-->
+                  <div class="card-header"><div class="card-title">Import AR02 reg3</div></div>
+                  <!--end::Header-->
+                  <!--begin::Form-->
+                  <form method="POST" enctype="multipart/form-data" id="formImportAr02" data-loading-text="Sedang memproses upload data AR02 reg3">
+                    <!--begin::Body-->
+                    <div class="card-body">
+                      <?php if (!empty($pesanAr02)): ?>
+                      <div class="alert alert-<?php echo $tipeAr02; ?> alert-dismissible fade show" role="alert">
+                        <?php echo htmlspecialchars($pesanAr02); ?>
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                      </div>
+                      <?php endif; ?>
+
+                      <div class="row mb-3">
+                        <div class="col-6">
+                          <label for="periode_bulan_ar02" class="form-label">Bulan</label>
+                          <select class="form-select" id="periode_bulan_ar02" name="periode_bulan_ar02" required>
+                            <?php
+                              $namaBulanAr02 = [1=>'Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+                              foreach ($namaBulanAr02 as $noBln => $nmBln) {
+                                  $sel = ($noBln == (int)date('n')) ? ' selected' : '';
+                                  echo '<option value="' . $noBln . '"' . $sel . '>' . $nmBln . '</option>';
+                              }
+                            ?>
+                          </select>
+                        </div>
+                        <div class="col-6">
+                          <label for="periode_tahun_ar02" class="form-label">Tahun</label>
+                          <input type="number" class="form-control" id="periode_tahun_ar02" name="periode_tahun_ar02" min="2000" max="2100" value="<?php echo date('Y'); ?>" required>
+                        </div>
+                      </div>
+                      <div class="mb-3">
+                        <label for="file_ar02" class="form-label">Pilih File Excel atau CSV</label>
+                        <input type="file" class="form-control" id="file_ar02" name="file_ar02" accept=".xls,.xlsx,.csv" required>
+                        <small class="form-text text-muted">
+                          Format yang didukung: <strong>(.xls, .xlsx, .csv)</strong><br>
+                        </small>
+                      </div>
+                    </div>
+                    <!--end::Body-->
+                    <!--begin::Footer-->
+                    <div class="card-footer">
+                      <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">
+                          <i class="bi bi-cloud-arrow-up"></i> Upload & Simpan ke Database
+                        </button>
+                      </div>
+                    </div>
+                    <!--end::Footer-->
+                  </form>
+                  <!--end::Form-->
+                </div>
+              </div>
+              <!--end::Card Import AR02 reg3-->
+              <!--begin::Card Import Data F.01-->
+              <div class="col-lg-6">
+                <div class="card card-primary card-outline mb-4 h-100">
+                  <!--begin::Header-->
+                  <div class="card-header"><div class="card-title">Import Data F.01</div></div>
+                  <!--end::Header-->
+                  <!--begin::Form-->
+                  <form method="POST" enctype="multipart/form-data" id="formImportF01" data-loading-text="Sedang memproses upload data F.01.">
+                    <!--begin::Body-->
+                    <div class="card-body">
+                      <?php if (!empty($pesanF01)): ?>
+                      <div class="alert alert-<?php echo $tipeF01; ?> alert-dismissible fade show" role="alert">
+                        <?php echo htmlspecialchars($pesanF01); ?>
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                      </div>
+                      <?php endif; ?>
+
+                      <div class="row mb-3">
+                        <div class="col-6">
+                          <label for="periode_bulan_f01" class="form-label">Bulan</label>
+                          <select class="form-select" id="periode_bulan_f01" name="periode_bulan_f01" required><option value="1"<?php if ((int)date('n') === 1) echo ' selected'; ?>>Januari</option><option value="2"<?php if ((int)date('n') === 2) echo ' selected'; ?>>Februari</option><option value="3"<?php if ((int)date('n') === 3) echo ' selected'; ?>>Maret</option><option value="4"<?php if ((int)date('n') === 4) echo ' selected'; ?>>April</option><option value="5"<?php if ((int)date('n') === 5) echo ' selected'; ?>>Mei</option><option value="6"<?php if ((int)date('n') === 6) echo ' selected'; ?>>Juni</option><option value="7"<?php if ((int)date('n') === 7) echo ' selected'; ?>>Juli</option><option value="8"<?php if ((int)date('n') === 8) echo ' selected'; ?>>Agustus</option><option value="9"<?php if ((int)date('n') === 9) echo ' selected'; ?>>September</option><option value="10"<?php if ((int)date('n') === 10) echo ' selected'; ?>>Oktober</option><option value="11"<?php if ((int)date('n') === 11) echo ' selected'; ?>>November</option><option value="12"<?php if ((int)date('n') === 12) echo ' selected'; ?>>Desember</option></select>
+                        </div>
+                        <div class="col-6">
+                          <label for="periode_tahun_f01" class="form-label">Tahun</label>
+                          <input type="number" class="form-control" id="periode_tahun_f01" name="periode_tahun_f01" min="2000" max="2100" value="<?php echo date('Y'); ?>" required>
+                        </div>
+                      </div>
+                      <div class="mb-3">
+                        <label for="file_f01" class="form-label">Pilih File Excel atau CSV</label>
+                        <input type="file" class="form-control" id="file_f01" name="file_f01" accept=".xls,.xlsx,.csv" required>
+                        <small class="form-text text-muted">
+                          Format yang didukung: <strong>(.xls, .xlsx, .csv)</strong><br>
+                          
+                        </small>
+                      </div>
+                    </div>
+                    <!--end::Body-->
+                    <!--begin::Footer-->
+                    <div class="card-footer">
+                      <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">
+                          <i class="bi bi-cloud-arrow-up"></i> Upload & Simpan ke Database
+                        </button>
+                      </div>
+                    </div>
+                    <!--end::Footer-->
+                  </form>
+                  <!--end::Form-->
+                </div>
+              </div>
+              <!--end::Card Import Data F.01-->
+              <!--begin::Card Import KK Aset-->
+              <div class="col-lg-6">
+                <div class="card card-primary card-outline mb-4 h-100">
+                  <!--begin::Header-->
+                  <div class="card-header"><div class="card-title">Import KK Aset</div></div>
+                  <!--end::Header-->
+                  <!--begin::Form-->
+                  <form method="POST" enctype="multipart/form-data" id="formImportKka" data-loading-text="Sedang memproses upload data KK Aset.">
+                    <!--begin::Body-->
+                    <div class="card-body">
+                      <?php if (!empty($pesanKka)): ?>
+                      <div class="alert alert-<?php echo $tipeKka; ?> alert-dismissible fade show" role="alert">
+                        <?php echo htmlspecialchars($pesanKka); ?>
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                      </div>
+                      <?php endif; ?>
+
+                      <div class="mb-3">
+                        <label for="file_kka" class="form-label">Pilih File Excel atau CSV</label>
+                        <input type="file" class="form-control" id="file_kka" name="file_kka" accept=".xls,.xlsx,.csv" required>
+                        <small class="form-text text-muted">
+                          Format yang didukung: <strong>(.xls, .xlsx, .csv)</strong><br>
+                        </small>
+                      </div>
+                    </div>
+                    <!--end::Body-->
+                    <!--begin::Footer-->
+                    <div class="card-footer">
+                      <div class="d-flex gap-1">
+                        <button type="submit" class="btn btn-primary">
+                          <i class="bi bi-cloud-arrow-up"></i> Upload & Simpan ke Database
+                        </button>
+                      </div>
+                    </div>
+                    <!--end::Footer-->
+                  </form>
+                  <!--end::Form-->
+                </div>
+              </div>
+              <!--end::Card Import KK Aset-->
               <!--begin::Card Import DAT-->
               <div class="col-lg-6">
                 <div class="card card-primary card-outline mb-4 h-100">
                   <!--begin::Header-->
-                  <div class="card-header"><div class="card-title">Import DAT</div></div>
+                  <div class="card-header"><div class="card-title">Import DAT Des Close 16</div></div>
                   <!--end::Header-->
                   <!--begin::Form-->
-                  <form method="POST" enctype="multipart/form-data" id="formImportDat" data-loading-text="Sedang memproses upload data DAT... Mohon tunggu, jangan tutup atau refresh halaman ini.">
+                  <form method="POST" enctype="multipart/form-data" id="formImportDat" data-loading-text="Sedang memproses upload data DAT Des Close 16.">
                     <!--begin::Body-->
                     <div class="card-body">
                       <?php if (!empty($pesan)): ?>
@@ -3341,95 +4219,139 @@ function saveF01ToDatabase($con, $importedData, $periodeBulan, $periodeTahun) {
                 </div>
               </div>
               <!--end::Card Import DAT-->
-
-              <!--begin::Card Import AR02 reg3-->
-              <div class="col-lg-6">
-                <div class="card card-primary card-outline mb-4 h-100">
-                  <!--begin::Header-->
-                  <div class="card-header"><div class="card-title">Import AR02 reg3</div></div>
-                  <!--end::Header-->
-                  <!--begin::Form-->
-                  <form method="POST" enctype="multipart/form-data" id="formImportAr02" data-loading-text="Sedang memproses upload data AR02 reg3... Mohon tunggu, jangan tutup atau refresh halaman ini.">
-                    <!--begin::Body-->
-                    <div class="card-body">
-                      <?php if (!empty($pesanAr02)): ?>
-                      <div class="alert alert-<?php echo $tipeAr02; ?> alert-dismissible fade show" role="alert">
-                        <?php echo htmlspecialchars($pesanAr02); ?>
-                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-                      </div>
-                      <?php endif; ?>
-
-                      <div class="mb-3">
-                        <label for="file_ar02" class="form-label">Pilih File Excel atau CSV</label>
-                        <input type="file" class="form-control" id="file_ar02" name="file_ar02" accept=".xls,.xlsx,.csv" required>
-                        <small class="form-text text-muted">
-                          Format yang didukung: <strong>(.xls, .xlsx, .csv)</strong><br>
-                        </small>
-                      </div>
-                    </div>
-                    <!--end::Body-->
-                    <!--begin::Footer-->
-                    <div class="card-footer">
-                      <div class="d-flex gap-1">
-                        <button type="submit" class="btn btn-primary">
-                          <i class="bi bi-cloud-arrow-up"></i> Upload & Simpan ke Database
-                        </button>
-                      </div>
-                    </div>
-                    <!--end::Footer-->
-                  </form>
-                  <!--end::Form-->
                 </div>
               </div>
-              <!--end::Card Import AR02 reg3-->
-
-            </div>
-            <!--end::Row-->
-
-            <!--begin::Row 2-->
-            <div class="row mt-4">
-
-              <!--begin::Card Import Data F.01-->
-              <div class="col-lg-6">
+              <div class="tab-pane fade<?php echo $tabAktif === 'selisih' ? ' show active' : ''; ?>" id="pane-selisih" role="tabpanel" aria-labelledby="tab-selisih" tabindex="0">
+                <p class="text-muted small mb-3">Sumber data dasbor Selisih per Cabang. Format file sama; upload per bulan.</p>
+                <div class="row g-4 mb-4 import-row">
+              <!--begin::Card Import Nilai Perolehan-->
+              <div class="col-xl-4 col-lg-6">
                 <div class="card card-primary card-outline mb-4 h-100">
-                  <!--begin::Header-->
-                  <div class="card-header"><div class="card-title">Import Data F.01</div></div>
-                  <!--end::Header-->
-                  <!--begin::Form-->
-                  <form method="POST" enctype="multipart/form-data" id="formImportF01" data-loading-text="Sedang memproses upload data F.01... Mohon tunggu, jangan tutup atau refresh halaman ini.">
-                    <!--begin::Body-->
+                  <div class="card-header"><div class="card-title">Import Nilai Perolehan</div></div>
+                  <form method="POST" enctype="multipart/form-data" id="formImportNilaiPerolehan" data-loading-text="Sedang memproses upload data Nilai Perolehan.">
                     <div class="card-body">
-                      <?php if (!empty($pesanF01)): ?>
-                      <div class="alert alert-<?php echo $tipeF01; ?> alert-dismissible fade show" role="alert">
-                        <?php echo htmlspecialchars($pesanF01); ?>
+                      <?php if (!empty($pesanNilai['nilai_perolehan'])): ?>
+                      <div class="alert alert-<?php echo $tipeNilai['nilai_perolehan']; ?> alert-dismissible fade show" role="alert">
+                        <?php echo htmlspecialchars($pesanNilai['nilai_perolehan']); ?>
                         <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
                       </div>
                       <?php endif; ?>
-
+                      <div class="row mb-3">
+                        <div class="col-6">
+                          <label for="periode_bulan_nilai_perolehan" class="form-label">Bulan</label>
+                          <select class="form-select" id="periode_bulan_nilai_perolehan" name="periode_bulan_nilai_perolehan" required><option value="1"<?php if ((int)date('n') === 1) echo ' selected'; ?>>Januari</option><option value="2"<?php if ((int)date('n') === 2) echo ' selected'; ?>>Februari</option><option value="3"<?php if ((int)date('n') === 3) echo ' selected'; ?>>Maret</option><option value="4"<?php if ((int)date('n') === 4) echo ' selected'; ?>>April</option><option value="5"<?php if ((int)date('n') === 5) echo ' selected'; ?>>Mei</option><option value="6"<?php if ((int)date('n') === 6) echo ' selected'; ?>>Juni</option><option value="7"<?php if ((int)date('n') === 7) echo ' selected'; ?>>Juli</option><option value="8"<?php if ((int)date('n') === 8) echo ' selected'; ?>>Agustus</option><option value="9"<?php if ((int)date('n') === 9) echo ' selected'; ?>>September</option><option value="10"<?php if ((int)date('n') === 10) echo ' selected'; ?>>Oktober</option><option value="11"<?php if ((int)date('n') === 11) echo ' selected'; ?>>November</option><option value="12"<?php if ((int)date('n') === 12) echo ' selected'; ?>>Desember</option></select>
+                        </div>
+                        <div class="col-6">
+                          <label for="periode_tahun_nilai_perolehan" class="form-label">Tahun</label>
+                          <input type="number" class="form-control" id="periode_tahun_nilai_perolehan" name="periode_tahun_nilai_perolehan" min="2000" max="2100" value="<?php echo date('Y'); ?>" required>
+                        </div>
+                      </div>
                       <div class="mb-3">
-                        <label for="file_f01" class="form-label">Pilih File Excel atau CSV</label>
-                        <input type="file" class="form-control" id="file_f01" name="file_f01" accept=".xls,.xlsx,.csv" required>
+                        <label for="file_nilai_perolehan" class="form-label">Pilih File Excel atau CSV</label>
+                        <input type="file" class="form-control" id="file_nilai_perolehan" name="file_nilai_perolehan" accept=".xls,.xlsx,.csv" required>
                         <small class="form-text text-muted">
                           Format yang didukung: <strong>(.xls, .xlsx, .csv)</strong><br>
+                          <!-- Header: Cost Center, Asset, Asset Subnumber, Account, Document Number, Posting Date, Amount in Local Currency, Profit Center, Text.<br>
+                          Upload ulang untuk bulan/tahun yang sama menimpa data lama. -->
                         </small>
                       </div>
                     </div>
-                    <!--end::Body-->
-                    <!--begin::Footer-->
                     <div class="card-footer">
                       <div class="d-flex gap-2">
-                        <button type="submit" class="btn btn-primary">
-                          <i class="bi bi-cloud-arrow-up"></i> Upload & Simpan ke Database
-                        </button>
+                        <button type="submit" class="btn btn-primary"><i class="bi bi-cloud-arrow-up"></i> Upload &amp; Simpan ke Database</button>
                       </div>
                     </div>
-                    <!--end::Footer-->
                   </form>
-                  <!--end::Form-->
                 </div>
               </div>
-              <!--end::Card Import Data F.01-->
-
+              <!--end::Card Import Nilai Perolehan-->
+              <!--begin::Card Import Nilai Akumulasi-->
+              <div class="col-xl-4 col-lg-6">
+                <div class="card card-primary card-outline mb-4 h-100">
+                  <div class="card-header"><div class="card-title">Import Nilai Akumulasi</div></div>
+                  <form method="POST" enctype="multipart/form-data" id="formImportNilaiAkumulasi" data-loading-text="Sedang memproses upload data Nilai Akumulasi.">
+                    <div class="card-body">
+                      <?php if (!empty($pesanNilai['nilai_akumulasi'])): ?>
+                      <div class="alert alert-<?php echo $tipeNilai['nilai_akumulasi']; ?> alert-dismissible fade show" role="alert">
+                        <?php echo htmlspecialchars($pesanNilai['nilai_akumulasi']); ?>
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                      </div>
+                      <?php endif; ?>
+                      <div class="row mb-3">
+                        <div class="col-6">
+                          <label for="periode_bulan_nilai_akumulasi" class="form-label">Bulan</label>
+                          <select class="form-select" id="periode_bulan_nilai_akumulasi" name="periode_bulan_nilai_akumulasi" required><option value="1"<?php if ((int)date('n') === 1) echo ' selected'; ?>>Januari</option><option value="2"<?php if ((int)date('n') === 2) echo ' selected'; ?>>Februari</option><option value="3"<?php if ((int)date('n') === 3) echo ' selected'; ?>>Maret</option><option value="4"<?php if ((int)date('n') === 4) echo ' selected'; ?>>April</option><option value="5"<?php if ((int)date('n') === 5) echo ' selected'; ?>>Mei</option><option value="6"<?php if ((int)date('n') === 6) echo ' selected'; ?>>Juni</option><option value="7"<?php if ((int)date('n') === 7) echo ' selected'; ?>>Juli</option><option value="8"<?php if ((int)date('n') === 8) echo ' selected'; ?>>Agustus</option><option value="9"<?php if ((int)date('n') === 9) echo ' selected'; ?>>September</option><option value="10"<?php if ((int)date('n') === 10) echo ' selected'; ?>>Oktober</option><option value="11"<?php if ((int)date('n') === 11) echo ' selected'; ?>>November</option><option value="12"<?php if ((int)date('n') === 12) echo ' selected'; ?>>Desember</option></select>
+                        </div>
+                        <div class="col-6">
+                          <label for="periode_tahun_nilai_akumulasi" class="form-label">Tahun</label>
+                          <input type="number" class="form-control" id="periode_tahun_nilai_akumulasi" name="periode_tahun_nilai_akumulasi" min="2000" max="2100" value="<?php echo date('Y'); ?>" required>
+                        </div>
+                      </div>
+                      <div class="mb-3">
+                        <label for="file_nilai_akumulasi" class="form-label">Pilih File Excel atau CSV</label>
+                        <input type="file" class="form-control" id="file_nilai_akumulasi" name="file_nilai_akumulasi" accept=".xls,.xlsx,.csv" required>
+                        <small class="form-text text-muted">
+                          Format yang didukung: <strong>(.xls, .xlsx, .csv)</strong><br>
+                          <!-- Header: Cost Center, Asset, Asset Subnumber, Account, Document Number, Posting Date, Amount in Local Currency, Profit Center, Text.<br>
+                          Upload ulang untuk bulan/tahun yang sama menimpa data lama. -->
+                        </small>
+                      </div>
+                    </div>
+                    <div class="card-footer">
+                      <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary"><i class="bi bi-cloud-arrow-up"></i> Upload &amp; Simpan ke Database</button>
+                      </div>
+                    </div>
+                  </form>
+                </div>
+              </div>
+              <!--end::Card Import Nilai Akumulasi-->
+              <!--begin::Card Import Nilai DEP-->
+              <div class="col-xl-4 col-lg-6">
+                <div class="card card-primary card-outline mb-4 h-100">
+                  <div class="card-header"><div class="card-title">Import Nilai DEP</div></div>
+                  <form method="POST" enctype="multipart/form-data" id="formImportNilaiDep" data-loading-text="Sedang memproses upload data Nilai DEP.">
+                    <div class="card-body">
+                      <?php if (!empty($pesanNilai['nilai_dep'])): ?>
+                      <div class="alert alert-<?php echo $tipeNilai['nilai_dep']; ?> alert-dismissible fade show" role="alert">
+                        <?php echo htmlspecialchars($pesanNilai['nilai_dep']); ?>
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                      </div>
+                      <?php endif; ?>
+                      <div class="row mb-3">
+                        <div class="col-6">
+                          <label for="periode_bulan_nilai_dep" class="form-label">Bulan</label>
+                          <select class="form-select" id="periode_bulan_nilai_dep" name="periode_bulan_nilai_dep" required><option value="1"<?php if ((int)date('n') === 1) echo ' selected'; ?>>Januari</option><option value="2"<?php if ((int)date('n') === 2) echo ' selected'; ?>>Februari</option><option value="3"<?php if ((int)date('n') === 3) echo ' selected'; ?>>Maret</option><option value="4"<?php if ((int)date('n') === 4) echo ' selected'; ?>>April</option><option value="5"<?php if ((int)date('n') === 5) echo ' selected'; ?>>Mei</option><option value="6"<?php if ((int)date('n') === 6) echo ' selected'; ?>>Juni</option><option value="7"<?php if ((int)date('n') === 7) echo ' selected'; ?>>Juli</option><option value="8"<?php if ((int)date('n') === 8) echo ' selected'; ?>>Agustus</option><option value="9"<?php if ((int)date('n') === 9) echo ' selected'; ?>>September</option><option value="10"<?php if ((int)date('n') === 10) echo ' selected'; ?>>Oktober</option><option value="11"<?php if ((int)date('n') === 11) echo ' selected'; ?>>November</option><option value="12"<?php if ((int)date('n') === 12) echo ' selected'; ?>>Desember</option></select>
+                        </div>
+                        <div class="col-6">
+                          <label for="periode_tahun_nilai_dep" class="form-label">Tahun</label>
+                          <input type="number" class="form-control" id="periode_tahun_nilai_dep" name="periode_tahun_nilai_dep" min="2000" max="2100" value="<?php echo date('Y'); ?>" required>
+                        </div>
+                      </div>
+                      <div class="mb-3">
+                        <label for="file_nilai_dep" class="form-label">Pilih File Excel atau CSV</label>
+                        <input type="file" class="form-control" id="file_nilai_dep" name="file_nilai_dep" accept=".xls,.xlsx,.csv" required>
+                        <small class="form-text text-muted">
+                          Format yang didukung: <strong>(.xls, .xlsx, .csv)</strong><br>
+                          <!-- Header: Cost Center, Asset, Asset Subnumber, Account, Document Number, Posting Date, Amount in Local Currency, Profit Center, Text.<br>
+                          Upload ulang untuk bulan/tahun yang sama menimpa data lama. -->
+                        </small>
+                      </div>
+                    </div>
+                    <div class="card-footer">
+                      <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary"><i class="bi bi-cloud-arrow-up"></i> Upload &amp; Simpan ke Database</button>
+                      </div>
+                    </div>
+                  </form>
+                </div>
+              </div>
+              <!--end::Card Import Nilai DEP-->
+                </div>
+              </div>
+              <div class="tab-pane fade<?php echo $tabAktif === 'master' ? ' show active' : ''; ?>" id="pane-master" role="tabpanel" aria-labelledby="tab-master" tabindex="0">
+                <p class="text-muted small mb-3">Data referensi, jarang berubah.</p>
+                <div class="row g-4 mb-4 import-row">
               <!--begin::Card Import Master COA-->
               <div class="col-lg-6">
                 <div class="card card-primary card-outline mb-4 h-100">
@@ -3437,7 +4359,7 @@ function saveF01ToDatabase($con, $importedData, $periodeBulan, $periodeTahun) {
                   <div class="card-header"><div class="card-title">Import Master COA</div></div>
                   <!--end::Header-->
                   <!--begin::Form-->
-                  <form method="POST" enctype="multipart/form-data" id="formImportCoa" data-loading-text="Sedang memproses upload data Master COA... Mohon tunggu, jangan tutup atau refresh halaman ini.">
+                  <form method="POST" enctype="multipart/form-data" id="formImportCoa" data-loading-text="Sedang memproses upload data Master COA.">
                     <!--begin::Body-->
                     <div class="card-body">
                       <?php if (!empty($pesanCoa)): ?>
@@ -3452,6 +4374,7 @@ function saveF01ToDatabase($con, $importedData, $periodeBulan, $periodeTahun) {
                         <input type="file" class="form-control" id="file_coa" name="file_coa" accept=".xls,.xlsx,.csv" required>
                         <small class="form-text text-muted">
                           Format yang didukung: <strong>(.xls, .xlsx, .csv)</strong><br>
+                          <!-- Upload ulang untuk bulan/tahun yang sama menimpa data lama. -->
                         </small>
                       </div>
                     </div>
@@ -3470,9 +4393,10 @@ function saveF01ToDatabase($con, $importedData, $periodeBulan, $periodeTahun) {
                 </div>
               </div>
               <!--end::Card Import Master COA-->
-
+                </div>
+              </div>
             </div>
-            <!--end::Row 2-->
+            <!--end::Tabs Import-->
           </div>
         </div>
         <!--end::App Content-->
@@ -3646,6 +4570,10 @@ function saveF01ToDatabase($con, $importedData, $periodeBulan, $periodeTahun) {
         const uploadForms = [
           document.getElementById('formImportDat'),
           document.getElementById('formImportF01'),
+          document.getElementById('formImportNilaiPerolehan'),
+          document.getElementById('formImportNilaiAkumulasi'),
+          document.getElementById('formImportNilaiDep'),
+          document.getElementById('formImportKka'),
           document.getElementById('formImportAr02'),
         ];
 
@@ -3664,7 +4592,8 @@ function saveF01ToDatabase($con, $importedData, $periodeBulan, $periodeTahun) {
             if (submitBtn) submitBtn.disabled = true;
 
             const loadingModal = new bootstrap.Modal(document.getElementById('uploadLoadingModal'), {
-              backdrop: 'static
+              backdrop: 'static'
+            });
             loadingModal.show();
           });
         });
