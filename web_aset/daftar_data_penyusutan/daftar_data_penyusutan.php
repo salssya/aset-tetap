@@ -78,6 +78,34 @@ if (isset($_GET['ajax_action'])) {
         }
     }
 
+    // Filter Bulan & Tahun (khusus tabel Rekap FAGLL SAP) -- pakai posting_date_norm (kolom DATE
+    // hasil normalisasi yang sudah diindex saat import), BUKAN posting_date mentah (varchar, formatnya
+    // campur-campur). Sengaja pakai filter RENTANG (>=, <), BUKAN MONTH()/YEAR(posting_date_norm) --
+    // membungkus kolom terindex dengan fungsi bikin index-nya gak kepakai (full scan tetap terjadi),
+    // sama seperti masalah yang sebelumnya dibenahi di dasbor. Rentang tanggal langsung tetap bisa pakai
+    // index idx_posting_date_norm / idx_norm_group.
+    if ($action === 'penyusutan') {
+        $filterBulanPnyst = isset($_GET['bulan_penyusutan']) ? trim($_GET['bulan_penyusutan']) : '';
+        $filterTahunPnyst = isset($_GET['tahun_penyusutan']) ? trim($_GET['tahun_penyusutan']) : '';
+        $bulanValid = $filterBulanPnyst !== '' && ctype_digit($filterBulanPnyst) && (int)$filterBulanPnyst >= 1 && (int)$filterBulanPnyst <= 12;
+        $tahunValid = $filterTahunPnyst !== '' && ctype_digit($filterTahunPnyst);
+
+        if ($tahunValid && $bulanValid) {
+            // Tahun + Bulan dipilih -> rentang 1 bulan spesifik
+            $thn = (int)$filterTahunPnyst; $bln = (int)$filterBulanPnyst;
+            $awal = sprintf('%04d-%02d-01', $thn, $bln);
+            $akhir = ($bln === 12) ? sprintf('%04d-01-01', $thn + 1) : sprintf('%04d-%02d-01', $thn, $bln + 1);
+            $whereParts[] = "`posting_date_norm` >= '$awal' AND `posting_date_norm` < '$akhir'";
+        } elseif ($tahunValid) {
+            // Cuma Tahun dipilih -> rentang 1 tahun penuh
+            $thn = (int)$filterTahunPnyst;
+            $whereParts[] = "`posting_date_norm` >= '" . sprintf('%04d-01-01', $thn) . "' AND `posting_date_norm` < '" . sprintf('%04d-01-01', $thn + 1) . "'";
+        } elseif ($bulanValid) {
+            // Cuma Bulan dipilih (semua tahun) -- jarang dipakai, terpaksa pakai MONTH() krn lintas tahun
+            $whereParts[] = "MONTH(`posting_date_norm`) = " . (int)$filterBulanPnyst;
+        }
+    }
+
     $whereSql = !empty($whereParts) ? ('WHERE ' . implode(' AND ', $whereParts)) : '';
 
     // Total setelah difilter pencarian
@@ -443,12 +471,12 @@ if (isset($_GET['ajax_action'])) {
                   <ul class="nav nav-tabs card-header-tabs" id="hasilTab" role="tablist">
                     <li class="nav-item" role="presentation">
                       <button class="nav-link active" id="tab-dat-btn" data-bs-toggle="tab" data-bs-target="#tab-dat" type="button" role="tab" aria-controls="tab-dat" aria-selected="true">
-                        <i class="bi bi-file-earmark-arrow-up"></i> File DAT 
+                        File DAT 
                       </button>
                     </li>
                     <li class="nav-item" role="presentation">
                       <button class="nav-link" id="tab-penyusutan-btn" data-bs-toggle="tab" data-bs-target="#tab-penyusutan" type="button" role="tab" aria-controls="tab-penyusutan" aria-selected="false">
-                        <i class="bi bi-graph-down-arrow"></i> Rekap FAGLL SAP 
+                        Rekap FAGLL Penyusutan 
                       </button>
                     </li>
                   </ul>
@@ -559,7 +587,36 @@ if (isset($_GET['ajax_action'])) {
                         </div>
                       </div>
                       <?php endif; ?>
-                      <div class="d-flex justify-content-end mb-2">
+                      <?php
+                      // Daftar bulan & tahun yang BENAR-BENAR ada di data FAGLL (dari posting_date_norm,
+                      // biar dropdown tidak nampilin pilihan kosong -- sama seperti tab File DAT di atas).
+                      $daftarBulanPnyst = [];
+                      $daftarTahunPnyst = [];
+                      $cekTabelPnyst = mysqli_query($con, "SHOW TABLES LIKE 'import_fagll'");
+                      if ($cekTabelPnyst && mysqli_num_rows($cekTabelPnyst) > 0) {
+                          $resBulanPnyst = mysqli_query($con, "SELECT DISTINCT MONTH(posting_date_norm) AS bln FROM import_fagll WHERE posting_date_norm IS NOT NULL ORDER BY bln ASC");
+                          if ($resBulanPnyst) { while ($r = mysqli_fetch_assoc($resBulanPnyst)) { $daftarBulanPnyst[] = (int)$r['bln']; } }
+                          $resTahunPnyst = mysqli_query($con, "SELECT DISTINCT YEAR(posting_date_norm) AS th FROM import_fagll WHERE posting_date_norm IS NOT NULL ORDER BY th DESC");
+                          if ($resTahunPnyst) { while ($r = mysqli_fetch_assoc($resTahunPnyst)) { $daftarTahunPnyst[] = (int)$r['th']; } }
+                      }
+                      ?>
+                      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+                        <div class="d-flex align-items-center gap-2 flex-wrap">
+                          <label for="filterBulanPnyst" class="mb-0 fw-semibold">Bulan:</label>
+                          <select id="filterBulanPnyst" class="form-select form-select-sm" style="width:auto;">
+                            <option value="">Semua Bulan</option>
+                            <?php foreach ($daftarBulanPnyst as $b): ?>
+                              <option value="<?= (int)$b ?>"><?= htmlspecialchars($namaBulanMap[$b] ?? $b) ?></option>
+                            <?php endforeach; ?>
+                          </select>
+                          <label for="filterTahunPnyst" class="mb-0 fw-semibold">Tahun:</label>
+                          <select id="filterTahunPnyst" class="form-select form-select-sm" style="width:auto;">
+                            <option value="">Semua Tahun</option>
+                            <?php foreach ($daftarTahunPnyst as $t): ?>
+                              <option value="<?= (int)$t ?>"><?= (int)$t ?></option>
+                            <?php endforeach; ?>
+                          </select>
+                        </div>
                         <?php
                         $lastPenyusutanDate = $latestPenyusutanRow['last_import'] ?? null;
                         if ($lastPenyusutanDate) {
@@ -723,7 +780,11 @@ if (isset($_GET['ajax_action'])) {
               serverSide: true,
               ajax: {
                 url: 'daftar_data_penyusutan.php?ajax_action=penyusutan',
-                type: 'GET'
+                type: 'GET',
+                data: function (d) {
+                  d.bulan_penyusutan = $('#filterBulanPnyst').val();
+                  d.tahun_penyusutan = $('#filterTahunPnyst').val();
+                }
               },
               columns: [
                 { data: 0 }, // Cost Center
@@ -744,6 +805,13 @@ if (isset($_GET['ajax_action'])) {
         $('#tab-dat-btn').on('shown.bs.tab', function () {
           if (dtDatPenyusutan) {
             dtDatPenyusutan.columns.adjust();
+          }
+        });
+
+        // Saat dropdown Bulan / Tahun di tab Rekap FAGLL SAP diganti, muat ulang tabel dari halaman pertama
+        $('#filterBulanPnyst, #filterTahunPnyst').on('change', function () {
+          if (dtPenyusutan) {
+            dtPenyusutan.ajax.reload(null, true); // true = reset ke halaman pertama
           }
         });
       });
