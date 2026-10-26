@@ -466,7 +466,7 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
 <html lang="en">
 <head>
   <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
-  <title>Pelaksanaan Penghapusan - Web Aset Tetap</title>
+  <title>Daftar Pelaksanaan Penghapusan - Web Aset Tetap</title>
   <link rel="icon" type="image/png" href="../../dist/assets/img/emblem.png"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <link rel="stylesheet" href="../../dist/css/index.css"/>
@@ -776,12 +776,12 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
     <div class="container-fluid">
       <div class="row">
         <div class="col-sm-6">
-          <h3 class="mb-0">Pelaksanaan Penghapusan</h3>
+          <h3 class="mb-0">Daftar Pelaksanaan Penghapusan</h3>
         </div>
-        <div class="col-sm-6 d-flex align-items-center justify-content-end gap-2">
+        <div class="col-sm-6 d-flex flex-wrapalign-items-center justify-content-end gap-2 row-gap-2">
 
           <!-- SATU FORM untuk tahun + status + reset -->
-          <form method="GET" class="d-flex align-items-center gap-2">
+          <form method="GET" class="d-flex align-items-center gap-2 flex-shrink-0">
             <input type="hidden" name="tab" value="<?= htmlspecialchars($activeTab) ?>">
 
             <label class="mb-0 text-muted small fw-semibold text-nowrap">
@@ -809,9 +809,9 @@ unset($_SESSION['success_message'], $_SESSION['warning_message']);
             </select>
           </form>
 
-          <ol class="breadcrumb float-sm-end mb-0">
+          <ol class="breadcrumb mb-0 flex-shrink-0" style="white-space:nowrap;">
             <li class="breadcrumb-item"><a href="../dasbor/dasbor.php">Home</a></li>
-            <li class="breadcrumb-item active">Pelaksanaan Penghapusan</li>
+            <li class="breadcrumb-item active">Daftar Pelaksanaan Penghapusan</li>
           </ol>
         </div>
       </div>
